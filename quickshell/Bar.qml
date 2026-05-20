@@ -1271,6 +1271,12 @@ PanelWindow {
 
     // Launcher panel state
     property bool launcherOpen: false
+    // Re-scan DDC monitors each time the menu opens. `ddcutil detect` only sees
+    // monitors that are powered on, and Hyprland drops/re-adds outputs when a
+    // monitor is switched off overnight — which can leave the one-shot startup
+    // scan stuck on a single slider. By the time the menu is opened the displays
+    // are long awake, so this picks up every monitor without any timing guess.
+    onLauncherOpenChanged: if (launcherOpen && !ddcDetectProc.running) ddcDetectProc.running = true
     // System-monitor hover detail popup state
     property string hoveredMon: ""
     property int hoveredMonX: 0
