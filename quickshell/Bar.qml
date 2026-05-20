@@ -406,6 +406,17 @@ PanelWindow {
         while (a.length > bar.ioHistLen) a.shift()
         return a
     }
+    // Peak (max) of field "a" or "b" across a net/disk history buffer — the top
+    // of that series' graph over the visible window.
+    function histPeak(arr, field) {
+        if (!arr || !arr.length) return 0
+        var m = 0
+        for (var i = 0; i < arr.length; i++) {
+            var v = arr[i][field]
+            if (v > m) m = v
+        }
+        return m
+    }
 
     function closeLauncher() {
         bar.launcherOpen = false;
@@ -2112,15 +2123,15 @@ PanelWindow {
         readonly property string bigVal: mk === "cpu" ? bar.cpuUsage + "%"
             : mk === "gpu" ? bar.gpuUsage + "%" : mk === "vram" ? bar.vramUsage + "%"
             : mk === "mem" ? bar.memUsage + "%" : mk === "zram" ? bar.swapUsage + "%"
-            : mk === "net" ? "↓ " + bar.fmtRate(bar.netRxRate)
-            : mk === "disk" ? "R " + bar.fmtRate(bar.diskRdRate) : ""
+            : mk === "net" ? "Peak ↓ " + bar.fmtRate(bar.histPeak(bar.netHist, "a"))
+            : mk === "disk" ? "Peak R " + bar.fmtRate(bar.histPeak(bar.diskHist, "a")) : ""
         readonly property string subVal: mk === "cpu" ? bar.cpuTemp + "°C"
             : mk === "gpu" ? bar.gpuTemp + "°C"
             : mk === "vram" ? bar.vramUsedGB.toFixed(1) + " / " + bar.vramTotalGB.toFixed(1) + " GB"
             : mk === "mem" ? bar.memUsedGB.toFixed(1) + " / " + bar.memTotalGB.toFixed(1) + " GB"
             : mk === "zram" ? bar.swapUsedGB.toFixed(2) + " / " + bar.swapTotalGB.toFixed(1) + " GB"
-            : mk === "net" ? "↑ " + bar.fmtRate(bar.netTxRate)
-            : mk === "disk" ? "W " + bar.fmtRate(bar.diskWrRate) : ""
+            : mk === "net" ? "Peak ↑ " + bar.fmtRate(bar.histPeak(bar.netHist, "b"))
+            : mk === "disk" ? "Peak W " + bar.fmtRate(bar.histPeak(bar.diskHist, "b")) : ""
         readonly property var graphData: mk === "cpu" ? bar.cpuHist : mk === "gpu" ? bar.gpuHist
             : mk === "vram" ? bar.vramHist : mk === "mem" ? bar.memHist : mk === "zram" ? bar.swapHist
             : mk === "net" ? bar.netHist : mk === "disk" ? bar.diskHist : []
