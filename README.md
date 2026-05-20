@@ -1,94 +1,102 @@
-# Hyprland + Quickshell dotfiles
+# Technicolor
 
-My Linux desktop: a [Hyprland](https://hyprland.org/) compositor with a custom
-[Quickshell](https://quickshell.org/) bar — workspaces carousel, app launcher,
-system monitors, notification tray, per-monitor brightness — themed live off the
-current wallpaper.
+I like [Hyprland](https://hyprland.org/), [Quickshell](https://quickshell.org/), and [mako](https://github.com/emersion/mako).
 
-> **Heads up:** I designed all of this but the code is vibe-coded — I'm a
-> designer, not a coder. It runs great and is cleaned up for sharing, but it's
-> "here's my setup to crib from," not a maintained project.
+So I built my desktop around them. The bar is custom Quickshell, and its colors are pulled live from the current wallpaper. Workspaces are one long carousel that slides across every monitor together. It has an app launcher, live system monitors, a notification tray, per-monitor brightness, and an alt-tab pie menu.
 
-![screenshot](screenshot.png) <!-- drop a screenshot here -->
+I design things, I don't really write code, so this is vibe-coded. It runs well.
 
-## What's in here
+## Demo
 
-| Folder | What it is |
-|--------|-----------|
-| `hypr/` | Hyprland config + its scripts (carousel workspaces, wallpaper cycling, taskbar, minimize) |
-| `quickshell/` | The bar (`Bar.qml`), alt-tab pie, notification scripts, system-monitor helpers, shaders |
-| `mako/` | Notification daemon config (the bar's notification tray is a frontend for mako) |
+<!-- Open this file in GitHub's web editor (the pencil button) and drag a video clip in. It embeds as a player. -->
 
-## Setup
+![screenshot](screenshot.png)
 
-No install script — these are just config folders. Put them where Hyprland and
-Quickshell look for them (`~/.config/`):
+## Install
 
-```sh
-# from inside this repo
+Follow these top to bottom and you'll have a working setup.
+
+### 1. Dependencies
+
+Everything needed: `hyprland`, `quickshell`, `mako`, `xdg-desktop-portal-hyprland`, `pipewire` + `wireplumber`, `ddcutil`, `nethogs`, `jq`, `gawk`, `kitty`, `wofi`, `swww`, `imagemagick`, `python-pillow`, `grim`, `slurp`, `satty`, `wl-clipboard`, `playerctl`, `brightnessctl`, plus a Nerd Font (JetBrainsMono Nerd Font). Optional: `nwg-look`, `nwg-displays`, `dex`, `wlogout`, `gnome-keyring`.
+
+Most share the same package name across distros. The newer ones to watch are `quickshell`, `swww`, and `satty`, plus Hyprland itself on older distros. Quickshell's per-distro install page: <https://quickshell.org/docs/master/guide/install-setup/>
+
+**Arch** (my distro; a few are AUR, so use `paru`/`yay`):
+```
+paru -S hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
+  ddcutil nethogs jq gawk kitty wofi swww imagemagick python-pillow \
+  grim slurp satty wl-clipboard playerctl brightnessctl ttf-jetbrains-mono-nerd
+```
+
+**Fedora:** most via `dnf` under the same names (Hyprland is packaged on F39+). quickshell is a COPR:
+```
+sudo dnf copr enable errornointernet/quickshell && sudo dnf install quickshell
+```
+`swww` and `satty` may need a COPR or building from source.
+
+**Debian / Ubuntu:** `apt` has most of these, but Hyprland and quickshell are usually too old or missing, so build those two from source.
+
+**NixOS:** add the packages to `environment.systemPackages` (or home-manager). Hyprland and quickshell both ship flakes; see the Hyprland wiki's Nix page and quickshell's install docs.
+
+### 2. Copy the configs
+```
 cp -r hypr quickshell mako ~/.config/
 ```
 
-Then create the two per-machine files from their templates and edit them:
-
-```sh
+### 3. Set up the two per-machine files
+`hyprland.conf` sources these, so they need to exist:
+```
 cp ~/.config/hypr/monitors.conf.example ~/.config/hypr/monitors.conf
 cp ~/.config/hypr/local.conf.example    ~/.config/hypr/local.conf
 ```
+- Edit `monitors.conf` for your displays. Run `hyprctl monitors` for names and modes, or use `nwg-displays`. The `preferred, auto` fallback works for a single screen as-is.
+- `local.conf` is for machine-specific Hyprland bits (GPU driver, input quirks). It can stay empty.
 
-- **`monitors.conf`** — your displays. Get names/modes with `hyprctl monitors`,
-  or use `nwg-displays`. The default `monitor = , preferred, auto, 1` works for
-  most single setups as-is.
-- **`local.conf`** — anything machine-specific (GPU driver, primary output,
-  input tweaks, app→monitor rules). It's sourced last by `hyprland.conf`.
-  All examples are commented out, so an empty/unedited one is fine.
+### 4. Add wallpapers
+Put animated wallpapers in `~/Wallpapers/animated/` (see the Wallpapers section). The bar regenerates its color palette from the current wallpaper automatically.
 
-Install the dependencies below, then log into Hyprland.
+### 5. Enable monitor brightness
+`ddcutil` needs you in the `i2c` group:
+```
+sudo usermod -aG i2c $USER
+```
+Log out and back in for it to take effect.
 
-## Dependencies
+### 6. Log into Hyprland
+Select Hyprland at your display manager (or start it from a TTY).
 
-Arch package names (I'm on CachyOS). Other distros: same tools, translate the
-names; Quickshell may need building from source.
+## Wallpapers
 
-**Core:** `hyprland` · `quickshell` (AUR) · `mako` · `xdg-desktop-portal-hyprland`
-· `pipewire` · `wireplumber`
+The animated wallpapers I use are pixel-art scenes by **Anas Abdin**: <https://www.tumblr.com/anasabdin>. The color extraction, nearest-neighbor upscaling, and wallpaper transition are tuned for that pixel-art style, so photos and other kinds of images may not look as good.
 
-**Bar features:** `ddcutil` (monitor brightness) · `nethogs` (per-app network) ·
-`jq` · `gawk`
+## Fonts
 
-**Used by the Hyprland config:** `kitty` · `wofi` · `swww`/`awww` (animated
-wallpaper) · `imagemagick` + `python-pillow` (wallpaper palette) · `grim`
-`slurp` `satty` `wl-clipboard` (screenshots) · `playerctl` `brightnessctl`
-· optional: `nwg-look` `dex` `gnome-keyring` `wlogout` `nwg-displays`
+A Nerd Font is required or the icons render as boxes; I use JetBrainsMono Nerd Font (installed in step 1). The UI text is SF Pro, which is Apple's font, so I can't include it. Without it, set `QS_FONT` to a font you have (before Hyprland starts, e.g. in your shell profile):
+```
+export QS_FONT="Inter"
+```
 
-**Fonts:**
-- **JetBrainsMono Nerd Font — required.** Every icon/glyph comes from it; without
-  a Nerd Font you get tofu boxes (□). It's free.
-- **SF Pro — optional** (the UI text font; it's Apple's, can't be bundled).
-  Don't have it? It still works with a substitute. To use any installed font
-  without editing QML, set `QS_FONT`, e.g. `export QS_FONT="Inter"` before
-  Hyprland starts.
+## What's where
 
-## Auto-detects (nothing to edit)
+- `hypr/` — Hyprland config and its scripts: the workspace carousel, wallpaper cycling and theming, taskbar, minimize, alt-tab.
+- `quickshell/` — the bar (`Bar.qml`), the alt-tab pie, notification scripts, system-monitor helpers, shaders.
+- `mako/` — notification styling. The bar's tray reads from mako.
 
-- **GPU + temps** — finds your GPU and CPU/GPU temp sensors by scanning `/sys`,
-  so it works on AMD/Intel/Nvidia with no hardcoded paths.
-- **Monitor brightness** — one slider per DDC/CI monitor, built from
-  `ddcutil detect`. Any monitor count; virtual/headless outputs are skipped.
+## Swapping mako
 
-## Good to know
+mako is fairly baked in, so this isn't a one-liner. The tray shells out to `makoctl` and reads mako's JSON, and the theming and silencing rewrite mako's config file. To use something else (dunst, swaync, etc.), port these:
 
-- **mako is required** for the notification tray — the bar reads notifications
-  from it; it isn't its own notification daemon.
-- **`ddcutil`** needs the `i2c-dev` module and your user in the `i2c` group:
-  `sudo usermod -aG i2c $USER` (then re-login). Laptop built-in screens use
-  backlight, not DDC/CI, so they won't get a slider — use the brightness keys.
-- **`nethogs` runs via `sudo`** for the network widget. To skip the password
-  prompt, add a sudoers rule for it; otherwise that one widget stays blank.
-- **Wallpapers** live in `~/Wallpapers/animated/` (or edit `wallpaper-cycle.sh`).
-- **Qt theming** assumes `qt6ct` + Breeze (set via env vars in `hyprland.conf`).
+- `quickshell/notif-bump.sh` — `makoctl list -j` and the on-notify hook
+- `quickshell/notif-clear.sh` — `makoctl dismiss`
+- `quickshell/notif-activate.sh` — `makoctl invoke`
+- `quickshell/notif-silence.sh` — rewrites mako's per-app silence rules
+- `quickshell/notif-theme-mako.sh` — regenerates mako's colors from the wallpaper
+- `mako/config` — the config format
+- `quickshell/Bar.qml` — assumes mako's record fields (`app_icon`, `desktop_entry`, …)
 
-## License
+## Notes
 
-It's dotfiles — crib freely. No formal license; add an MIT `LICENSE` if you want
-to be explicit. The vendored wofi theme in `hypr/wofi/repo/` keeps its own.
+- mako is required for the notification tray; it's the actual daemon and the bar is the frontend.
+- `nethogs` runs under sudo for the network widget; without a sudoers rule it stays blank.
+- GPU, temperature sensors, and monitor brightness all auto-detect, so there's nothing to hardcode.
