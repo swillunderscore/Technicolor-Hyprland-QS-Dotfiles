@@ -701,6 +701,9 @@ PanelWindow {
 
     // Sink that the bar pill (icon, %, slider) drives. null → follow system default.
     property var barControlledSink: null
+    // True once the user has explicitly chosen a sink in the volume popup; stops
+    // the auto-picker from overriding their choice on the next sink change.
+    property bool userPickedSink: false
     readonly property var audioSink: {
         if (barControlledSink && barControlledSink.audio && audioSinks.indexOf(barControlledSink) !== -1)
             return barControlledSink
@@ -728,41 +731,47 @@ PanelWindow {
         return ((s.description || "") + " " + (s.nickname || "") + " " + (s.name || "")).toLowerCase()
     }
     function autoPickSink() {
+        // Respect an explicit choice from the popup — never override it.
+        if (bar.userPickedSink) return
         var sinks = bar.audioSinks
-        // Keep current selection if still present
-        if (bar.barControlledSink !== null && sinks.indexOf(bar.barControlledSink) !== -1) return
-        bar.barControlledSink = null
-        // First pass: Ryzen-family HD Audio Controller
-        for (var i = 0; i < sinks.length; i++) {
+        var pick = null
+        // First pass: onboard Ryzen-family HD Audio Controller
+        for (var i = 0; i < sinks.length && !pick; i++) {
             var b = sinkBlob(sinks[i])
             if ((b.indexOf("hd audio") !== -1 || b.indexOf("hd-audio") !== -1) &&
                 (b.indexOf("family") !== -1 || b.indexOf("ryzen") !== -1 ||
                  b.indexOf("starship") !== -1 || b.indexOf("matisse") !== -1 ||
-                 b.indexOf("vermeer") !== -1 || b.indexOf("raphael") !== -1)) {
-                bar.barControlledSink = sinks[i]
-                return
-            }
+                 b.indexOf("vermeer") !== -1 || b.indexOf("raphael") !== -1))
+                pick = sinks[i]
         }
         // Second pass: any onboard HD Audio that isn't HDMI
-        for (var j = 0; j < sinks.length; j++) {
+        for (var j = 0; j < sinks.length && !pick; j++) {
             var b2 = sinkBlob(sinks[j])
             if ((b2.indexOf("hd audio") !== -1 || b2.indexOf("hd-audio") !== -1) &&
-                b2.indexOf("hdmi") === -1) {
-                bar.barControlledSink = sinks[j]
-                return
-            }
+                b2.indexOf("hdmi") === -1)
+                pick = sinks[j]
         }
-        // Third pass: any analog sink
-        for (var k = 0; k < sinks.length; k++) {
-            var b3 = sinkBlob(sinks[k])
-            if (b3.indexOf("analog") !== -1 && b3.indexOf("hdmi") === -1) {
-                bar.barControlledSink = sinks[k]
-                return
-            }
-        }
+        // No "any analog" fallback — that grabbed whatever loaded first (often a
+        // high-priority Bluetooth/USB speaker) and locked onto it. When nothing
+        // onboard is found yet, leave it null so the bar follows the system
+        // default; this re-runs as sinks appear and upgrades to onboard once seen.
+        bar.barControlledSink = pick
     }
     onAudioSinksChanged: autoPickSink()
-    Component.onCompleted: autoPickSink()
+    Component.onCompleted: { autoPickSink(); publishSink() }
+
+    // Publish the id of the sink the bar currently drives so the keyboard volume
+    // keys (hypr/volume.sh) act on the same sink the popup selected, instead of
+    // the system default. Only the primary bar writes the file to avoid races.
+    Process { id: sinkPublish }
+    function publishSink() {
+        if (!isPrimary) return
+        var id = bar.audioSink ? bar.audioSink.id : 0
+        if (!id) return
+        sinkPublish.command = ["sh", "-c", "printf '%s' " + id + " > \"$XDG_RUNTIME_DIR/quickshell-bar-sink\""]
+        sinkPublish.running = true
+    }
+    onAudioSinkChanged: publishSink()
 
     // Static height — never changes, so bar never shifts
     anchors { bottom: true; left: true; right: true }
@@ -3094,7 +3103,7 @@ PanelWindow {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
                                             hoverEnabled: true
-                                            onClicked: { if (sink) bar.barControlledSink = sink }
+                                            onClicked: { if (sink) { bar.userPickedSink = true; bar.barControlledSink = sink } }
                                         }
                                     }
 
