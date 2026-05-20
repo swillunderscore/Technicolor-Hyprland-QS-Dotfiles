@@ -1,0 +1,13 @@
+# monitors.conf.example
+#
+# Copy to monitors.conf and configure YOUR displays. This file is git-ignored.
+# List your outputs and available modes with:   hyprctl monitors
+# Format:  monitor = NAME, RESOLUTION@REFRESH, POSITION, SCALE
+# Tip: install `nwg-displays` for a GUI that writes this file for you.
+
+# Safe fallback — auto-configure every connected output at scale 1:
+monitor = , preferred, auto, 1
+
+# Examples (replace the fallback above with real values for your setup):
+# monitor = DP-1, 2560x1440@165, 0x0, 1
+# monitor = DP-2, 1920x1080@144, 2560x0, 1

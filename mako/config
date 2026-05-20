@@ -1,0 +1,28 @@
+# QS_THEME_BEGIN
+# (managed by ~/.config/quickshell/notif-theme-mako.sh — regenerated on wallpaper change)
+default-timeout=7000
+on-notify=exec ~/.config/quickshell/notif-bump.sh "$id"
+font=JetBrainsMono Nerd Font 11
+background-color=#5895AFF0
+text-color=#FFFFFF
+border-color=#5895AFF0
+border-size=2
+border-radius=12
+padding=14
+margin=12
+width=380
+max-visible=3
+layer=overlay
+anchor=top-right
+# QS_THEME_END
+
+[urgency=low]
+border-color=#A6E3A1CC
+
+[urgency=high]
+border-color=#F38BA8CC
+default-timeout=0
+
+# QS_SILENCE_BEGIN
+# (managed by ~/.config/quickshell/notif-silence.sh — do not edit by hand)
+# QS_SILENCE_END

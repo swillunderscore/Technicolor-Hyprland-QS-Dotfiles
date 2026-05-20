@@ -1,0 +1,17 @@
+# Per-machine / personal — created by install.sh from the .example files
+hypr/local.conf
+hypr/monitors.conf
+quickshell/colors.env
+
+# Runtime state
+quickshell/silenced-apps.json
+quickshell/silenced-apps.json.lock
+
+# Editor / backup noise
+*.bak
+*.bak*
+*~
+*.swp
+
+# Nested theme-repo metadata (the wofi theme is vendored, not a submodule)
+hypr/wofi/repo/.git/

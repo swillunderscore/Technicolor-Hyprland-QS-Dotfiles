@@ -1,0 +1,26 @@
+# local.conf.example
+#
+# Copy this to local.conf (the installer does it for you) and put anything
+# machine-specific here. hyprland.conf sources local.conf LAST, so settings
+# here override/extend the shared config. local.conf itself is git-ignored.
+#
+# Everything below is commented out — uncomment and edit what you need.
+
+# VA-API video-decode driver for your GPU:
+#   AMD = radeonsi    Intel = iHD    Nvidia = nvidia
+# env = LIBVA_DRIVER_NAME,radeonsi
+
+# Make a specific output the XWayland "primary" (names from `hyprctl monitors`)
+# exec = xrandr --output DP-1 --primary
+
+# Per-device input tweak (find the name in `hyprctl devices`)
+# device {
+#   name = my-mouse
+#   sensitivity = -0.5
+# }
+
+# Add your user's flatpak exports to XDG_DATA_DIRS (so flatpak app icons resolve)
+# env = XDG_DATA_DIRS,/usr/local/share:/usr/share:/var/lib/flatpak/exports/share:/home/YOU/.local/share/flatpak/exports/share
+
+# Route specific apps (e.g. games) to a specific monitor by description
+# windowrule = monitor desc:Your Monitor Description, match:class ^(gamescope)$
