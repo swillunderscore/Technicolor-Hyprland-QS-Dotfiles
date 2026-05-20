@@ -1,14 +1,15 @@
 # Technicolor
 
-I like [Hyprland](https://hyprland.org/), [Quickshell](https://quickshell.org/), and [mako](https://github.com/emersion/mako).
+🚨 This is basically entirely vibe coded 🚨
 
-So I built my desktop around them. The bar is custom Quickshell, and its colors are pulled live from the current wallpaper. Workspaces are one long carousel that slides across every monitor together. It has an app launcher, live system monitors, a notification tray, per-monitor brightness, and an alt-tab pie menu.
+Uses [Hyprland](https://hyprland.org/), [Quickshell](https://quickshell.org/), and [mako](https://github.com/emersion/mako).
 
-I design things, I don't really write code, so this is vibe-coded. It runs well.
+The bar is custom Quickshell, and its colors are pulled live from the current wallpaper. Workspaces are one long carousel that slides across every monitor together. It has an app launcher, live system monitors, a notification tray, per-monitor brightness, and an alt-tab pie menu.
+
 
 ## Demo
 
-<!-- Open this file in GitHub's web editor (the pencil button) and drag a video clip in. It embeds as a player. -->
+<!--[![Demo](https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg)](https://youtu.be/VIDEO_ID)-->
 
 ![screenshot](screenshot.png)
 
@@ -21,6 +22,30 @@ Follow these top to bottom and you'll have a working setup.
 Everything needed: `hyprland`, `quickshell`, `mako`, `xdg-desktop-portal-hyprland`, `pipewire` + `wireplumber`, `ddcutil`, `nethogs`, `jq`, `gawk`, `kitty`, `wofi`, `swww`, `imagemagick`, `python-pillow`, `grim`, `slurp`, `satty`, `wl-clipboard`, `playerctl`, `brightnessctl`, plus a Nerd Font (JetBrainsMono Nerd Font). Optional: `nwg-look`, `nwg-displays`, `dex`, `wlogout`, `gnome-keyring`.
 
 Most share the same package name across distros. The newer ones to watch are `quickshell`, `swww`, and `satty`, plus Hyprland itself on older distros. Quickshell's per-distro install page: <https://quickshell.org/docs/master/guide/install-setup/>
+
+
+  What each piece is for:
+
+  - `hyprland` — the Wayland compositor everything runs on
+  - `quickshell` — the framework the bar is built in
+  - `mako` — notification daemon; the bar's tray is a frontend for it
+  - `xdg-desktop-portal-hyprland` — screen-share and file-picker support for apps
+  - `pipewire` + `wireplumber` — audio, and the volume controls
+  - `ddcutil` — external-monitor brightness over the cable (the brightness sliders)
+  - `nethogs` — per-app network usage (the network widget)
+  - `jq` — JSON parsing in the scripts
+  - `gawk` — number crunching in the system-monitor script
+  - `kitty` — terminal
+  - `wofi` — app launcher / run menu
+  - `swww` — animated wallpaper daemon
+  - `imagemagick` + `python-pillow` — pull the color palette out of the wallpaper
+  - `grim` + `slurp` + `satty` + `wl-clipboard` — screenshots: capture, region-select, annotate, copy
+  - `playerctl` — media keys (play/pause/next)
+  - `brightnessctl` — laptop backlight keys
+  - a Nerd Font (I use JetBrainsMono Nerd Font) — every icon and glyph in the UI
+  - optional: `nwg-look` (GTK theme GUI), `nwg-displays` (monitor-layout GUI that writes
+  monitors.conf), `dex` (runs XDG autostart entries), `wlogout` (power menu), `gnome-keyring`
+  (secrets)
 
 **Arch** (my distro; a few are AUR, so use `paru`/`yay`):
 ```
