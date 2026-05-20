@@ -1,6 +1,7 @@
 # Technicolor
 
-🚨 This is basically entirely vibe coded 🚨
+🚨 This is basically entirely vibe coded (including most of the below lol)
+   But 100% designed by me aside from the bugs :) 🚨
 
 Uses [Hyprland](https://hyprland.org/), [Quickshell](https://quickshell.org/), and [mako](https://github.com/emersion/mako).
 
