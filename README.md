@@ -10,7 +10,8 @@ The bar is custom Quickshell, and its colors are pulled live from the current wa
 
 ## Demo
 
-<!--[![Demo](https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg)](https://youtu.be/VIDEO_ID)-->
+clickable video
+[![Demo](https://img.youtube.com/vi/fFTZ00qKpcg/maxresdefault.jpg)](https://youtu.be/fFTZ00qKpcg)
 
 ![screenshot](screenshot.png)
 
