@@ -153,7 +153,7 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 
 - **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and the hyprpm plugins compile against your exact Hyprland version (hyprpm handles that, you just need base-devel/cmake).
 - **Resolutions & scale:** nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on a 4K display you'll want a Hyprland monitor scale like any px-based UI; the Qt theming and chromakey shaders are scale-aware.
-- **Hardware:** GPU-agnostic (AMD/Intel tested; Nvidia works with the usual Hyprland-on-Nvidia caveats). Monitor brightness needs `ddcutil`-compatible displays.
+- **Hardware:** GPU-agnostic. The bar's GPU usage/VRAM/temp auto-detect: amdgpu sysfs first, then `nvidia-smi` (proprietary/open Nvidia), with graceful zeros otherwise; CPU temp covers AMD/Intel/ARM hwmon names. Nvidia setup (env vars, cursor quirk, driver notes) is a ready-to-uncomment block in `local.conf.example`. The swap widget reads all swap devices and labels itself ZRAM or SWAP automatically. Monitor brightness needs `ddcutil`-compatible displays.
 - **Spotify:** the theming assumes the native client (spicetify paths + window class `Spotify`); flatpak Spotify needs spicetify's flatpak setup.
 
 ## One-block install (for the impatient)

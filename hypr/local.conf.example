@@ -1,46 +1,13 @@
-# local.conf.example
-#
-# Copy this to local.conf (the installer does it for you) and put anything
-# machine-specific here. hyprland.conf sources local.conf LAST, so settings
-# here override/extend the shared config. local.conf itself is git-ignored.
-#
-# Everything below is commented out — uncomment and edit what you need.
 
-# VA-API video-decode driver for your GPU:
-#   AMD = radeonsi    Intel = iHD    Nvidia = nvidia
-# env = LIBVA_DRIVER_NAME,radeonsi
-
-# Make a specific output the XWayland "primary" (names from `hyprctl monitors`)
-# exec = xrandr --output DP-1 --primary
-
-# Per-device input tweak (find the name in `hyprctl devices`)
-# device {
-#   name = my-mouse
-#   sensitivity = -0.5
+# ---- Nvidia ----
+# The standard Hyprland-on-Nvidia set (full story: Hyprland wiki -> Nvidia).
+# Driver: nvidia-open-dkms (Turing/GTX16xx+) or nvidia-dkms, plus nvidia-utils
+# (+ lib32-nvidia-utils for Steam); nvidia_drm.modeset=1 is default on recent
+# drivers. The bar's GPU usage/VRAM/temp need no config — they auto-detect
+# amdgpu sysfs first, then fall back to nvidia-smi.
+# env = LIBVA_DRIVER_NAME,nvidia
+# env = __GLX_VENDOR_LIBRARY_NAME,nvidia
+# env = ELECTRON_OZONE_PLATFORM_HINT,auto
+# cursor {
+#     no_hardware_cursors = true
 # }
-
-# Add your user's flatpak exports to XDG_DATA_DIRS (so flatpak app icons resolve)
-# env = XDG_DATA_DIRS,/usr/local/share:/usr/share:/var/lib/flatpak/exports/share:/home/YOU/.local/share/flatpak/exports/share
-
-# Route specific apps (e.g. games) to a specific monitor by description
-# windowrule = monitor desc:Your Monitor Description, match:class ^(gamescope)$
-
-# ---- Technicolor chromakey glass (Spotify / Dolphin) ----
-# Needs the Hypr-DarkWindow plugin (hyprpm add micha4w/Hypr-DarkWindow) and
-# ABSOLUTE shader paths (the plugin does not expand ~) — hence local.conf.
-# After editing these, run ~/.config/hypr/tckey-reload.sh (plugin caches args
-# across plain reloads).
-#
-# plugin:darkwindow:shader[tckey] {
-#     path = /home/YOU/.config/hypr/technicolor-chromakey.glsl
-#     args = sim=0.012 choke=0.65
-#     introduces_transparency = true
-# }
-# windowrule = darkwindow:shade tckey, match:class ^([Ss]potify)$
-#
-# plugin:darkwindow:shader[tckeydolph] {
-#     path = /home/YOU/.config/hypr/technicolor-chromakey-dolphin.glsl
-#     args = sim=0.012 choke=0.65 keyc=[0.003922 0.729412 0.737255]
-#     introduces_transparency = true
-# }
-# windowrule = darkwindow:shade tckeydolph, match:class ^(org.kde.dolphin)$

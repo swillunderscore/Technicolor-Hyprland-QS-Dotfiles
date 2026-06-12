@@ -897,6 +897,11 @@ PanelWindow {
                     bar.vramTotalGB = vt / 1073741824
                     bar.vramUsage = Math.round(100 * vu / vt)
                     bar.vramHist = bar.pushHist(bar.vramHist, bar.vramUsage)
+                } else if (p[0] === "gputemp") {
+                    // emitted by sysmon's nvidia-smi path (no hwmon on the
+                    // proprietary driver) — overrides the hwmon scan
+                    var gt = parseInt(p[1])
+                    if (!isNaN(gt) && gt > 10) bar.gpuTemp = gt
                 } else if (p[0] === "mem") {
                     var mt = parseFloat(p[1]) || 1, ma = parseFloat(p[2]) || 0
                     bar.memUsage = Math.round(100 * (1 - ma / mt))
