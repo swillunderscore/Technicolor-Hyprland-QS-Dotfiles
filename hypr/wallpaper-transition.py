@@ -93,7 +93,13 @@ def send_frame(path: str) -> None:
         ["awww", "img", path,
          "--resize", "crop",
          "--filter", "Nearest",
-         "--transition-type", "none"],
+         "--transition-type", "none",
+         # awww 0.12.1 regression: 'none' sets transition-step=255 (instant)
+         # but NOT the fps, so each apply waits on the default frame timer
+         # (~430ms). The 21 frames here then take ~9s and pin the daemon,
+         # stuttering animated wallpapers. An explicit high fps cuts each
+         # apply to ~37ms. (0.12.0 didn't need this.)
+         "--transition-fps", "255"],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -127,6 +133,24 @@ def main() -> int:
         ]
         old = old_frames[0]
 
+    # Cap the working resolution. The reveal is a brief dissolve, but computing
+    # it at full wallpaper res (upscaled stills are 5120x3200 ≈ 410ms/frame)
+    # blows the ~70ms frame budget ~6x and the transition stutters. Downscale
+    # the working copies; the caller applies the crisp full-res image at the
+    # end, and awww rescales each frame to the screen so the reveal still
+    # covers the whole monitor.
+    MAX_DIM = 1920
+    h0, w0 = new.shape[:2]
+    if max(h0, w0) > MAX_DIM:
+        scale = MAX_DIM / max(h0, w0)
+        size = (max(1, round(w0 * scale)), max(1, round(h0 * scale)))
+        new_frames = [np.array(Image.fromarray(f).resize(size, Image.LANCZOS))
+                      for f in new_frames]
+        old_frames = [np.array(Image.fromarray(f).resize(size, Image.LANCZOS))
+                      for f in old_frames]
+        new = new_frames[0]
+        old = old_frames[0]
+
     # Cumulative animation times for sampling each animation at wall-clock t.
     new_cum = np.cumsum(np.array(new_durations, dtype=np.float32))
     new_total = float(new_cum[-1])
@@ -144,6 +168,15 @@ def main() -> int:
             old_offset = elapsed % old_total
         except OSError:
             pass
+
+    # Phase NEW's animation so it arrives at frame 0 exactly when the caller's
+    # `awww img NEW` takes over (awww always starts animations at frame 0).
+    # Without this the reveal plays NEW forward to ~frame 15, then the apply
+    # snaps it back to 0 — a visible animation "restart" when the transition
+    # ends. For a still NEW (new_total == 0) the offset is irrelevant.
+    new_offset = 0.0
+    if new_total > 0:
+        new_offset = (new_total - (TOTAL_DURATION % new_total)) % new_total
 
     luma = (0.2126 * new[:, :, 0]
             + 0.7152 * new[:, :, 1]
@@ -183,6 +216,22 @@ def main() -> int:
     if args.at_start:
         subprocess.Popen(args.at_start, shell=True)
 
+    # Cache-warm strategy for NEW. awww has no decode-only command, so any warm
+    # is a real (briefly-displayed) apply — fire it at the wrong moment and it
+    # flashes NEW mid-reveal ("wrong frame near the end").
+    #   - If NEW is already cached (heavy gifs are pre-pinned, or it was shown
+    #     recently), the caller's final apply is already warm — fire NO warm, so
+    #     nothing displays until the clean handoff at the end.
+    #   - If NEW is uncached, fire the warm late enough that its ~0.3s cold
+    #     decode lands at the END of the reveal, not partway through. The decode
+    #     overlaps the last few static frames (no flash) and is warm by handoff.
+    new_key = args.new.replace("/", "_")
+    new_cached = bool(glob.glob(
+        os.path.expanduser(f"~/.cache/awww/*/{new_key}__*_crop_Argb")))
+    WARM_AT = None if new_cached else (NFRAMES - 6)
+    warmed = False
+    warm_proc = None
+
     start = time.monotonic()
     # Skip the last frame: caller fires the animated wallpaper, which
     # completes the reveal AND begins animation in one swap.
@@ -196,10 +245,11 @@ def main() -> int:
         alpha3 = alpha[..., None]
 
         # Sample both animations at real wall-clock progress. OLD continues
-        # from where it was when the transition started; NEW starts from 0.
+        # from where it left off; NEW is phased (new_offset) to land on frame 0
+        # at the handoff, so awww's apply continues it without a rewind.
         wall_t = (i + 1) * FRAME_INTERVAL
 
-        new_t = wall_t % new_total if new_total > 0 else 0.0
+        new_t = (new_offset + wall_t) % new_total if new_total > 0 else 0.0
         new_idx = min(int(np.searchsorted(new_cum, new_t, side="right")),
                       len(new_frames) - 1)
         new_f = new_frames[new_idx].astype(np.float32)
@@ -217,6 +267,16 @@ def main() -> int:
             in_flight.result()
         in_flight = executor.submit(send_frame, path)
 
+        # Kick off the cache warm once (only when uncached; see WARM_AT above).
+        if WARM_AT is not None and i == WARM_AT and not warmed:
+            warmed = True
+            warm_proc = subprocess.Popen(
+                ["awww", "img", args.new,
+                 "--fill-color", "000000", "--resize", "crop",
+                 "--filter", "Nearest", "-t", "none", "--transition-fps", "255"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
         now = time.monotonic()
         if now < target:
             time.sleep(target - now)
@@ -224,6 +284,30 @@ def main() -> int:
     if in_flight is not None:
         in_flight.result()
     executor.shutdown()
+
+    # For an uncached NEW, wait for the pre-warm to finish so the handoff apply
+    # below is fast (the warm primed awww's cache during the reveal). Capped low
+    # — a huge gif can't decode in time regardless; it cold-decodes once here,
+    # then awww's on-disk cache keeps it warm.
+    if warm_proc is not None:
+        try:
+            warm_proc.wait(timeout=2)
+        except Exception:
+            pass
+
+    # Single authoritative handoff: ALWAYS apply the animated gif last, so it
+    # actually animates. The trailing static reveal frames repaint over any
+    # earlier warm display, so without this the wallpaper would sit FROZEN on the
+    # last reveal frame. Done here (not from the calling shell after python
+    # exits) so the gap stays under the reveal's ~70ms cadence — the cache is
+    # warm in both cases (cached, or primed by the warm above), so it's ~48ms.
+    # The caller does NOT apply after a transition (see wallpaper-cycle.sh).
+    subprocess.run(
+        ["awww", "img", args.new,
+         "--fill-color", "000000", "--resize", "crop",
+         "--filter", "Nearest", "-t", "none", "--transition-fps", "255"],
+        check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
     return 0
 
 

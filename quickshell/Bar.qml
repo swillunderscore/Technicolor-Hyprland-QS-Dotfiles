@@ -41,8 +41,8 @@ PanelWindow {
         { icon: "vesktop",                          cmd: "vesktop",                                 nerdGlyph: "", imgPath: "" },
         { icon: "steam",                            cmd: "steam",                                   nerdGlyph: "", imgPath: "" },
         { icon: "",                                 cmd: bar.homeDir + "/.local/bin/launch_slippi_and_keyb0xx.sh",nerdGlyph: "", imgPath: "file://" + bar.homeDir + "/Slippi/73bff6acc99072beb352c16a24b3e6cd.png" },
-        { icon: "org.kde.dolphin",                  cmd: "dolphin",                                 nerdGlyph: "", imgPath: "" },
-        { icon: "com.spotify.Client",               cmd: "flatpak run com.spotify.Client",          nerdGlyph: "", imgPath: "file:///usr/share/icons/char-white/apps/16/spotify-client.svg" },
+        { icon: "org.kde.dolphin",                  cmd: "~/.config/hypr/dolphin-tc.sh",                                 nerdGlyph: "", imgPath: "" },
+        { icon: "spotify",                          cmd: "spotify",                                 nerdGlyph: "", imgPath: "file:///usr/share/icons/char-white/apps/16/spotify-client.svg" },
         { icon: "org.telegram.desktop",             cmd: "flatpak run org.telegram.desktop",        nerdGlyph: "", imgPath: "" },
         { icon: "io.missioncenter.MissionCenter",   cmd: "missioncenter",                           nerdGlyph: "", imgPath: "" },
         { icon: "unityhub",                         cmd: "unityhub",                                nerdGlyph: "", imgPath: "" }
@@ -449,6 +449,31 @@ PanelWindow {
         }
     }
 
+    // Telegram's TOTAL unread incl muted chats, from its Unity LauncherEntry
+    // badge (muted chats never fire mako, so this is their only source).
+    // Bridged by ~/.config/hypr/tg-badge-listener.py.
+    property int tgCount: 0
+    property bool tgVisible: false
+    FileView {
+        id: tgCountFile
+        path: bar.runtimeDir + "/quickshell-tg-count.json"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: bar.parseTgCount()
+        onLoadFailed: { bar.tgCount = 0; bar.tgVisible = false }
+    }
+    function parseTgCount() {
+        try {
+            var t = tgCountFile.text()
+            var o = t ? JSON.parse(t) : {}
+            bar.tgCount = o.count || 0
+            bar.tgVisible = !!o.visible && (o.count || 0) > 0
+        } catch (e) { bar.tgCount = 0; bar.tgVisible = false }
+    }
+    // Telegram's UNMUTED unread (from mako). When the total above is > 0 but
+    // this is 0, every unread is muted → the badge is drawn gray.
+    readonly property int tgUnmuted: notifCountForClass("org.telegram.desktop")
+
     // Full notification log — append-only ring buffer (cap 50) written by
     // notif-bump.sh. Each entry: {id, ts, key, display, app_name, desktop_entry,
     // summary, body, urgency}. Cleared in lockstep with counts when the user
@@ -619,14 +644,39 @@ PanelWindow {
         return total
     }
 
+    // Effective badge for a window class: Telegram uses its Unity total (incl
+    // muted chats); everything else uses the mako unread count. muted == there
+    // is a total but nothing unmuted (→ gray badge).
+    function effectiveBadgeCount(cls) {
+        if (cls && cls.toLowerCase().indexOf("telegram") >= 0) {
+            var t = bar.tgVisible ? bar.tgCount : 0
+            return t > 0 ? t : bar.tgUnmuted
+        }
+        return bar.notifCountForClass(cls)
+    }
+    function effectiveBadgeMuted(cls) {
+        if (cls && cls.toLowerCase().indexOf("telegram") >= 0)
+            return (bar.tgVisible ? bar.tgCount : 0) > 0 && bar.tgUnmuted <= 0
+        return false
+    }
+
     // Flat array of {app, count} — handy for diagnostics & for the
     // workspace badge sum below. Used only as a list of notif-bearing apps.
     readonly property var allBadges: {
         var badges = []
         var counts = bar.notifCounts || {}
         for (var k in counts) {
-            if (counts[k] > 0) badges.push({ app: k, count: counts[k] })
+            // Telegram is handled below from its Unity total (incl muted), so
+            // skip its mako entry here to avoid double-counting.
+            if (counts[k] > 0 && k.toLowerCase().indexOf("telegram") < 0)
+                badges.push({ app: k, count: counts[k], muted: false })
         }
+        // Telegram: prefer the Unity total (incl muted chats); fall back to the
+        // mako count if the bridge hasn't reported yet. muted == no unmuted.
+        var tgTotal = (bar.tgVisible ? bar.tgCount : 0)
+        if (tgTotal <= 0) tgTotal = bar.tgUnmuted
+        if (tgTotal > 0)
+            badges.push({ app: "org.telegram.desktop", count: tgTotal, muted: bar.tgUnmuted <= 0 })
         return badges
     }
 
@@ -697,6 +747,33 @@ PanelWindow {
             if (total > 0) counts[wsKey] = total
         }
         return counts
+    }
+
+    // Per-workspace: true when EVERY badge-bearing app on that dot is muted-only
+    // (Telegram muted with nothing unmuted, and no other notifying app). Drives
+    // the gray badge color — "only muted notifications on this workspace".
+    readonly property var workspaceBadgeMuted: {
+        var res = {}
+        var badges = bar.allBadges
+        var map = bar.windowsByWs || {}
+        for (var wsKey in map) {
+            var classes = map[wsKey] || []
+            var anyBadge = false, anyUnmuted = false
+            for (var k = 0; k < badges.length; k++) {
+                var bname = (badges[k].app || "").toLowerCase()
+                if (!bname) continue
+                for (var m = 0; m < classes.length; m++) {
+                    var c = classes[m] || ""
+                    if (c.indexOf(bname) >= 0 || (bname.length >= 3 && bname.indexOf(c) >= 0)) {
+                        anyBadge = true
+                        if (!badges[k].muted) anyUnmuted = true
+                        break
+                    }
+                }
+            }
+            res[wsKey] = anyBadge && !anyUnmuted
+        }
+        return res
     }
 
     // Sink that the bar pill (icon, %, slider) drives. null → follow system default.
@@ -1652,6 +1729,7 @@ PanelWindow {
                     // across every app with a window on this workspace
                     Rectangle {
                         readonly property int badgeCount: bar.workspaceBadgeCounts[dotDelegate.wsId.toString()] || 0
+                        readonly property bool badgeMuted: bar.workspaceBadgeMuted[dotDelegate.wsId.toString()] || false
                         visible: badgeCount > 0
                         anchors.top: parent.top
                         anchors.right: parent.right
@@ -1660,14 +1738,14 @@ PanelWindow {
                         width: Math.max(dotBadgeText.implicitWidth + (isPrimary ? 6 : 4), isPrimary ? 16 : 12)
                         height: isPrimary ? 14 : 11
                         radius: height / 2
-                        color: bar.gradientEnd
+                        color: badgeMuted ? Qt.rgba(0.42, 0.44, 0.5, 0.92) : bar.gradientEnd
                         border.color: Qt.rgba(0, 0, 0, 0.6); border.width: 1
                         z: 2
                         Text {
                             id: dotBadgeText
                             anchors.centerIn: parent
                             text: parent.badgeCount > 99 ? "99+" : parent.badgeCount.toString()
-                            color: bar.contrastText(bar.gradientEnd)
+                            color: bar.contrastText(parent.color)
                             font.pixelSize: isPrimary ? 9 : 7
                             font.bold: true
                             font.family: bar.fontFamily
@@ -4089,7 +4167,16 @@ PanelWindow {
                         if (parts.length < 2) continue
                         var busNum = parseInt(parts[1])
                         if (isNaN(busNum)) continue
-                        mons.push({ name: parts[0] || ("bus " + busNum), bus: busNum, brightness: 50 })
+                        // Carry over the last-known brightness for this bus. The
+                        // detect re-runs on every menu open; without this, each
+                        // open rebuilt the list at 50% and the sliders flashed to
+                        // 50 before the (slow) getvcp re-read corrected them. A
+                        // genuinely new monitor starts at 50 until its first read.
+                        var carried = 50
+                        for (var k = 0; k < bar.ddcMonitors.length; k++) {
+                            if (bar.ddcMonitors[k].bus === busNum) { carried = bar.ddcMonitors[k].brightness; break }
+                        }
+                        mons.push({ name: parts[0] || ("bus " + busNum), bus: busNum, brightness: carried })
                     }
                 }
                 bar.ddcMonitors = mons
@@ -4198,7 +4285,9 @@ PanelWindow {
 
                         // Notification badge for this minimized app
                         Rectangle {
-                            readonly property int badgeCount: bar.notifCountForClass(minDelegate.winData ? (minDelegate.winData.appId || "") : "")
+                            readonly property string minCls: minDelegate.winData ? (minDelegate.winData.appId || "") : ""
+                            readonly property int badgeCount: bar.effectiveBadgeCount(minCls)
+                            readonly property bool badgeMuted: bar.effectiveBadgeMuted(minCls)
                             visible: badgeCount > 0
                             anchors.top: parent.top
                             anchors.right: parent.right
@@ -4207,14 +4296,14 @@ PanelWindow {
                             width: Math.max(minBadgeText.implicitWidth + (isPrimary ? 6 : 4), isPrimary ? 16 : 12)
                             height: isPrimary ? 14 : 11
                             radius: height / 2
-                            color: bar.gradientEnd
+                            color: badgeMuted ? Qt.rgba(0.42, 0.44, 0.5, 0.92) : bar.gradientEnd
                             border.color: Qt.rgba(0, 0, 0, 0.6); border.width: 1
                             z: 2
                             Text {
                                 id: minBadgeText
                                 anchors.centerIn: parent
                                 text: parent.badgeCount > 99 ? "99+" : parent.badgeCount.toString()
-                                color: bar.contrastText(bar.gradientEnd)
+                                color: bar.contrastText(parent.color)
                                 font.pixelSize: isPrimary ? 9 : 7
                                 font.bold: true
                                 font.family: bar.fontFamily

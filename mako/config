@@ -3,9 +3,9 @@
 default-timeout=7000
 on-notify=exec ~/.config/quickshell/notif-bump.sh "$id"
 font=JetBrainsMono Nerd Font 11
-background-color=#5895AFF0
-text-color=#FFFFFF
-border-color=#5895AFF0
+background-color=#B8C8B7F0
+text-color=#000000
+border-color=#B8C8B7F0
 border-size=2
 border-radius=12
 padding=14
@@ -25,4 +25,15 @@ default-timeout=0
 
 # QS_SILENCE_BEGIN
 # (managed by ~/.config/quickshell/notif-silence.sh — do not edit by hand)
+[desktop-entry=org.kde.kded6]
+invisible=1
+[app-name="Network Management"]
+invisible=1
+[app-name="blueman"]
+invisible=1
+[app-name="tray-icon"]
+invisible=1
+[app-name="Cachy-Update"]
+invisible=1
+
 # QS_SILENCE_END

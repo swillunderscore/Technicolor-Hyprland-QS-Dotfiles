@@ -168,14 +168,27 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
     COLORS_CMD="python3 $HOME/.config/hypr/wallpaper-colors.py '$CHOSEN' && ~/.config/quickshell/notif-theme-mako.sh 2>/dev/null"
 
     if [ -n "$PREV_PATH" ] && [ -f "$PREV_PATH" ] && [ "$PREV_PATH" != "$CHOSEN" ]; then
+        # transition.py runs the reveal AND does the final animated apply itself
+        # (a seamless on-cadence handoff). Applying again here would restart the
+        # gif from frame 0 right after — a visible hitch — so we don't.
         python3 "$HOME/.config/hypr/wallpaper-transition.py" \
             "$PREV_PATH" "$CHOSEN" --at-start "$COLORS_CMD"
     else
         eval "$COLORS_CMD"
+        # No transition (first wallpaper / same image): apply directly here.
+        # --transition-fps works around the awww 0.12.1 regression where the
+        # default frame timer otherwise makes every apply take ~430ms.
+        awww img "$CHOSEN" --fill-color 000000 --resize crop --filter Nearest --transition-type none --transition-fps 255
     fi
-
-    awww img "$CHOSEN" --fill-color 000000 --resize crop --filter Nearest --transition-type none
     echo "$CHOSEN" > "$CURRENT_PATH_FILE"
+
+    # Keep awww's cache small — its per-apply latency grows with the file count,
+    # which would make the reveal laggy. Run detached (so it never contends with
+    # the animation the final apply just started — that was a small
+    # post-transition hitch) and after a brief delay. The 9>&- closes the
+    # inherited flock fd so the prune's delay doesn't keep the stacking-lock held
+    # and block the next wallpaper change. See prune-awww-cache.sh.
+    setsid -f "$HOME/.config/hypr/prune-awww-cache.sh" "$CHOSEN" >/dev/null 2>&1 9>&-
 else
     echo "Desktop environment not recognized. Wallpaper not set."
     exit 1

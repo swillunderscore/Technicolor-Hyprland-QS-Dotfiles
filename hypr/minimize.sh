@@ -31,17 +31,25 @@ if [ -n "$cx" ] && [ -n "$cy" ]; then
     #   2. floating (sits over tiles)
     #   3. tiled
     #   tiebreaker: lowest focusHistoryID = most recently focused
+    # "Raycast": hyprctl clients lists windows in STACK ORDER (the same vector
+    # alterzorder manipulates) — so among windows under the cursor, the one
+    # LATEST in the array is the one actually rendered on top. Ranking:
+    #   pinned first, then floating over tiled (separate render passes), then
+    #   true-fullscreen (2 = games) demoted below floats covering them — but
+    #   NOT fullscreen 1 (super+V maximize), which legitimately sits on top —
+    #   finally raw stack position (highest index = topmost).
     addr=$(echo "$clients" | jq -r --argjson cx "$cx" --argjson cy "$cy" '
-        [.[] | select(
-            .mapped == true and .hidden == false and
-            (.workspace.id // 0) > 0 and
-            (.at[0] // 0) <= $cx and $cx < ((.at[0] // 0) + (.size[0] // 0)) and
-            (.at[1] // 0) <= $cy and $cy < ((.at[1] // 0) + (.size[1] // 0))
+        [to_entries[] | {i: .key, w: .value} | select(
+            .w.mapped == true and .w.hidden == false and
+            (.w.workspace.id // 0) > 0 and
+            (.w.at[0] // 0) <= $cx and $cx < ((.w.at[0] // 0) + (.w.size[0] // 0)) and
+            (.w.at[1] // 0) <= $cy and $cy < ((.w.at[1] // 0) + (.w.size[1] // 0))
         )] | sort_by(
-            (if .pinned   then 0 else 1 end),
-            (if .floating then 0 else 1 end),
-            (.focusHistoryID // 999999)
-        ) | .[0].address // empty
+            (if .w.pinned   then 0 else 1 end),
+            (if .w.floating then 0 else 1 end),
+            (if (.w.fullscreen // 0) == 2 then 1 else 0 end),
+            (-.i)
+        ) | .[0].w.address // empty
     ')
 fi
 

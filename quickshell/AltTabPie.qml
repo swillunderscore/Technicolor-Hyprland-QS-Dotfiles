@@ -28,7 +28,7 @@ Scope {
         id: fetchProc
         command: ["bash", "-c",
             "echo '---CURSOR---'; hyprctl cursorpos -j; echo '---WINDOWS---'; " +
-            "hyprctl clients -j | jq -c '[.[] | select(.mapped == true and .hidden == false and .class != \"\" and .class != \"quickshell\") | {address, title, class, workspace: .workspace.id, floating: .floating}]'"
+            "hyprctl clients -j | jq -c '[.[] | select(.mapped == true and .hidden == false and .class != \"\" and .class != \"quickshell\") | {address, title, class, workspace: .workspace.id, floating: .floating, size: .size}]'"
         ]
         stdout: StdioCollector {
             onStreamFinished: {
@@ -99,14 +99,41 @@ Scope {
         var win = windowList[selectedIndex]
         pieRoot.menuVisible = false
 
-        var monState = Hyprland.focusedMonitor
-        var currentWs = monState ? monState.activeWorkspace.id : 1
-        Hyprland.dispatch("movetoworkspacesilent " + currentWs + ",address:" + win.address)
+        // Which monitor is the pie (cursor) on?
+        var mons = Hyprland.monitors.values
+        var tm = null
+        for (var i = 0; i < mons.length; i++) {
+            var m = mons[i]
+            if (pieRoot.cursorX >= m.x && pieRoot.cursorX < m.x + m.width &&
+                pieRoot.cursorY >= m.y && pieRoot.cursorY < m.y + m.height) { tm = m; break }
+        }
+        var ws = tm ? tm.activeWorkspace.id
+                    : (Hyprland.focusedMonitor ? Hyprland.focusedMonitor.activeWorkspace.id : 1)
+
+        Hyprland.dispatch("movetoworkspacesilent " + ws + ",address:" + win.address)
         Hyprland.dispatch("focuswindow address:" + win.address)
-        // Toggle float and back — forces re-tile on the current monitor
-        // Fixes windows retaining offscreen coordinates from other monitor layouts
-        Hyprland.dispatch("togglefloating address:" + win.address)
-        Hyprland.dispatch("togglefloating address:" + win.address)
+
+        // Bring the window TO the pie — centered under the cursor where the pie
+        // was — so a window stranded on another monitor/workspace is never lost.
+        // The movewindowpixel DISPATCHER takes GLOBAL coords (unlike the
+        // monitor-relative `move` window RULE), so do NOT subtract the monitor
+        // origin — just clamp to the target monitor's global bounds. (Subtracting
+        // tm.x is what made it land back on the original monitor at the mirror
+        // spot.) Falls back to the float-toggle re-tile if we lack size/monitor.
+        if (tm && win.size && win.size.length === 2) {
+            var gx = Math.round(pieRoot.cursorX - win.size[0] / 2)
+            var gy = Math.round(pieRoot.cursorY - win.size[1] / 2)
+            gx = Math.max(tm.x, Math.min(gx, tm.x + tm.width - win.size[0]))
+            gy = Math.max(tm.y, Math.min(gy, tm.y + tm.height - win.size[1]))
+            Hyprland.dispatch("movewindowpixel exact " + gx + " " + gy + ",address:" + win.address)
+        } else {
+            Hyprland.dispatch("togglefloating address:" + win.address)
+            Hyprland.dispatch("togglefloating address:" + win.address)
+        }
+        // Raise it above the other floating windows. Focusing alone doesn't
+        // reliably do it from here (the pie holds exclusive keyboard focus and
+        // the move above is "silent"), so bump the z-order explicitly.
+        Hyprland.dispatch("alterzorder top,address:" + win.address)
     }
 
     function close() {

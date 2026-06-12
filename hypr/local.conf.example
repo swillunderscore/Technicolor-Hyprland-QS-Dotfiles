@@ -24,3 +24,23 @@
 
 # Route specific apps (e.g. games) to a specific monitor by description
 # windowrule = monitor desc:Your Monitor Description, match:class ^(gamescope)$
+
+# ---- Technicolor chromakey glass (Spotify / Dolphin) ----
+# Needs the Hypr-DarkWindow plugin (hyprpm add micha4w/Hypr-DarkWindow) and
+# ABSOLUTE shader paths (the plugin does not expand ~) — hence local.conf.
+# After editing these, run ~/.config/hypr/tckey-reload.sh (plugin caches args
+# across plain reloads).
+#
+# plugin:darkwindow:shader[tckey] {
+#     path = /home/YOU/.config/hypr/technicolor-chromakey.glsl
+#     args = sim=0.012 choke=0.65
+#     introduces_transparency = true
+# }
+# windowrule = darkwindow:shade tckey, match:class ^([Ss]potify)$
+#
+# plugin:darkwindow:shader[tckeydolph] {
+#     path = /home/YOU/.config/hypr/technicolor-chromakey-dolphin.glsl
+#     args = sim=0.012 choke=0.65 keyc=[0.003922 0.729412 0.737255]
+#     introduces_transparency = true
+# }
+# windowrule = darkwindow:shade tckeydolph, match:class ^(org.kde.dolphin)$

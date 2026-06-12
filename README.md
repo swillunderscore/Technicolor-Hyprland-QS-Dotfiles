@@ -7,6 +7,8 @@ Uses [Hyprland](https://hyprland.org/), [Quickshell](https://quickshell.org/), a
 
 The bar is custom Quickshell, and its colors are pulled live from the current wallpaper. Workspaces are one long carousel that slides across every monitor together. It has an app launcher, live system monitors, a notification tray, per-monitor brightness, and an alt-tab pie menu.
 
+The same wallpaper palette can also theme your actual apps — Discord (Vesktop), Spotify, Dolphin and Brave get full-strength color blocks with auto-contrasting text, re-tinted on every wallpaper change, with optional per-pixel "glass" transparency between the blocks via a compositor chromakey shader. See [App theming](#app-theming-discord--spotify--dolphin--brave).
+
 
 ## Demo
 
@@ -48,6 +50,9 @@ Most share the same package name across distros. The newer ones to watch are `qu
   - optional: `nwg-look` (GTK theme GUI), `nwg-displays` (monitor-layout GUI that writes
   monitors.conf), `dex` (runs XDG autostart entries), `wlogout` (power menu), `gnome-keyring`
   (secrets)
+  - optional, for app theming (see the App theming section): `vesktop` (Discord),
+  `spicetify-cli` (Spotify), `qt6ct-kde` + `gcc` (Dolphin/Qt), and the Hyprland plugins
+  `Hypr-DarkWindow` + `hyprglass` via `hyprpm` (the glass transparency)
 
 **Arch** (my distro; a few are AUR, so use `paru`/`yay`):
 ```
@@ -70,6 +75,7 @@ sudo dnf copr enable errornointernet/quickshell && sudo dnf install quickshell
 ```
 cp -r hypr quickshell mako ~/.config/
 ```
+(If you're doing the Spotify theming below, also `cp -r spicetify ~/.config/` — it only contains the live-color extension.)
 
 ### 3. Set up the two per-machine files
 `hyprland.conf` sources these, so they need to exist:
@@ -104,11 +110,26 @@ A Nerd Font is required or the icons render as boxes; I use JetBrainsMono Nerd F
 export QS_FONT="Inter"
 ```
 
+## App theming (Discord / Spotify / Dolphin / Brave)
+
+All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper-colors.py` already calls on every wallpaper change (failures are silently skipped, so nothing breaks if you skip an app). The shared engine lives in `gen-discord-theme.py`: it picks the bar's gradient pair as primary/secondary, computes WCAG black-or-white ink per surface, and feeds every other generator.
+
+**Discord (Vesktop + Vencord):** generated themes land in `~/.config/vesktop/themes/` — enable exactly ONE (`technicolor-glass.css` is the good one: solid color blocks on a liquid-glass gradient). Live colors go through Vencord's QuickCSS (enable "Use QuickCSS"), which is how wallpaper changes apply with zero flash and a 1.4s cross-fade. Built on [midnight-discord](https://github.com/refact0r/midnight-discord) (inlined).
+
+**Spotify (spicetify):** `gen-spotify-theme.py` writes a full Technicolor theme (`spicetify config current_theme Technicolor`, then `spicetify backup apply`). Live colors poll a tiny local HTTP server (`technicolor-color-server.py`, already in `hyprland.conf`'s exec-once) via the `spicetify/Extensions/technicolor-sync.js` extension (`spicetify config extensions technicolor-sync.js`). For real per-pixel transparency behind the blocks, add the chromakey shader (below).
+
+**Dolphin / Qt apps:** `gen-kde-colors.py` rewrites `kdeglobals`, a named KDE color scheme, and a qt6ct palette. You need `qt6ct-kde` (AUR) with `QT_QPA_PLATFORMTHEME=qt6ct` in your environment, and — this is the one non-obvious step — point `~/.config/qt6ct/qt6ct.conf`'s `color_scheme_path` at `~/.local/share/color-schemes/Technicolor.colors`, NOT at a qt6ct palette file (otherwise KDE apps silently fall back to stock Breeze for everything KColorScheme-driven — white file views that no palette setting can fix). Launch Dolphin through `hypr/dolphin-tc.sh`: it applies the rounded-blocks stylesheet and auto-compiles a tiny `LD_PRELOAD` shim (`tc-styledbg.cpp`, needs `gcc` + Qt6 headers) that lets the side panels paint rounded QSS blocks.
+
+**Brave:** `gen-brave-theme.py` writes an unpacked Chromium theme to `~/.config/brave-technicolor-theme` — load it once via `brave://extensions` (developer mode → Load unpacked), then hit reload there after wallpaper changes (Chromium can't live-update themes). Colors only — never chromakey a browser, it eats matching pixels inside page content.
+
+**The glass (chromakey) layer:** the gaps between color blocks in Spotify/Dolphin can be made actually transparent — real windows/wallpaper visible behind — using [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) custom shaders (`hyprpm add micha4w/Hypr-DarkWindow`), plus optionally [hyprglass](https://github.com/hyprnux/hyprglass) for a refraction/liquid-glass look on those areas. Uncomment the shader blocks in `local.conf` (they need absolute paths) and use `hypr/tckey-reload.sh` after changing shader args (the plugin caches them across reloads). Two gotchas already handled in the configs: `decoration:blur:size` doubles as Hyprland's re-render margin for these effects even with blur disabled (keep it at 40 or stacked glass glitters on focus changes), and Dolphin uses a fixed-key shader variant so its dialogs don't get keyed transparent.
+
 ## What's where
 
-- `hypr/` — Hyprland config and its scripts: the workspace carousel, wallpaper cycling and theming, taskbar, minimize, alt-tab.
+- `hypr/` — Hyprland config and its scripts: the workspace carousel, wallpaper cycling and theming, taskbar, minimize, alt-tab, plus the app-theming engine (`gen-*.py`), the chromakey shaders (`technicolor-chromakey*.glsl`), the color server, and the Dolphin launcher/shim.
 - `quickshell/` — the bar (`Bar.qml`), the alt-tab pie, notification scripts, system-monitor helpers, shaders.
 - `mako/` — notification styling. The bar's tray reads from mako.
+- `spicetify/` — the Spotify live-color extension (`Extensions/technicolor-sync.js`).
 
 ## Swapping mako
 
