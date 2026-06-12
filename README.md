@@ -148,3 +148,48 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 - mako is required for the notification tray; it's the actual daemon and the bar is the frontend.
 - `nethogs` runs under sudo for the network widget; without a sudoers rule it stays blank.
 - GPU, temperature sensors, and monitor brightness all auto-detect, so there's nothing to hardcode.
+
+## Portability
+
+- **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and the hyprpm plugins compile against your exact Hyprland version (hyprpm handles that, you just need base-devel/cmake).
+- **Resolutions & scale:** nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on a 4K display you'll want a Hyprland monitor scale like any px-based UI; the Qt theming and chromakey shaders are scale-aware.
+- **Hardware:** GPU-agnostic (AMD/Intel tested; Nvidia works with the usual Hyprland-on-Nvidia caveats). Monitor brightness needs `ddcutil`-compatible displays.
+- **Spotify:** the theming assumes the native client (spicetify paths + window class `Spotify`); flatpak Spotify needs spicetify's flatpak setup.
+
+## One-block install (for the impatient)
+
+The Install section above, as one paste. Arch-family only (uses `paru`) — on other distros do step 1 by hand, then run everything below the `paru` line. Existing configs get moved to `*.bak.<time>`, not deleted.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 1. packages
+paru -S --needed hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
+  ddcutil nethogs jq gawk kitty wofi swww imagemagick python-pillow \
+  grim slurp satty wl-clipboard playerctl brightnessctl ttf-jetbrains-mono-nerd
+
+# 2. configs (backs up anything already there)
+git clone --depth 1 https://github.com/swillunderscore/Technicolor-Hyprland-QS-Dotfiles /tmp/technicolor
+for d in hypr quickshell mako spicetify; do
+  [ -e ~/.config/$d ] && mv ~/.config/$d ~/.config/$d.bak.$(date +%s)
+done
+cp -r /tmp/technicolor/hypr /tmp/technicolor/quickshell /tmp/technicolor/mako /tmp/technicolor/spicetify ~/.config/
+
+# 3. per-machine files + wallpaper dir
+cp ~/.config/hypr/monitors.conf.example ~/.config/hypr/monitors.conf
+cp ~/.config/hypr/local.conf.example    ~/.config/hypr/local.conf
+mkdir -p ~/Wallpapers/animated
+
+# 4. monitor brightness (takes effect after re-login)
+sudo usermod -aG i2c "$USER"
+
+cat <<'DONE'
+Done. Before logging into Hyprland:
+  1. put animated wallpapers in ~/Wallpapers/animated/   (see Wallpapers section)
+  2. edit ~/.config/hypr/monitors.conf for your displays  (hyprctl monitors)
+  3. no SF Pro font? export QS_FONT="SomeFontYouHave" in your shell profile
+App theming (Discord/Spotify/Dolphin/Brave) has its own section in the README —
+those steps are per-app and can't be blind-scripted.
+DONE
+```
