@@ -110,7 +110,7 @@ A Nerd Font is required or the icons render as boxes; I use JetBrainsMono Nerd F
 export QS_FONT="Inter"
 ```
 
-## App theming (Discord / Spotify / Dolphin / Brave)
+## App theming (Discord / Spotify / Dolphin / Brave / GTK)
 
 All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper-colors.py` already calls on every wallpaper change (failures are silently skipped, so nothing breaks if you skip an app). The shared engine lives in `gen-discord-theme.py`: it picks the bar's gradient pair as primary/secondary, computes WCAG black-or-white ink per surface, and feeds every other generator.
 
@@ -118,11 +118,18 @@ All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper
 
 **Spotify (spicetify):** `gen-spotify-theme.py` writes a full Technicolor theme (`spicetify config current_theme Technicolor`, then `spicetify backup apply`). Live colors poll a tiny local HTTP server (`technicolor-color-server.py`, already in `hyprland.conf`'s exec-once) via the `spicetify/Extensions/technicolor-sync.js` extension (`spicetify config extensions technicolor-sync.js`). For real per-pixel transparency behind the blocks, add the chromakey shader (below).
 
-**Dolphin / Qt apps:** `gen-kde-colors.py` rewrites `kdeglobals`, a named KDE color scheme, and a qt6ct palette. You need `qt6ct-kde` (AUR) with `QT_QPA_PLATFORMTHEME=qt6ct` in your environment, and — this is the one non-obvious step — point `~/.config/qt6ct/qt6ct.conf`'s `color_scheme_path` at `~/.local/share/color-schemes/Technicolor.colors`, NOT at a qt6ct palette file (otherwise KDE apps silently fall back to stock Breeze for everything KColorScheme-driven — white file views that no palette setting can fix). Launch Dolphin through `hypr/dolphin-tc.sh`: it applies the rounded-blocks stylesheet and auto-compiles a tiny `LD_PRELOAD` shim (`tc-styledbg.cpp`, needs `gcc` + Qt6 headers) that lets the side panels paint rounded QSS blocks.
+**Dolphin / Qt apps:** `gen-kde-colors.py` rewrites `kdeglobals`, a named KDE color scheme, and a qt6ct palette. You need `qt6ct-kde` (AUR) with `QT_QPA_PLATFORMTHEME=qt6ct` in your environment, and — this is the one non-obvious step — point `~/.config/qt6ct/qt6ct.conf`'s `color_scheme_path` at `~/.local/share/color-schemes/Technicolor.colors`, NOT at a qt6ct palette file (otherwise KDE apps silently fall back to stock Breeze for everything KColorScheme-driven — white file views that no palette setting can fix). Launch Dolphin through `hypr/dolphin-tc.sh`: it applies the rounded-blocks stylesheet and auto-compiles a tiny `LD_PRELOAD` shim (`tc-styledbg.cpp`, needs `gcc` + Qt6 headers) that lets the side panels paint rounded QSS blocks. The shim also watches the stylesheet and re-applies it live, so a running Dolphin recolors with the wallpaper instead of only at launch (Qt reads `-stylesheet` once otherwise).
 
-**Brave:** `gen-brave-theme.py` writes an unpacked Chromium theme to `~/.config/brave-technicolor-theme` — load it once via `brave://extensions` (developer mode → Load unpacked), then hit reload there after wallpaper changes (Chromium can't live-update themes). Colors only — never chromakey a browser, it eats matching pixels inside page content.
+**Brave:** `gen-brave-theme.py` writes an unpacked Chromium theme to `~/.config/brave-technicolor-theme`. Auto-load and auto-recolor it with two flags in `~/.config/brave-flags.conf`:
+```
+--load-extension=~/.config/brave-technicolor-theme
+--remote-debugging-port=9222
+```
+The first loads the theme on every launch (no `brave://extensions` clicking — Brave just flashes a dismissable "developer-mode extensions" bubble). The second lets `brave-theme-reload.py` apply new colors on wallpaper change: Chromium bakes a theme into a profile-side cache that *nothing* rebuilds short of the `brave://extensions` reload action — regenerating the files, bouncing the extension, even a full restart all render stale colors — so the script triggers exactly that reload over the DevTools protocol. **Security cost:** that debug port lets any process on your machine drive the browser (it's localhost-only, but still real) — it's a big part of why this repo is opt-in. The frame and tab-strip are painted in the chromakey colour so the band-limited shader (below) glasses them to the wallpaper; web content is never touched.
 
-**The glass (chromakey) layer:** the gaps between color blocks in Spotify/Dolphin can be made actually transparent — real windows/wallpaper visible behind — using [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) custom shaders (`hyprpm add micha4w/Hypr-DarkWindow`), plus optionally [hyprglass](https://github.com/hyprnux/hyprglass) for a refraction/liquid-glass look on those areas. Uncomment the shader blocks in `local.conf` (they need absolute paths) and use `hypr/tckey-reload.sh` after changing shader args (the plugin caches them across reloads). Two gotchas already handled in the configs: `decoration:blur:size` doubles as Hyprland's re-render margin for these effects even with blur disabled (keep it at 40 or stacked glass glitters on focus changes), and Dolphin uses a fixed-key shader variant so its dialogs don't get keyed transparent.
+**GTK apps:** `gen-gtk-theme.py` writes a Technicolor GTK theme and flips between two copies (`Technicolor-A`/`-B`) on each wallpaper change so GTK apps re-read and recolor immediately (GTK caches by theme *name*, so the rename is what forces the reload). This sets your global GTK theme, so GTK file dialogs etc. follow the wallpaper too; revert any time with `gsettings set org.gnome.desktop.interface gtk-theme Adwaita` (or your previous theme).
+
+**The glass (chromakey) layer:** the gaps between color blocks in Spotify/Dolphin — and Brave's tab-strip — can be made actually transparent (real windows/wallpaper visible behind) using [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) custom shaders (`hyprpm add micha4w/Hypr-DarkWindow`), plus optionally [hyprglass](https://github.com/hyprnux/hyprglass) for a refraction/liquid-glass look on those areas. Uncomment the shader blocks in `local.conf` (they need absolute paths — replace `/home/YOU`) and use `hypr/tckey-reload.sh` after changing shader args (the plugin caches them across reloads). Browsers were long considered un-keyable — a whole-window key eats matching pixels inside pages (e.g. a teal Twitch stream) — so the Brave variant is **band-limited**: it only keys the top tab-strip band and refuses to touch anything below it, leaving web content alone. Two more gotchas already handled: `decoration:blur:size` doubles as Hyprland's re-render margin for these effects even with blur disabled (keep it at 40 or stacked glass glitters on focus changes), and Dolphin uses a fixed-key shader variant so its dialogs don't get keyed transparent.
 
 ## What's where
 
@@ -155,6 +162,21 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 - **Resolutions & scale:** nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on a 4K display you'll want a Hyprland monitor scale like any px-based UI; the Qt theming and chromakey shaders are scale-aware.
 - **Hardware:** GPU-agnostic. The bar's GPU usage/VRAM/temp auto-detect: amdgpu sysfs first, then `nvidia-smi` (proprietary/open Nvidia), with graceful zeros otherwise; CPU temp covers AMD/Intel/ARM hwmon names. Nvidia setup (env vars, cursor quirk, driver notes) is a ready-to-uncomment block in `local.conf.example`. The swap widget reads all swap devices and labels itself ZRAM or SWAP automatically. Monitor brightness needs `ddcutil`-compatible displays.
 - **Spotify:** the theming assumes the native client (spicetify paths + window class `Spotify`); flatpak Spotify needs spicetify's flatpak setup.
+
+<!-- ───────────────────────────────────────────────────────────────────── -->
+<!-- WILL: handwrite your disclaimer in the blockquote below, then delete    -->
+<!-- this comment. The gist you wanted: don't blindly trust giant install    -->
+<!-- commands like the one below (this one included); it's all vibe-coded,    -->
+<!-- instructions and all; it's really meant for friends who know you;        -->
+<!-- nothing malicious is in here but the right move is to read it first.     -->
+<!-- ───────────────────────────────────────────────────────────────────── -->
+
+## ⚠️ Before you run the one-block install — read this
+
+> 🚧 **_[ Will to handwrite — placeholder ]_** 🚧
+>
+> _Don't paste big install commands you haven't read — including this one._
+> _Replace this whole blockquote with your own words._
 
 ## One-block install (for the impatient)
 
