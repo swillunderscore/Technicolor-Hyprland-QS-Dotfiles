@@ -93,11 +93,12 @@ PanelWindow {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
         return lum > 0.55 ? "#000000" : "#FFFFFF"
     }
-    // The *opposite* of contrastText, toned off pure black/white so it still
-    // reads on bright or dark backgrounds. Used for the second I/O series.
+    // Same polarity as contrastText but pulled toward the middle — a gray
+    // that stays clearly visible yet reads as the "secondary" of the pair.
+    // Used for the second I/O series (upload / write) and its labels.
     function contrastAlt(c) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
-        return lum > 0.55 ? Qt.rgba(0.83, 0.83, 0.88, 1.0) : Qt.rgba(0.20, 0.20, 0.24, 1.0)
+        return lum > 0.55 ? Qt.rgba(0.27, 0.28, 0.33, 1.0) : Qt.rgba(0.78, 0.79, 0.84, 1.0)
     }
     function contrastDim(c) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
@@ -381,7 +382,25 @@ PanelWindow {
     // diff `pio` lines from sysmon.sh and find the top reader/writer for
     // this 1-second window. {pid: [readBytes, writeBytes]}
     property var prevPio: ({})
-    // Per-stat usage history (0..100), newest last
+    // per-core CPU + top-consumer tracking (fed by sysmon core/pcs/psw lines)
+    property var prevCores: ({})
+    property var coreUsages: []
+    // Per-thread usage history (array of number-arrays) — the CPU popup's
+    // per-core mini graphs.
+    property var coreHist: []
+    property var prevPcs: ({})
+    property var topCpuApps: []
+    property var topMemApps: []
+    property var topSwapApps: []
+    property var topGpuApps: []
+    property var topVramApps: []
+    // Per-card GPU/VRAM history + current VRAM GB (fed by sysmon gpux/vramx
+    // lines; the gpu/vram popups show a stacked per-card view when >1 card).
+    property var gpuHists: []
+    property var vramHists: []
+    property var vramxUsedGB: []
+    property var vramxTotGB: []
+    // Per-stat usage history ({v: 0..100, app: topComm}), newest last
     property var cpuHist: []
     property var gpuHist: []
     property var vramHist: []
@@ -405,6 +424,20 @@ PanelWindow {
         a.push(v)
         while (a.length > bar.ioHistLen) a.shift()
         return a
+    }
+    // Top-N {app, label} entries from a {comm: value} aggregate, descending.
+    // labelFn turns a value into display text; "" means below-threshold (and
+    // since the list is sorted, everything after it is too — stop there).
+    function topN(agg, n, labelFn) {
+        var keys = Object.keys(agg)
+        keys.sort(function(a, b) { return agg[b] - agg[a] })
+        var out = []
+        for (var i = 0; i < keys.length && out.length < n; i++) {
+            var lbl = labelFn(agg[keys[i]])
+            if (lbl === "") break
+            out.push({ app: keys[i], label: lbl })
+        }
+        return out
     }
     // Peak (max) of field "a" or "b" across a net/disk history buffer — the top
     // of that series' graph over the visible window.
@@ -867,15 +900,55 @@ PanelWindow {
             var lines = this.text.split("\n")
             // Per-tick per-process disk I/O: collect, then diff after the loop.
             var currPio = {}
-            // Defer disk/net bucket pushes until after pio lines are diffed
-            // and the net top-app names are available.
+            // Per-core jiffies + per-process cpu/mem/swap: collected in the
+            // loop, diffed/aggregated after it (same pattern as pio).
+            var currCores = {}, currPcs = {}, memAgg = {}, swapAgg = {}
+            var cpuDT = 0
+            // Defer ALL bucket pushes until after the per-process lines are
+            // aggregated, so every sample carries its tick's top-app comm —
+            // the popup graphs ride an icon above the line per bucket, the
+            // non-IO ones just like the IO ones.
             var pNetRx = 0, pNetTx = 0, hasNet = false
             var pDiskRd = 0, pDiskWr = 0, hasDisk = false
+            var cpuVal = -1, gpuVal = -1, vramVal = -1, memVal = -1, swapVal = -1
+            // Multi-GPU: indexed "gpux IDX BUSY" / "vramx IDX USED TOTAL",
+            // one pair per card (single-GPU machines emit index 0 only).
+            var gxBusy = [], gxVu = [], gxVt = []
             for (var li = 0; li < lines.length; li++) {
                 var p = lines[li].trim().split(/\s+/)
                 if (p[0] === "pio") {
                     // pio PID COMM RBYTES WBYTES
                     if (p.length >= 5) currPio[p[1]] = [p[2], parseFloat(p[3]) || 0, parseFloat(p[4]) || 0]
+                    continue
+                }
+                if (p[0] === "pcs") {
+                    // pcs PID COMM JIFFIES RSSBYTES
+                    if (p.length >= 5) {
+                        currPcs[p[1]] = [p[2], parseFloat(p[3]) || 0]
+                        memAgg[p[2]] = (memAgg[p[2]] || 0) + (parseFloat(p[4]) || 0)
+                    }
+                    continue
+                }
+                if (p[0] === "psw") {
+                    // psw PID COMM KB
+                    if (p.length >= 4) swapAgg[p[2]] = (swapAgg[p[2]] || 0) + (parseFloat(p[3]) || 0) * 1024
+                    continue
+                }
+                if (p[0] === "core") {
+                    // core IDX BUSY TOTAL (cumulative jiffies)
+                    if (p.length >= 4) currCores[p[1]] = [parseFloat(p[2]) || 0, parseFloat(p[3]) || 0]
+                    continue
+                }
+                if (p[0] === "gpux") {
+                    if (p.length >= 3) gxBusy[parseInt(p[1])] = parseInt(p[2]) || 0
+                    continue
+                }
+                if (p[0] === "vramx") {
+                    if (p.length >= 4) {
+                        var gxi = parseInt(p[1])
+                        gxVu[gxi] = parseFloat(p[2]) || 0
+                        gxVt[gxi] = parseFloat(p[3]) || 1
+                    }
                     continue
                 }
                 if (p[0] === "cpu") {
@@ -884,19 +957,20 @@ PanelWindow {
                     for (var i = 1; i <= 7; i++) total += parseInt(p[i]) || 0
                     if (bar.lastCpuTotal > 0) {
                         var dT = total - bar.lastCpuTotal, dI = idle - bar.lastCpuIdle
+                        cpuDT = dT
                         bar.cpuUsage = dT > 0 ? Math.round(100 * (1 - dI / dT)) : 0
-                        bar.cpuHist = bar.pushHist(bar.cpuHist, bar.cpuUsage)
+                        cpuVal = bar.cpuUsage
                     }
                     bar.lastCpuTotal = total; bar.lastCpuIdle = idle
                 } else if (p[0] === "gpu") {
                     var g = parseInt(p[1])
-                    if (!isNaN(g)) { bar.gpuUsage = g; bar.gpuHist = bar.pushHist(bar.gpuHist, g) }
+                    if (!isNaN(g)) { bar.gpuUsage = g; gpuVal = g }
                 } else if (p[0] === "vram") {
                     var vu = parseFloat(p[1]) || 0, vt = parseFloat(p[2]) || 1
                     bar.vramUsedGB = vu / 1073741824
                     bar.vramTotalGB = vt / 1073741824
                     bar.vramUsage = Math.round(100 * vu / vt)
-                    bar.vramHist = bar.pushHist(bar.vramHist, bar.vramUsage)
+                    vramVal = bar.vramUsage
                 } else if (p[0] === "gputemp") {
                     // emitted by sysmon's nvidia-smi path (no hwmon on the
                     // proprietary driver) — overrides the hwmon scan
@@ -907,13 +981,13 @@ PanelWindow {
                     bar.memUsage = Math.round(100 * (1 - ma / mt))
                     bar.memTotalGB = mt / 1048576
                     bar.memUsedGB = (mt - ma) / 1048576
-                    bar.memHist = bar.pushHist(bar.memHist, bar.memUsage)
+                    memVal = bar.memUsage
                 } else if (p[0] === "swap") {
                     var su = parseFloat(p[1]) || 0, ssz = parseFloat(p[2]) || 1
                     bar.swapUsage = ssz > 0 ? Math.round(100 * su / ssz) : 0
                     bar.swapTotalGB = ssz / 1048576
                     bar.swapUsedGB = su / 1048576
-                    bar.swapHist = bar.pushHist(bar.swapHist, bar.swapUsage)
+                    swapVal = bar.swapUsage
                 } else if (p[0] === "net") {
                     pNetRx = parseFloat(p[1]) || 0
                     pNetTx = parseFloat(p[2]) || 0
@@ -939,6 +1013,79 @@ PanelWindow {
                 if (dw > topW) { topW = dw; topWComm = cur[0] }
             }
             bar.prevPio = currPio
+
+            // ── Per-core usage: diff cumulative busy/total per core ──
+            var cores = []
+            for (var ci in currCores) {
+                var cc = currCores[ci], pc = bar.prevCores[ci]
+                var cu = 0
+                if (pc) {
+                    var cdt = cc[1] - pc[1]
+                    cu = cdt > 0 ? Math.round(100 * (cc[0] - pc[0]) / cdt) : 0
+                }
+                cores[parseInt(ci)] = Math.max(0, Math.min(100, cu))
+            }
+            bar.prevCores = currCores
+            bar.coreUsages = cores
+
+            // ── Top consumers, aggregated by process name ──
+            var cpuAgg = {}
+            for (var cpid in currPcs) {
+                var cc2 = currPcs[cpid], cp2 = bar.prevPcs[cpid]
+                if (!cp2 || cp2[0] !== cc2[0]) continue   // new PID or reused PID
+                var dj = cc2[1] - cp2[1]
+                if (dj > 0) cpuAgg[cc2[0]] = (cpuAgg[cc2[0]] || 0) + dj
+            }
+            bar.prevPcs = currPcs
+            bar.topCpuApps = bar.topN(cpuAgg, 4, function(v) {
+                var pct = cpuDT > 0 ? 100 * v / cpuDT : 0
+                return pct >= 0.5 ? ((pct < 10 ? pct.toFixed(1) : Math.round(pct)) + "%") : ""
+            })
+            bar.topMemApps = bar.topN(memAgg, 4, function(v) { return v >= 52428800 ? bar.fmtRate(v) : "" })
+            bar.topSwapApps = bar.topN(swapAgg, 4, function(v) { return v >= 10485760 ? bar.fmtRate(v) : "" })
+
+            // ── Push the single-stat buckets, each tagged with this tick's
+            //    top consumer so the popup graph rides an icon per bucket.
+            //    gpu/vram attribution comes from the fdinfo scan, which only
+            //    runs while those popups are open — other buckets stay blank.
+            var topCpuComm = bar.topCpuApps.length ? bar.topCpuApps[0].app : ""
+            var topMemComm = bar.topMemApps.length ? bar.topMemApps[0].app : ""
+            var topSwapComm = bar.topSwapApps.length ? bar.topSwapApps[0].app : ""
+            var topGpuComm = bar.topGpuApps.length ? bar.topGpuApps[0].app : ""
+            var topVramComm = bar.topVramApps.length ? bar.topVramApps[0].app : ""
+            if (cpuVal >= 0)  bar.cpuHist  = bar.pushHist(bar.cpuHist,  { v: cpuVal,  app: topCpuComm })
+            if (gpuVal >= 0)  bar.gpuHist  = bar.pushHist(bar.gpuHist,  { v: gpuVal,  app: topGpuComm })
+            if (vramVal >= 0) bar.vramHist = bar.pushHist(bar.vramHist, { v: vramVal, app: topVramComm })
+            if (memVal >= 0)  bar.memHist  = bar.pushHist(bar.memHist,  { v: memVal,  app: topMemComm })
+            if (swapVal >= 0) bar.swapHist = bar.pushHist(bar.swapHist, { v: swapVal, app: topSwapComm })
+
+            // ── Per-core history: one scrolling buffer per thread, feeding
+            //    the CPU popup's per-core mini graphs. Pushed only when
+            //    cpuHist pushes, so the two stay index-aligned — the peak
+            //    icon on each mini graph looks up the global top app at the
+            //    peak's bucket via cpuHist[peakIdx].
+            if (cpuVal >= 0) {
+                var chArr = []
+                for (var ki = 0; ki < cores.length; ki++)
+                    chArr.push(bar.pushHist(bar.coreHist[ki] || [], cores[ki] || 0))
+                bar.coreHist = chArr
+            }
+
+            // ── Per-card GPU history (gpux/vramx lines). On a single-GPU
+            //    machine this still fills index 0; the popups only switch to
+            //    the stacked per-card view when more than one card reports.
+            if (gxBusy.length > 0) {
+                var gh = [], vh = [], vUsed = [], vTot = []
+                for (var qi = 0; qi < gxBusy.length; qi++) {
+                    gh.push(bar.pushHist(bar.gpuHists[qi] || [], gxBusy[qi] || 0))
+                    var vpct = (gxVt[qi] || 0) > 0 ? Math.round(100 * (gxVu[qi] || 0) / gxVt[qi]) : 0
+                    vh.push(bar.pushHist(bar.vramHists[qi] || [], vpct))
+                    vUsed.push((gxVu[qi] || 0) / 1073741824)
+                    vTot.push((gxVt[qi] || 1) / 1073741824)
+                }
+                bar.gpuHists = gh; bar.vramHists = vh
+                bar.vramxUsedGB = vUsed; bar.vramxTotGB = vTot
+            }
 
             if (hasDisk) {
                 if (bar.lastDiskRd >= 0) {
@@ -969,6 +1116,44 @@ PanelWindow {
                 bar.lastNetTx = pNetTx
             }
         } }
+    }
+    // Per-process GPU/VRAM (fdinfo scan ≈ 300ms — only while that popup is open)
+    property var prevPgpu: ({})
+    property real lastGpuTopTime: 0
+    Process {
+        id: gpuTopProc
+        command: [bar.homeDir + "/.config/quickshell/sysmon-gputop.sh"]
+        stdout: StdioCollector { onStreamFinished: {
+            var lines = this.text.split("\n")
+            var curr = {}, engAgg = {}, vramAgg = {}
+            for (var li = 0; li < lines.length; li++) {
+                var p = lines[li].trim().split(/\s+/)
+                if (p[0] !== "pgpu" || p.length < 5) continue
+                curr[p[1]] = [p[2], parseFloat(p[3]) || 0]
+                vramAgg[p[2]] = (vramAgg[p[2]] || 0) + (parseFloat(p[4]) || 0)
+            }
+            var now = Date.now()
+            var dtNs = (now - bar.lastGpuTopTime) * 1e6
+            for (var pid in curr) {
+                var c = curr[pid], pr = bar.prevPgpu[pid]
+                if (!pr || pr[0] !== c[0]) continue
+                var de = c[1] - pr[1]
+                if (de > 0) engAgg[c[0]] = (engAgg[c[0]] || 0) + de
+            }
+            bar.prevPgpu = curr
+            bar.lastGpuTopTime = now
+            if (dtNs > 0 && dtNs < 30e9)
+                bar.topGpuApps = bar.topN(engAgg, 4, function(v) {
+                    var pct = 100 * v / dtNs
+                    return pct >= 0.5 ? ((pct < 10 ? pct.toFixed(1) : Math.round(pct)) + "%") : ""
+                })
+            bar.topVramApps = bar.topN(vramAgg, 4, function(v) { return v >= 16777216 ? bar.fmtRate(v) : "" })
+        } }
+    }
+    Timer {
+        interval: 1500; repeat: true; triggeredOnStart: true
+        running: monPopup.shown && (monPopup.activeMon === "gpu" || monPopup.activeMon === "vram")
+        onTriggered: if (!gpuTopProc.running) gpuTopProc.running = true
     }
     Process { id: cpuTempProc; command: ["bash", "-c", "for h in /sys/class/hwmon/hwmon*; do n=$(cat $h/name 2>/dev/null); case $n in k10temp|coretemp|zenpower|k8temp|cpu_thermal) [ -f $h/temp1_input ] && awk '{printf \"%.0f\", $1/1000}' $h/temp1_input && break;; esac; done"]; stdout: StdioCollector { onStreamFinished: { var v = parseInt(this.text.trim()); if (!isNaN(v)) bar.cpuTemp = v } } }
     Process { id: gpuTempProc; command: ["bash", "-c", "for h in /sys/class/hwmon/hwmon*; do n=$(cat $h/name 2>/dev/null); case $n in amdgpu) f=$h/temp2_input; [ -f $f ] || f=$h/temp1_input; awk '{printf \"%.0f\", $1/1000}' $f && break;; i915|xe|nouveau) [ -f $h/temp1_input ] && awk '{printf \"%.0f\", $1/1000}' $h/temp1_input && break;; esac; done"]; stdout: StdioCollector { onStreamFinished: { var v = parseInt(this.text.trim()); if (!isNaN(v) && v > 10) bar.gpuTemp = v } } }
@@ -1286,7 +1471,9 @@ PanelWindow {
             if (seriesPick === "a")      { va = data[i].a || 0; vb = 0 }
             else if (seriesPick === "b") { va = data[i].b || 0; vb = 0 }
             else {
-                va = dual ? (data[i].a || 0) : data[i]
+                // single series: plain numbers (per-core buffers) or {v, app}
+                va = dual ? (data[i].a || 0)
+                    : (typeof data[i] === "number" ? data[i] : (data[i] && data[i].v) || 0)
                 vb = dual ? (data[i].b || 0) : 0
             }
             if (va > m) m = va
@@ -1319,7 +1506,9 @@ PanelWindow {
             function va(i) {
                 if (pick === "a") return d[i].a || 0
                 if (pick === "b") return d[i].b || 0
-                return mg.dual ? (d[i].a || 0) : d[i]
+                if (mg.dual) return d[i].a || 0
+                // single series: plain numbers (per-core buffers) or {v, app}
+                return typeof d[i] === "number" ? d[i] : (d[i] && d[i].v) || 0
             }
             function vb(i) {
                 if (pick === "a" || pick === "b") return 0
@@ -1438,14 +1627,39 @@ PanelWindow {
             }
             MouseArea {
                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor;
+                hoverEnabled: true
+                // Hover-open like the monitor popups, with a short dwell so
+                // skimming past the corner doesn't pop the launcher. The
+                // lastMenuCloseTime guard stops an instant reopen when Escape
+                // (or an app launch) closes while the cursor is still here.
+                onEntered: {
+                    launcherCloseDebounce.stop()
+                    if (!bar.launcherOpen && Date.now() - bar.lastMenuCloseTime > 400)
+                        launcherOpenDwell.restart()
+                }
+                onExited: {
+                    launcherOpenDwell.stop()
+                    if (bar.launcherOpen) launcherCloseDebounce.restart()
+                }
                 onClicked: function(mouse) {
                     if (Date.now() - bar.lastMenuCloseTime < 150) return;
                     if (bar.launcherOpen) {
                         bar.closeLauncher();
                     } else {
+                        launcherOpenDwell.stop();
                         bar.launcherOpen = true;
                     }
                 }
+            }
+            Timer {
+                id: launcherOpenDwell
+                interval: 140
+                onTriggered: bar.launcherOpen = true
+            }
+            Timer {
+                id: launcherCloseDebounce
+                interval: 160
+                onTriggered: bar.closeLauncher()
             }
         }
 
@@ -2174,8 +2388,31 @@ PanelWindow {
         readonly property bool ioWide: monPopup.activeMon === "net" || monPopup.activeMon === "disk"
         implicitWidth: isPrimary ? 570 : 430
         implicitHeight: isPrimary ? 470 : 360
-        property real bodyW: ioWide ? (isPrimary ? 570 : 430) : (isPrimary ? 230 : 178)
-        property real bodyH: ioWide ? (isPrimary ? 470 : 360) : (isPrimary ? 132 : 104)
+        // non-IO popups grow wider/taller when they carry extras: the CPU
+        // per-core strip and/or the top-consumer chips row
+        // wide enough that per-bucket icons riding the graph line don't
+        // pile on top of each other
+        property real bodyW: ioWide ? (isPrimary ? 570 : 430)
+            : (mk === "cpu" || topApps.length > 0) ? (isPrimary ? 440 : 340)
+            : (isPrimary ? 230 : 178)
+        // Per-core mini-graph grid layout: 4 columns for ≤16 threads (a
+        // 7800X3D's 16 → 4×4 of readable graphs), 8 up to 64, 16 beyond —
+        // scales to Threadripper territory by wrapping rows instead of
+        // shrinking the graphs into noise.
+        readonly property int coreCount: bar.coreUsages.length
+        readonly property int coreCols: coreCount <= 16 ? 4 : coreCount <= 64 ? 8 : 16
+        readonly property int coreRows: coreCount > 0 ? Math.ceil(coreCount / coreCols) : 0
+        readonly property int coreRowH: isPrimary ? (coreCount <= 16 ? 32 : 22) : (coreCount <= 16 ? 24 : 16)
+        readonly property int coreGap: coreCount > 64 ? 2 : 3
+        readonly property real coreGridH: coreRows > 0 ? coreRows * coreRowH + (coreRows - 1) * coreGap : 0
+        // More than one GPU reporting → the gpu/vram popups swap the single
+        // aggregate graph for a stacked labeled graph per card.
+        readonly property bool multiGpu: (mk === "gpu" || mk === "vram") && bar.gpuHists.length > 1
+        property real bodyH: (ioWide ? (isPrimary ? 470 : 360) : (isPrimary ? 132 : 104))
+            + (!ioWide && mk === "cpu" ? (isPrimary ? 40 : 30) : 0)
+            + (!ioWide && mk === "cpu" && coreRows > 0 ? coreGridH + (isPrimary ? 8 : 6) : 0)
+            + (!ioWide && multiGpu ? (bar.gpuHists.length - 1) * (isPrimary ? 64 : 50) : 0)
+            + (!ioWide && topApps.length > 0 ? topAppsFlow.implicitHeight + (isPrimary ? 6 : 4) : 0)
         Behavior on bodyW { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
         Behavior on bodyH { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
         visible: monPopup.shown || monShape.liquidProgress > 0.001
@@ -2233,6 +2470,12 @@ PanelWindow {
         readonly property var graphData: mk === "cpu" ? bar.cpuHist : mk === "gpu" ? bar.gpuHist
             : mk === "vram" ? bar.vramHist : mk === "mem" ? bar.memHist : mk === "zram" ? bar.swapHist
             : mk === "net" ? bar.netHist : mk === "disk" ? bar.diskHist : []
+        // Top consumers for the non-IO popups ({app, label} entries; same
+        // icon-or-dot chips as the IO legends). gpu/vram fill while their
+        // popup is open (fdinfo scan is too heavy for the always-on tick).
+        readonly property var topApps: mk === "cpu" ? bar.topCpuApps : mk === "mem" ? bar.topMemApps
+            : mk === "zram" ? bar.topSwapApps : mk === "gpu" ? bar.topGpuApps
+            : mk === "vram" ? bar.topVramApps : []
 
         // Unique apps that appeared in this series within the visible window.
         // Persists for ~48s after the app stops appearing (matches scroll
@@ -2346,14 +2589,247 @@ PanelWindow {
                         font.family: bar.fontFamily
                         font.bold: true
                     }
-                    MonGraph {
-                        visible: !monPopup.graphDual
+                    // ── Single-stat graph with IO-style per-bucket app icons
+                    //    riding the line (each bucket carries that tick's top
+                    //    consumer; icon-or-dot, same as the net/disk popups) ──
+                    Item {
+                        visible: !monPopup.graphDual && !monPopup.multiGpu
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        data: monPopup.graphData
-                        dual: false
-                        fixedMax: 100
-                        stroke: monPopup.fg
+                        readonly property real iconPx: isPrimary ? 20 : 16
+                        MonGraph {
+                            id: popupGraphS
+                            anchors.fill: parent
+                            data: monPopup.graphData
+                            dual: false
+                            fixedMax: 100
+                            stroke: monPopup.fg
+                        }
+                        Repeater {
+                            model: !monPopup.graphDual && popupGraphS.data ? popupGraphS.data.length : 0
+                            delegate: Item {
+                                id: sIcon
+                                required property int index
+                                readonly property var sample: popupGraphS.data && index < popupGraphS.data.length ? popupGraphS.data[index] : null
+                                readonly property real val: sample ? (sample.v || 0) : 0
+                                readonly property string app: sample ? (sample.app || "") : ""
+                                // Draw one icon per RUN of the same top app
+                                // (at its start), not one per bucket — per-
+                                // bucket icons just pile into a smear when
+                                // the same app stays on top for minutes.
+                                readonly property var prevSample: index > 0 && popupGraphS.data ? popupGraphS.data[index - 1] : null
+                                readonly property string prevApp: prevSample ? (prevSample.app || "") : ""
+                                readonly property int n: popupGraphS.data ? popupGraphS.data.length : 0
+                                readonly property real stepX: popupGraphS.width / (bar.ioHistLen - 1)
+                                readonly property real x0: popupGraphS.width - (n - 1) * stepX
+                                readonly property real span: popupGraphS.height - 2
+                                readonly property real iconPx: parent.iconPx
+                                readonly property string resolvedIcon: bar.strictIconPath(app)
+                                width: iconPx; height: iconPx
+                                x: x0 + index * stepX - iconPx / 2
+                                y: Math.max(0, popupGraphS.height - (val / 100) * span - 1 - iconPx)
+                                visible: app !== "" && app !== "-" && app !== prevApp
+                                Image {
+                                    id: sImg
+                                    anchors.fill: parent
+                                    sourceSize.width: sIcon.iconPx * 2
+                                    sourceSize.height: sIcon.iconPx * 2
+                                    mipmap: true; smooth: true; asynchronous: true
+                                    fillMode: Image.PreserveAspectFit
+                                    source: sIcon.resolvedIcon
+                                    visible: status === Image.Ready
+                                }
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    width: parent.width * 0.7
+                                    height: width
+                                    radius: width / 2
+                                    color: bar.commColor(sIcon.app)
+                                    visible: !sImg.visible
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Multi-GPU: the same graph once per card, stacked and
+                    //    labeled, shown instead of the single aggregate ──
+                    Repeater {
+                        model: monPopup.multiGpu ? bar.gpuHists.length : 0
+                        delegate: ColumnLayout {
+                            id: gpuCardCol
+                            required property int index
+                            readonly property var cardHist: monPopup.mk === "gpu"
+                                ? (bar.gpuHists[index] || []) : (bar.vramHists[index] || [])
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            spacing: 1
+                            Text {
+                                text: monPopup.mk === "gpu"
+                                    ? "GPU " + gpuCardCol.index + " — "
+                                      + (gpuCardCol.cardHist.length ? gpuCardCol.cardHist[gpuCardCol.cardHist.length - 1] : 0) + "%"
+                                    : "VRAM " + gpuCardCol.index + " — "
+                                      + (bar.vramxUsedGB[gpuCardCol.index] || 0).toFixed(1) + " / "
+                                      + (bar.vramxTotGB[gpuCardCol.index] || 0).toFixed(1) + " GB"
+                                color: monPopup.fg
+                                font.pixelSize: isPrimary ? 10 : 8
+                                font.family: bar.fontFamily
+                                font.bold: true
+                            }
+                            MonGraph {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                data: gpuCardCol.cardHist
+                                dual: false
+                                fixedMax: 100
+                                stroke: monPopup.fg
+                            }
+                        }
+                    }
+
+                    // ── CPU per-core mini graphs: the same scrolling history
+                    //    graph once per thread, wrapping into a grid so it
+                    //    stays readable from 8 threads to Threadripper ──
+                    Item {
+                        visible: !monPopup.graphDual && monPopup.mk === "cpu" && monPopup.coreRows > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: monPopup.coreGridH
+                        Grid {
+                            anchors.fill: parent
+                            columns: monPopup.coreCols
+                            columnSpacing: monPopup.coreGap
+                            rowSpacing: monPopup.coreGap
+                            Repeater {
+                                model: monPopup.coreCount
+                                delegate: Rectangle {
+                                    id: coreCell
+                                    required property int index
+                                    readonly property var hist: bar.coreHist[index] || []
+                                    // Bucket with this thread's max usage in the
+                                    // visible window (latest wins on ties), and
+                                    // the GLOBAL top-cpu app of that bucket —
+                                    // "whatever caused the peak".
+                                    readonly property int peakIdx: {
+                                        var m = -1, pi = -1
+                                        for (var i = 0; i < hist.length; i++)
+                                            if (hist[i] >= m) { m = hist[i]; pi = i }
+                                        return pi
+                                    }
+                                    readonly property real peakVal: peakIdx >= 0 ? hist[peakIdx] : 0
+                                    readonly property string peakApp: peakIdx >= 0 && bar.cpuHist[peakIdx]
+                                        ? (bar.cpuHist[peakIdx].app || "") : ""
+                                    width: (parent.width - (monPopup.coreCols - 1) * monPopup.coreGap) / monPopup.coreCols
+                                    height: monPopup.coreRowH
+                                    radius: 3
+                                    color: Qt.rgba(monPopup.fg.r, monPopup.fg.g, monPopup.fg.b, 0.10)
+                                    MonGraph {
+                                        id: coreGraph
+                                        anchors.fill: parent
+                                        anchors.margins: 2
+                                        data: coreCell.hist
+                                        dual: false
+                                        fixedMax: 100
+                                        stroke: monPopup.fg
+                                    }
+                                    // Thread number, corner
+                                    Text {
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        anchors.leftMargin: 3
+                                        anchors.topMargin: 1
+                                        text: coreCell.index
+                                        color: monPopup.fg
+                                        opacity: 0.55
+                                        font.pixelSize: isPrimary ? 9 : 7
+                                        font.family: bar.fontFamily
+                                        font.bold: true
+                                    }
+                                    // One icon-or-dot over the peak bucket
+                                    Item {
+                                        id: peakIcon
+                                        readonly property int px: isPrimary ? 12 : 10
+                                        readonly property int n: coreCell.hist.length
+                                        readonly property real stepX: coreGraph.width / (bar.ioHistLen - 1)
+                                        readonly property real gx0: coreGraph.width - (n - 1) * stepX
+                                        visible: coreCell.peakIdx >= 0 && coreCell.peakApp !== "" && coreCell.peakApp !== "-"
+                                        width: px; height: px
+                                        x: 2 + Math.max(0, Math.min(coreGraph.width - px,
+                                            gx0 + coreCell.peakIdx * stepX - px / 2))
+                                        y: 2 + Math.max(0, coreGraph.height - (coreCell.peakVal / 100) * (coreGraph.height - 2) - 1 - px)
+                                        Image {
+                                            id: peakImg
+                                            anchors.fill: parent
+                                            sourceSize.width: peakIcon.px * 2
+                                            sourceSize.height: peakIcon.px * 2
+                                            mipmap: true; smooth: true; asynchronous: true
+                                            fillMode: Image.PreserveAspectFit
+                                            source: bar.strictIconPath(coreCell.peakApp)
+                                            visible: status === Image.Ready
+                                        }
+                                        Rectangle {
+                                            anchors.centerIn: parent
+                                            width: parent.width * 0.7; height: width
+                                            radius: width / 2
+                                            color: bar.commColor(coreCell.peakApp)
+                                            visible: !peakImg.visible
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Top consumers (cpu/mem/swap always; gpu/vram while
+                    //    open) — same icon-or-dot chips as the IO legends ──
+                    Flow {
+                        id: topAppsFlow
+                        visible: !monPopup.graphDual && monPopup.topApps.length > 0
+                        Layout.fillWidth: true
+                        spacing: isPrimary ? 10 : 7
+                        Repeater {
+                            model: monPopup.topApps
+                            delegate: Row {
+                                required property var modelData
+                                readonly property string legendIcon: bar.strictIconPath(modelData.app)
+                                readonly property int chipSize: isPrimary ? 14 : 11
+                                spacing: isPrimary ? 4 : 3
+                                Item {
+                                    width: parent.chipSize; height: parent.chipSize
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Image {
+                                        anchors.fill: parent
+                                        source: parent.parent.legendIcon
+                                        visible: status === Image.Ready
+                                        sourceSize.width: parent.width * 2
+                                        sourceSize.height: parent.height * 2
+                                        mipmap: true; smooth: true; asynchronous: true
+                                        fillMode: Image.PreserveAspectFit
+                                    }
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        width: parent.width * 0.7; height: width
+                                        radius: width / 2
+                                        color: bar.commColor(parent.parent.modelData.app)
+                                        visible: parent.parent.legendIcon === ""
+                                    }
+                                }
+                                Text {
+                                    text: parent.modelData.app
+                                    color: monPopup.fg
+                                    font.pixelSize: isPrimary ? 11 : 9
+                                    font.family: bar.fontFamily
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: parent.modelData.label
+                                    color: monPopup.fg
+                                    opacity: 0.75
+                                    font.pixelSize: isPrimary ? 11 : 9
+                                    font.family: bar.fontFamily
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
                     }
 
                     // ── IO stacked-graph view: series B (up/write) on top in
@@ -2584,30 +3060,76 @@ PanelWindow {
 
     // ══════════════════════════════════════════════
     // ══════════════════════════════════════════════
-    // LAUNCHER PANEL (fullscreen overlay)
+    // LAUNCHER PANEL (bar-anchored, panel-sized window)
     // ══════════════════════════════════════════════
+    // NOT a fullscreen overlay: a fullscreen window covers the bar the moment
+    // it maps, which yanks hover off the hamburger pill — and under a
+    // stationary cursor Hyprland delivers no enter to the new surface, so
+    // nothing stopped the close-debounce and the menu closed itself right
+    // after hover-opening. Sized to just the panel, the pill keeps its hover
+    // and the open/close logic has no race to lose.
     PanelWindow {
         id: launcherPanel
         screen: bar.screen
         visible: bar.launcherOpen || launcherShape.liquidProgress > 0.001
         color: "transparent"
-        anchors { top: true; bottom: true; left: true; right: true }
+        anchors { left: true; bottom: true }
+        // Window bottom sits filletR below the panel body so the concave
+        // fillet (drawn at y=panelH) lands on the hamburger pill's top edge.
+        margins.bottom: bar.implicitHeight - bar.vm - filletR
+        implicitWidth: bar.hm + panelW
+        implicitHeight: panelH + filletR
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "quickshell:launcher"
-        WlrLayershell.keyboardFocus: bar.launcherOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+        // Keyboard strategy (NO HyprlandFocusGrab — see why below): the layer
+        // never touches the keyboard during normal hover use — exactly like
+        // the volume/clock/notif popups, which is why those never broke
+        // anyone's focus. Keyboard interactivity (kbArm → OnDemand) arms
+        // ONLY when the cursor is over the search field; the click on it is
+        // what actually hands the layer the keyboard (Hyprland's standard
+        // on-demand click path). Once armed it stays armed until the window
+        // UNMAPS, because:
+        //  · OnDemand at surface creation is poison: map-time keyboard focus
+        //    deactivates the bar's Qt window, clearing the pill's hover and
+        //    insta-closing the menu (the original launcher bug);
+        //  · OnDemand during the pointer's transition INTO the panel races
+        //    Qt's hover delivery (Hyprland grants keyboard mid-motion) and
+        //    sometimes eats the panel's hover → the menu closed by itself;
+        //  · committing interactivity→None while the layer holds the
+        //    keyboard runs a Hyprland restore path that never re-delivers
+        //    wl_keyboard enter to the previous window (verified with a
+        //    block-cursor probe — the "must refocus manually before typing"
+        //    bug). Holding OnDemand through unmap takes the surface-destroy
+        //    restore path instead — the one wofi/fuzzel exercise daily.
+        //
+        // Approaches tried at length and abandoned:
+        //  · taking keyboard focus at MAP time (grab or OnDemand alike)
+        //    deactivates the bar's window, Qt then clears its hover state,
+        //    the pill fires onExited and the close-debounce killed the menu
+        //    ~160ms after it opened (the long-standing insta-close bug);
+        //  · HyprlandFocusGrab resolves windows to wl surfaces when synced,
+        //    but this panel's surface is recreated on every open, so the
+        //    active grab whitelisted a dead surface and Hyprland left the
+        //    panel deaf to all pointer input until release; the grab also
+        //    keeps no focus history, so on release the keyboard landed on
+        //    nothing — the "keyboard in a weird state" bug;
+        //  · Exclusive keyboard interactivity locks POINTER focus to the
+        //    layer too (m_exclusiveLSes — lockscreen semantics): leave events
+        //    die, the menu can never close, all input is held hostage.
+        // Click-outside dismissal comes free: leaving the panel already
+        // closes it via the hover debounce before any click can land.
+        property bool kbArm: false
+        WlrLayershell.keyboardFocus: kbArm ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         exclusionMode: ExclusionMode.Ignore
-        onVisibleChanged: if (visible) launcherKeyCatcher.forceActiveFocus()
-
-        // The actual fix for "keyboard is dead after closing the launcher":
-        // wlr-layer-shell's keyboard_interactivity (WlrLayershell.keyboardFocus)
-        // does NOT restore focus to the previously-focused window when it
-        // releases on Hyprland — the keyboard is just left in limbo. Hyprland's
-        // own hyprland_focus_grab_v1 protocol is purpose-built for popups and
-        // hands focus back to the prior window when the grab ends.
-        HyprlandFocusGrab {
-            windows: [launcherPanel]
-            active: bar.launcherOpen
+        onVisibleChanged: {
+            if (visible) launcherKeyCatcher.forceActiveFocus()
+            else kbArm = false  // surface destroyed; next open starts None again
         }
+
+        // Input region: the panel body only. The bottom strip (where the
+        // decorative fillet overlaps the bar) stays click/hover-through, so
+        // the pill underneath keeps pointer focus the whole time.
+        mask: Region { x: bar.hm; y: 0; width: launcherPanel.panelW; height: launcherPanel.panelH }
 
         readonly property int panelW: isPrimary ? 520 : 420
         readonly property int panelH: isPrimary ? 660 : 540
@@ -2689,12 +3211,34 @@ PanelWindow {
             return result
         }
 
-        // Fullscreen click catcher + keyboard handler
-        Rectangle {
+        // Keyboard handler — holds focus while the panel is open; the focus
+        // grab above returns the keyboard to the prior window on close.
+        // Clicking outside is handled by the grab's onCleared (this window
+        // doesn't cover the screen anymore, so no fullscreen catcher).
+        Item {
             id: launcherKeyCatcher
             anchors.fill: parent
-            color: Qt.rgba(0, 0, 0, 0.01)
             focus: true
+
+            // Anywhere on the panel keeps it open; leaving arms the close
+            // debounce. The window only receives pointer events inside its
+            // input mask, so "hovered" means exactly "mouse is on the menu" —
+            // HoverHandler sees through the app grid's own MouseAreas. It
+            // also gates the Exclusive keyboard takeover above.
+            HoverHandler {
+                id: panelRootHover
+                onHoveredChanged: {
+                    if (hovered) {
+                        launcherCloseDebounce.stop()
+                        // Pointer crossed into the panel — Hyprland grants the
+                        // OnDemand layer the keyboard on this transition, so
+                        // closeLauncher() must hand it back when we're done.
+                        if (bar.launcherOpen) bar.launcherKbHeld = true
+                    } else if (bar.launcherOpen) {
+                        launcherCloseDebounce.restart()
+                    }
+                }
+            }
 
             Connections {
                 target: bar
@@ -2722,11 +3266,6 @@ PanelWindow {
                     event.accepted = true
                 }
             }
-
-            MouseArea {
-                anchors.fill: parent
-                onClicked: bar.closeLauncher()
-            }
         }
 
         // Launcher content — paints up from the bar like the other popups
@@ -2734,12 +3273,15 @@ PanelWindow {
             id: launcherShape
             visible: bar.launcherOpen || liquidProgress > 0.001
             x: bar.hm
-            y: parent.height - bar.implicitHeight + bar.vm - launcherPanel.panelH
+            y: 0
             width: launcherPanel.panelW
             height: launcherPanel.panelH
 
             property real liquidProgress: bar.launcherOpen ? 1.0 : 0.0
-            Behavior on liquidProgress { NumberAnimation { duration: 460; easing.type: Easing.InOutQuint } }
+            // Close is quicker than open: if the search field took the
+            // keyboard, it hands back at unmap (end of this animation), so
+            // a snappy close = snappy typing.
+            Behavior on liquidProgress { NumberAnimation { duration: bar.launcherOpen ? 460 : 260; easing.type: Easing.InOutQuint } }
 
             readonly property color bodyColor: bar.solidify(bar.lerpColor(0.0))
             readonly property color fg: bar.contrastText(bodyColor)
@@ -2786,7 +3328,8 @@ PanelWindow {
                 }
             }
 
-            // Eat clicks so they don't fall through to the close-catcher
+            // Eat clicks that miss interactive elements so they do nothing
+            // (rather than reaching anything beneath the panel).
             MouseArea { anchors.fill: parent; onClicked: {} }
 
             // Content — fades + slides up as the paint rises
@@ -2808,6 +3351,13 @@ PanelWindow {
                     width: parent.width; height: isPrimary ? 36 : 28
                     radius: height / 2; color: launcherShape.rowBg
 
+                    // Arm the layer's keyboard interactivity when the cursor
+                    // reaches the search field (see kbArm comment above) —
+                    // the click then takes the keyboard; hover alone doesn't.
+                    HoverHandler {
+                        onHoveredChanged: if (hovered && bar.launcherOpen) launcherPanel.kbArm = true
+                    }
+
                     Row {
                         anchors.fill: parent; anchors.leftMargin: isPrimary ? 12 : 8; anchors.rightMargin: isPrimary ? 12 : 8; spacing: isPrimary ? 8 : 5
                         Text { anchors.verticalCenter: parent.verticalCenter; text: String.fromCodePoint(0xF002D); color: launcherShape.placeholderCol; font.pixelSize: isPrimary ? 16 : 12; font.family: bar.fontFamily }
@@ -2820,6 +3370,28 @@ PanelWindow {
                             font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily
                             elide: Text.ElideRight
                             Component.onCompleted: { if (launcherPanel.searchText === "") text = "Search apps..." }
+
+                            // Blinking caret — sits after the typed text, or at
+                            // the start when only the placeholder is showing.
+                            Rectangle {
+                                id: searchCaret
+                                visible: bar.launcherOpen
+                                x: launcherPanel.searchText.length > 0
+                                    ? Math.min(parent.contentWidth, parent.width - 2) + 1 : 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: isPrimary ? 1.5 : 1
+                                height: parent.font.pixelSize + (isPrimary ? 4 : 3)
+                                color: launcherShape.fg
+                                onVisibleChanged: opacity = 1
+                                SequentialAnimation on opacity {
+                                    running: searchCaret.visible
+                                    loops: Animation.Infinite
+                                    PropertyAction { value: 1 }
+                                    PauseAnimation { duration: 530 }
+                                    PropertyAction { value: 0 }
+                                    PauseAnimation { duration: 530 }
+                                }
+                            }
                         }
                     }
 
@@ -4212,16 +4784,15 @@ PanelWindow {
         }
     }
 
-    // Close launcher when clicking elsewhere on the bar
-    MouseArea {
-        anchors.fill: parent
-        visible: bar.launcherOpen
-        z: 100
-        propagateComposedEvents: true
-        onClicked: function(mouse) {
-            bar.closeLauncher()
-            mouse.accepted = false
-        }
+    // Close launcher when clicking elsewhere on the bar.
+    // A TapHandler, NOT a MouseArea, and ALWAYS enabled with the condition
+    // inside: an overlay MouseArea appearing (or a handler flipping enabled)
+    // when the menu opens re-evaluates hover and yanks it off the hamburger
+    // pill — its onExited then armed the close-debounce and the menu shut
+    // itself right after opening. A passive, always-on TapHandler leaves
+    // hover and pill clicks completely untouched.
+    TapHandler {
+        onTapped: if (bar.launcherOpen) bar.closeLauncher()
     }
 
     // ══════════════════════════════════════════════
