@@ -67,6 +67,12 @@ paru -S hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumbe
   grim slurp satty wl-clipboard playerctl brightnessctl ttf-jetbrains-mono-nerd
 ```
 
+Optional — the apps the wallpaper palette can theme, plus their helpers. Install only the ones you use (each still needs the one-time hook-up in [App theming](#app-theming-discord--spotify--dolphin--brave--gtk); the generators no-op for anything missing):
+```
+paru -S vesktop spotify spicetify-cli dolphin qt6ct-kde gcc brave-bin
+```
+(The glass transparency also needs the `Hypr-DarkWindow` hyprpm plugin — that's a `hyprpm add`, not a package; see App theming.)
+
 **Fedora:** most via `dnf` under the same names (Hyprland is packaged on F39+). quickshell is a COPR:
 ```
 sudo dnf copr enable errornointernet/quickshell && sudo dnf install quickshell
@@ -120,11 +126,7 @@ export QS_FONT="Inter"
 
 All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper-colors.py` already calls on every wallpaper change (failures are silently skipped, so nothing breaks if you skip an app). The shared engine lives in `gen-discord-theme.py`: it picks the bar's gradient pair as primary/secondary, computes WCAG black-or-white ink per surface, and feeds every other generator.
 
-The themed apps aren't part of the core install — grab whichever you use, with their helpers (Arch/AUR shown; the generators just no-op for anything you don't have):
-```
-paru -S --needed vesktop spotify spicetify-cli dolphin qt6ct-kde gcc brave-bin
-```
-Each app still needs its one-time hook-up described below (Vencord QuickCSS, `spicetify` apply, the qt6ct `color_scheme_path`, the Brave flags).
+The themed apps aren't part of the core install — install whichever you use via the optional `paru` line in [step 1](#1-dependencies) (the generators just no-op for anything you don't have). Each app still needs its one-time hook-up described below (Vencord QuickCSS, `spicetify` apply, the qt6ct `color_scheme_path`, the Brave flags).
 
 **Discord (Vesktop + Vencord):** generated themes land in `~/.config/vesktop/themes/` — enable exactly ONE (`technicolor-glass.css` is the good one: solid color blocks on a liquid-glass gradient). Live colors go through Vencord's QuickCSS (enable "Use QuickCSS"), which is how wallpaper changes apply with zero flash and a 1.4s cross-fade. Built on [midnight-discord](https://github.com/refact0r/midnight-discord) (inlined).
 
