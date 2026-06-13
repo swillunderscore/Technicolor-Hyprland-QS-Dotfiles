@@ -50,9 +50,15 @@ Most share the same package name across distros. The newer ones to watch are `qu
   - optional: `nwg-look` (GTK theme GUI), `nwg-displays` (monitor-layout GUI that writes
   monitors.conf), `dex` (runs XDG autostart entries), `wlogout` (power menu), `gnome-keyring`
   (secrets)
-  - optional, for app theming (see the App theming section): `vesktop` (Discord),
-  `spicetify-cli` (Spotify), `qt6ct-kde` + `gcc` (Dolphin/Qt), and the Hyprland plugins
-  `Hypr-DarkWindow` + `hyprglass` via `hyprpm` (the glass transparency)
+  - optional, for app theming (see the App theming section) — install whichever
+  apps you actually use, each alongside its theming helper:
+    - `vesktop` — Discord client (Vencord is built in)
+    - `spotify` + `spicetify-cli` — the native Spotify client and its theming CLI
+    - `dolphin` + `qt6ct-kde` + `gcc` — the file manager, the Qt color theming, and
+      the compiler for the rounded-blocks shim
+    - `brave-bin` — the browser
+    - glass transparency: Hyprland plugins `Hypr-DarkWindow` (+ optional `hyprglass`)
+      via `hyprpm`
 
 **Arch** (my distro; a few are AUR, so use `paru`/`yay`):
 ```
@@ -113,6 +119,12 @@ export QS_FONT="Inter"
 ## App theming (Discord / Spotify / Dolphin / Brave / GTK)
 
 All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper-colors.py` already calls on every wallpaper change (failures are silently skipped, so nothing breaks if you skip an app). The shared engine lives in `gen-discord-theme.py`: it picks the bar's gradient pair as primary/secondary, computes WCAG black-or-white ink per surface, and feeds every other generator.
+
+The themed apps aren't part of the core install — grab whichever you use, with their helpers (Arch/AUR shown; the generators just no-op for anything you don't have):
+```
+paru -S --needed vesktop spotify spicetify-cli dolphin qt6ct-kde gcc brave-bin
+```
+Each app still needs its one-time hook-up described below (Vencord QuickCSS, `spicetify` apply, the qt6ct `color_scheme_path`, the Brave flags).
 
 **Discord (Vesktop + Vencord):** generated themes land in `~/.config/vesktop/themes/` — enable exactly ONE (`technicolor-glass.css` is the good one: solid color blocks on a liquid-glass gradient). Live colors go through Vencord's QuickCSS (enable "Use QuickCSS"), which is how wallpaper changes apply with zero flash and a 1.4s cross-fade. Built on [midnight-discord](https://github.com/refact0r/midnight-discord) (inlined).
 
@@ -211,7 +223,7 @@ Done. Before logging into Hyprland:
   1. put animated wallpapers in ~/Wallpapers/animated/   (see Wallpapers section)
   2. edit ~/.config/hypr/monitors.conf for your displays  (hyprctl monitors)
   3. no SF Pro font? export QS_FONT="SomeFontYouHave" in your shell profile
-App theming (Discord/Spotify/Dolphin/Brave) has its own section in the README —
-those steps are per-app and can't be blind-scripted.
+App theming (Discord/Spotify/Dolphin/Brave/GTK) is NOT installed above — those
+apps and their one-time hook-up live in the App theming section of the README.
 DONE
 ```
