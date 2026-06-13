@@ -181,22 +181,16 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 - **Hardware:** GPU-agnostic. The bar's GPU usage/VRAM/temp auto-detect: amdgpu sysfs first, then `nvidia-smi` (proprietary/open Nvidia), with graceful zeros otherwise; CPU temp covers AMD/Intel/ARM hwmon names. Nvidia setup (env vars, cursor quirk, driver notes) is a ready-to-uncomment block in `local.conf.example`. The swap widget reads all swap devices and labels itself ZRAM or SWAP automatically. Monitor brightness needs `ddcutil`-compatible displays.
 - **Spotify:** the theming assumes the native client (spicetify paths + window class `Spotify`); flatpak Spotify needs spicetify's flatpak setup.
 
-<!-- ───────────────────────────────────────────────────────────────────── -->
-<!-- WILL: handwrite your disclaimer in the blockquote below, then delete    -->
-<!-- this comment. The gist you wanted: don't blindly trust giant install    -->
-<!-- commands like the one below (this one included); it's all vibe-coded,    -->
-<!-- instructions and all; it's really meant for friends who know you;        -->
-<!-- nothing malicious is in here but the right move is to read it first.     -->
-<!-- ───────────────────────────────────────────────────────────────────── -->
+## One-block install (for the impatient and/or stupid)
 
-## ⚠️ Before you run the one-block install — read this
-
-> 🚧 **_[ Will to handwrite — placeholder ]_** 🚧
->
-> _Don't paste big install commands you haven't read — including this one._
-> _Replace this whole blockquote with your own words._
-
-## One-block install (for the impatient)
+> ⚠️
+> Hello it is me swillunderscore again
+> Unless you know me why would you trust me with a giant install command like this
+> It is a very bad idea to run things from people you dont know
+> but yea like mr claude wrote all this and i run it and i trust it
+> There was some big AUR malware thing today (06/12/2026) and i checked to make sure nothing on my system was affected and nothing was
+> Therefore nothing here was affected
+> ⚠️
 
 The Install section above, as one paste. Arch-family only (uses `paru`) — on other distros do step 1 by hand, then run everything below the `paru` line. Existing configs get moved to `*.bak.<time>`, not deleted.
 
