@@ -3,14 +3,23 @@
 gen-brave-theme.py — technicolor palette -> Brave/Chromium theme (unpacked
 extension at ~/.config/brave-technicolor-theme).
 
-Browser chrome is native Chromium: themes can color the frame/toolbar/tabs and
-the new-tab page (incl. a generated gradient background) but CANNOT be updated
-live — Brave applies a theme when the extension (re)loads. So this regenerates
-the files on every wallpaper change, and Brave picks it up when you hit the
-reload icon on the extension (brave://extensions) or restart Brave.
+The frame/tab-strip is painted in the chroma KEY so the band-limited
+technicolor-chromakey-brave.glsl shader (hyprland.conf) renders it as glass
+to the wallpaper; the toolbar/tabs/new-tab page take the palette colors.
 
-One-time install: brave://extensions -> Developer mode ON -> Load unpacked ->
-~/.config/brave-technicolor-theme
+Install — add two lines to ~/.config/brave-flags.conf (NO manual
+brave://extensions step needed; verified working on Chrome 149):
+    --load-extension=~/.config/brave-technicolor-theme   # auto-loads the theme each launch
+    --remote-debugging-port=9222                          # lets the pipeline hot-recolor (see brave-theme-reload.py)
+Chromium flashes a dismissable "turn off developer-mode extensions" bubble on
+launch — cosmetic. (Manual alternative: brave://extensions -> Developer mode
+-> Load unpacked -> this folder.)
+
+Live recolor: Chromium bakes the theme into a profile-side cache that only the
+brave://extensions reload action rebuilds (regenerating the files + extension
+bounce or even a full restart still render stale cached colors), so
+brave-theme-reload.py drives that reload over the DevTools port on every
+wallpaper change.
 """
 import json
 import os
@@ -50,6 +59,12 @@ def main():
     except Exception:
         images = {}
 
+    # frame/tab-strip = chroma key -> the BAND-LIMITED tckeybrave shader
+    # (hyprland.conf) renders it as glass. The band gate means web content
+    # below the tab strip is never keyed, which is what made whole-window
+    # browser keying unusable before (Twitch punch-through). Tabs themselves
+    # are solid secondary pills on the glass strip.
+    KEY = [1, 186, 188]
     manifest = {
         "manifest_version": 3,
         "name": "Technicolor",
@@ -58,10 +73,10 @@ def main():
         "theme": {
             "images": images,
             "colors": {
-                # solid frame — keying browsers is OFF (it punched holes in web
-                # content that matched the key, e.g. Twitch streams)
-                "frame": list(secondary),
-                "frame_inactive": list(secondary),
+                "frame": KEY,
+                "frame_inactive": KEY,
+                "background_tab": list(secondary),
+                "background_tab_inactive": list(secondary),
                 "toolbar": list(primary),
                 "tab_text": list(ink_p),
                 "tab_background_text": list(ink_s),

@@ -250,10 +250,23 @@ def main():
         except Exception:
             pass
 
-        # Brave: regenerate the unpacked theme files (applied when the user
-        # reloads the extension or restarts Brave — Chromium can't live-update).
+        # Brave: regenerate the unpacked theme files, then hot-apply them by
+        # driving the brave://extensions reload over the DevTools protocol
+        # (no-op unless Brave runs with --remote-debugging-port=9222; see
+        # brave-theme-reload.py).
         try:
             subprocess.run(['python3', os.path.expanduser('~/.config/hypr/gen-brave-theme.py')],
+                           capture_output=True)
+            subprocess.run(['python3', os.path.expanduser('~/.config/hypr/brave-theme-reload.py')],
+                           capture_output=True, timeout=15)
+        except Exception:
+            pass
+
+        # GTK apps: regenerate the Technicolor GTK theme + flip A/B so GTK
+        # consumers re-read and recolor immediately (Brave uses its own
+        # extension theme, not GTK mode — this is for general GTK apps).
+        try:
+            subprocess.run(['python3', os.path.expanduser('~/.config/hypr/gen-gtk-theme.py')],
                            capture_output=True)
         except Exception:
             pass

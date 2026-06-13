@@ -1633,14 +1633,12 @@ PanelWindow {
                 // lastMenuCloseTime guard stops an instant reopen when Escape
                 // (or an app launch) closes while the cursor is still here.
                 onEntered: {
-                    launcherCloseDebounce.stop()
                     if (!bar.launcherOpen && Date.now() - bar.lastMenuCloseTime > 400)
                         launcherOpenDwell.restart()
                 }
-                onExited: {
-                    launcherOpenDwell.stop()
-                    if (bar.launcherOpen) launcherCloseDebounce.restart()
-                }
+                // While open, closing is handled by the launcher window's
+                // cursor-position watchdog (immune to Qt hover wipes).
+                onExited: launcherOpenDwell.stop()
                 onClicked: function(mouse) {
                     if (Date.now() - bar.lastMenuCloseTime < 150) return;
                     if (bar.launcherOpen) {
@@ -1655,11 +1653,6 @@ PanelWindow {
                 id: launcherOpenDwell
                 interval: 140
                 onTriggered: bar.launcherOpen = true
-            }
-            Timer {
-                id: launcherCloseDebounce
-                interval: 160
-                onTriggered: bar.closeLauncher()
             }
         }
 
@@ -2589,9 +2582,11 @@ PanelWindow {
                         font.family: bar.fontFamily
                         font.bold: true
                     }
-                    // ── Single-stat graph with IO-style per-bucket app icons
-                    //    riding the line (each bucket carries that tick's top
-                    //    consumer; icon-or-dot, same as the net/disk popups) ──
+                    // ── Single-stat graph with ONE icon over the global peak
+                    //    of the visible window (same idea as the per-core
+                    //    minis): the app that caused the max. Ties go to the
+                    //    newest bucket, so flat graphs anchor at the right
+                    //    edge instead of stranding the icon on the left. ──
                     Item {
                         visible: !monPopup.graphDual && !monPopup.multiGpu
                         Layout.fillWidth: true
@@ -2605,48 +2600,58 @@ PanelWindow {
                             fixedMax: 100
                             stroke: monPopup.fg
                         }
-                        Repeater {
-                            model: !monPopup.graphDual && popupGraphS.data ? popupGraphS.data.length : 0
-                            delegate: Item {
-                                id: sIcon
-                                required property int index
-                                readonly property var sample: popupGraphS.data && index < popupGraphS.data.length ? popupGraphS.data[index] : null
-                                readonly property real val: sample ? (sample.v || 0) : 0
-                                readonly property string app: sample ? (sample.app || "") : ""
-                                // Draw one icon per RUN of the same top app
-                                // (at its start), not one per bucket — per-
-                                // bucket icons just pile into a smear when
-                                // the same app stays on top for minutes.
-                                readonly property var prevSample: index > 0 && popupGraphS.data ? popupGraphS.data[index - 1] : null
-                                readonly property string prevApp: prevSample ? (prevSample.app || "") : ""
-                                readonly property int n: popupGraphS.data ? popupGraphS.data.length : 0
-                                readonly property real stepX: popupGraphS.width / (bar.ioHistLen - 1)
-                                readonly property real x0: popupGraphS.width - (n - 1) * stepX
-                                readonly property real span: popupGraphS.height - 2
-                                readonly property real iconPx: parent.iconPx
-                                readonly property string resolvedIcon: bar.strictIconPath(app)
-                                width: iconPx; height: iconPx
-                                x: x0 + index * stepX - iconPx / 2
-                                y: Math.max(0, popupGraphS.height - (val / 100) * span - 1 - iconPx)
-                                visible: app !== "" && app !== "-" && app !== prevApp
-                                Image {
-                                    id: sImg
-                                    anchors.fill: parent
-                                    sourceSize.width: sIcon.iconPx * 2
-                                    sourceSize.height: sIcon.iconPx * 2
-                                    mipmap: true; smooth: true; asynchronous: true
-                                    fillMode: Image.PreserveAspectFit
-                                    source: sIcon.resolvedIcon
-                                    visible: status === Image.Ready
+                        Item {
+                            id: sPeak
+                            readonly property var d: popupGraphS.data || []
+                            readonly property int n: d.length
+                            readonly property int peakIdx: {
+                                var m = -1, pi = -1
+                                for (var i = 0; i < n; i++) {
+                                    var v = (d[i] && d[i].v) || 0
+                                    if (v >= m) { m = v; pi = i }
                                 }
-                                Rectangle {
-                                    anchors.centerIn: parent
-                                    width: parent.width * 0.7
-                                    height: width
-                                    radius: width / 2
-                                    color: bar.commColor(sIcon.app)
-                                    visible: !sImg.visible
+                                return pi
+                            }
+                            readonly property real peakVal: peakIdx >= 0 ? ((d[peakIdx] && d[peakIdx].v) || 0) : 0
+                            // The peak bucket's top app; when it's blank
+                            // (gpu/vram history from before this popup was
+                            // open), fall back to the newest known app.
+                            readonly property string peakApp: {
+                                if (peakIdx < 0) return ""
+                                var a = (d[peakIdx] && d[peakIdx].app) || ""
+                                if (a !== "" && a !== "-") return a
+                                for (var i = n - 1; i >= 0; i--) {
+                                    var b = (d[i] && d[i].app) || ""
+                                    if (b !== "" && b !== "-") return b
                                 }
+                                return ""
+                            }
+                            readonly property real stepX: popupGraphS.width / (bar.ioHistLen - 1)
+                            readonly property real x0: popupGraphS.width - (n - 1) * stepX
+                            readonly property real iconPx: parent.iconPx
+                            readonly property string resolvedIcon: bar.strictIconPath(peakApp)
+                            width: iconPx; height: iconPx
+                            x: Math.max(0, Math.min(popupGraphS.width - iconPx,
+                                x0 + peakIdx * stepX - iconPx / 2))
+                            y: Math.max(0, popupGraphS.height - (peakVal / 100) * (popupGraphS.height - 2) - 1 - iconPx)
+                            visible: peakIdx >= 0 && peakApp !== ""
+                            Image {
+                                id: sImg
+                                anchors.fill: parent
+                                sourceSize.width: sPeak.iconPx * 2
+                                sourceSize.height: sPeak.iconPx * 2
+                                mipmap: true; smooth: true; asynchronous: true
+                                fillMode: Image.PreserveAspectFit
+                                source: sPeak.resolvedIcon
+                                visible: status === Image.Ready
+                            }
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: parent.width * 0.7
+                                height: width
+                                radius: width / 2
+                                color: bar.commColor(sPeak.peakApp)
+                                visible: !sImg.visible
                             }
                         }
                     }
@@ -3211,34 +3216,50 @@ PanelWindow {
             return result
         }
 
-        // Keyboard handler — holds focus while the panel is open; the focus
-        // grab above returns the keyboard to the prior window on close.
-        // Clicking outside is handled by the grab's onCleared (this window
-        // doesn't cover the screen anymore, so no fullscreen catcher).
+        // Stay-open / close logic — compositor truth, NOT Qt hover. Qt wipes
+        // a window's hover state whenever keyboard focus moves between this
+        // client's windows (e.g. the moment the search field takes the
+        // keyboard), which used to arm the close debounce with no actual
+        // pointer leave — clicking the search bar literally closed the menu.
+        // Polling Hyprland's cursor position is immune to all of that: the
+        // menu stays open while the cursor is over the panel body or the
+        // hamburger pill, closes ~a quarter second after it leaves.
+        Timer {
+            running: bar.launcherOpen
+            interval: 250; repeat: true
+            onTriggered: if (!launcherCursorProc.running) launcherCursorProc.running = true
+        }
+        Process {
+            id: launcherCursorProc
+            command: ["hyprctl", "cursorpos"]
+            stdout: StdioCollector { onStreamFinished: {
+                if (!bar.launcherOpen) return
+                var p = this.text.trim().split(",")
+                if (p.length < 2) return
+                var cx = parseInt(p[0]), cy = parseInt(p[1])
+                if (isNaN(cx) || isNaN(cy)) return
+                var sx = bar.screen.x, sy = bar.screen.y, sh = bar.screen.height
+                var pad = 8
+                // panel body (flush on the pill top, so body ∪ pill is one
+                // continuous keep-alive region)
+                var bx = sx + bar.hm
+                var byTop = sy + sh - bar.implicitHeight + bar.vm - launcherPanel.panelH
+                var byBot = sy + sh - bar.implicitHeight + bar.vm
+                var inBody = cx >= bx - pad && cx <= bx + launcherPanel.panelW + pad
+                          && cy >= byTop - pad && cy <= byBot
+                // hamburger pill column down to the screen edge
+                var inPill = cx >= bx - pad && cx <= bx + launcherPanel.hamW + pad
+                          && cy >= byBot && cy <= sy + sh
+                if (!inBody && !inPill) bar.closeLauncher()
+            } }
+        }
+
+        // Keyboard handler — holds Qt focus while the panel is open; the
+        // kbArm interactivity above routes the actual wayland keyboard.
         Item {
             id: launcherKeyCatcher
             anchors.fill: parent
             focus: true
-
-            // Anywhere on the panel keeps it open; leaving arms the close
-            // debounce. The window only receives pointer events inside its
-            // input mask, so "hovered" means exactly "mouse is on the menu" —
-            // HoverHandler sees through the app grid's own MouseAreas. It
-            // also gates the Exclusive keyboard takeover above.
-            HoverHandler {
-                id: panelRootHover
-                onHoveredChanged: {
-                    if (hovered) {
-                        launcherCloseDebounce.stop()
-                        // Pointer crossed into the panel — Hyprland grants the
-                        // OnDemand layer the keyboard on this transition, so
-                        // closeLauncher() must hand it back when we're done.
-                        if (bar.launcherOpen) bar.launcherKbHeld = true
-                    } else if (bar.launcherOpen) {
-                        launcherCloseDebounce.restart()
-                    }
-                }
-            }
 
             Connections {
                 target: bar
