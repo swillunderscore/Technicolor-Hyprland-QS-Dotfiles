@@ -176,7 +176,7 @@ Scope {
             readonly property bool isTarget: pieRoot.targetScreen === modelData
             color: "transparent"
             anchors { top: true; bottom: true; left: true; right: true }
-            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.layer: WlrLayer.Top
             WlrLayershell.namespace: "quickshell:pie"
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
             exclusionMode: ExclusionMode.Ignore
@@ -204,7 +204,14 @@ Scope {
                 }
             }
 
-            // Dim background circle at cursor — only on target screen
+            // Liquid-glass background disc at cursor (target screen only).
+            // hyprglass glasses this layer (plugin:hyprglass:layers, whitelisted
+            // to namespace quickshell:pie in hyprland.conf) and uses the surface
+            // ALPHA as a mask. The alpha both triggers the glass AND tints it, so
+            // it's kept just above the namespace mask threshold (0.03): enough to
+            // trigger full refraction + fresnel edge, but ~no dark tint — clear
+            // glass, not a dim. (hyprglass refraction never shows in grim, so this
+            // is judged on the physical display only.)
             Rectangle {
                 visible: pieWindow.isTarget
                 x: pieWindow.localX - width / 2
@@ -212,7 +219,7 @@ Scope {
                 width: (pieRoot.pieRadius + pieRoot.itemSize) * 2 + 20
                 height: width
                 radius: width / 2
-                color: Qt.rgba(0, 0, 0, 0.4)
+                color: Qt.rgba(0, 0, 0, 0.05)
             }
 
             // Center dot
