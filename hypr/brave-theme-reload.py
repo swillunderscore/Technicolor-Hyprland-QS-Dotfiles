@@ -2,18 +2,19 @@
 """
 brave-theme-reload.py — hot-apply the regenerated Brave "Technicolor" theme.
 
-Chromium bakes extension themes into a profile-side cache; the ONLY thing
-that rebuilds it from disk is the brave://extensions reload action
-(chrome.developerPrivate.reload). That API only exists inside the WebUI, so
-this drives it over the DevTools protocol: open chrome://extensions in a
-background tab, call reload on the theme, close the tab. The whole round
-trip is ~quarter second — you see a tab blip and the chrome recolors.
+Chromium bakes an extension theme into a profile-side cache; regenerating the
+files on disk does nothing on its own. The clean way to force a re-read +
+re-apply is the browser-level CDP command `Extensions.loadUnpacked` — loading
+the (already-loaded) unpacked theme again re-reads its manifest and re-applies
+the colors. It runs against the browser target, so NO tab is opened (an
+earlier version drove the brave://extensions WebUI in a real tab, which both
+flashed a visible tab and didn't reliably re-apply).
 
-Requires Brave running with --remote-debugging-port=9222 (add the line to
-~/.config/brave-flags.conf). Exits silently when Brave is closed or the
-port is off — wallpaper changes must never error the pipeline.
+Requires Brave running with --remote-debugging-port=9222. Exits silently when
+Brave is closed or the port is off — wallpaper changes must never error the
+pipeline.
 
-No external deps: minimal WebSocket client over the stdlib.
+No external deps: a minimal WebSocket client over the stdlib.
 """
 import base64
 import json
@@ -26,27 +27,18 @@ import urllib.request
 from urllib.parse import urlparse
 
 PORT = 9222
-EXPR = """
-(async () => {
-  const infos = await chrome.developerPrivate.getExtensionsInfo();
-  const t = infos.find(e => e.type === 'THEME' && e.name === 'Technicolor');
-  if (!t) return 'theme-not-found';
-  await new Promise(res => chrome.developerPrivate.reload(t.id, {failQuietly: true}, res));
-  return 'reloaded';
-})()
-"""
+THEME_PATH = os.path.expanduser("~/.config/brave-technicolor-theme")
 
 
-def http(method, path, timeout=2):
-    req = urllib.request.Request("http://127.0.0.1:%d%s" % (PORT, path), method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+def http(path, timeout=2):
+    with urllib.request.urlopen("http://127.0.0.1:%d%s" % (PORT, path), timeout=timeout) as r:
         return r.read()
 
 
 class WS:
     """Tiny client-side WebSocket: handshake + single-frame text messages."""
 
-    def __init__(self, url, timeout=3):
+    def __init__(self, url, timeout=4):
         u = urlparse(url)
         self.sock = socket.create_connection((u.hostname, u.port), timeout=timeout)
         key = base64.b64encode(os.urandom(16)).decode()
@@ -91,12 +83,12 @@ class WS:
             n = struct.unpack(">H", self._read(2))[0]
         elif n == 127:
             n = struct.unpack(">Q", self._read(8))[0]
-        if b2 & 0x80:  # masked (servers don't, but be safe)
+        if b2 & 0x80:
             mask = self._read(4)
             data = bytes(b ^ mask[i % 4] for i, b in enumerate(self._read(n)))
         else:
             data = self._read(n)
-        if (b1 & 0x0F) == 0x8:  # close
+        if (b1 & 0x0F) == 0x8:
             raise RuntimeError("websocket closed")
         return data
 
@@ -108,46 +100,31 @@ class WS:
 
 
 def main():
-    # is brave's devtools endpoint up?
     try:
-        http("GET", "/json/version", timeout=1)
+        ver = json.loads(http("/json/version", timeout=1))
     except Exception:
-        return 0  # brave not running / port not enabled — silently skip
+        return 0  # Brave not running / port off — silently skip
 
-    target = None
     try:
-        target = json.loads(http("PUT", "/json/new?chrome://extensions/"))
-        ws = WS(target["webSocketDebuggerUrl"])
-        result = ""
-        # the WebUI needs a beat before developerPrivate is callable
-        for attempt in range(4):
-            ws.send(json.dumps({
-                "id": 1 + attempt,
-                "method": "Runtime.evaluate",
-                "params": {"expression": EXPR, "awaitPromise": True, "returnByValue": True},
-            }))
-            deadline = time.time() + 3
-            value = None
-            while time.time() < deadline:
-                msg = json.loads(ws.recv())
-                if msg.get("id") == 1 + attempt:
-                    value = msg.get("result", {}).get("result", {}).get("value")
-                    break
-            if value in ("reloaded", "theme-not-found"):
-                result = value
+        ws = WS(ver["webSocketDebuggerUrl"])
+        ws.send(json.dumps({
+            "id": 1,
+            "method": "Extensions.loadUnpacked",
+            "params": {"path": THEME_PATH},
+        }))
+        deadline = time.time() + 4
+        while time.time() < deadline:
+            msg = json.loads(ws.recv())
+            if msg.get("id") == 1:
+                if "error" in msg:
+                    print("loadUnpacked error: %s" % msg["error"], file=sys.stderr)
+                    ws.close()
+                    return 1
                 break
-            time.sleep(0.3)
         ws.close()
-        print(result or "no-result")
     except Exception as e:
         print("reload failed: %s" % e, file=sys.stderr)
         return 1
-    finally:
-        if target:
-            try:
-                http("GET", "/json/close/" + target["id"])
-            except Exception:
-                pass
     return 0
 
 
