@@ -43,10 +43,20 @@ def main():
     def muted(ink):
         return mixb(ink, 0.72) if ink == gd.DARK else tuple(int(x * 0.78) for x in ink)
 
-    def section(bg, bg_alt, fg):
+    def section(bg, bg_alt, fg, alt_transparent=False):
+        # alt_transparent: write BackgroundAlternate with alpha 0. Used only for
+        # the file view (Colors:View). Dolphin's KStandardItemListWidget paints
+        # ONLY the alternate (even) rows, with this colour, and leaves the normal
+        # rows transparent so the QGraphicsView scene background shows through.
+        # The shim live-repaints that scene background (setBackgroundBrush) on
+        # every wallpaper change — so to make the WHOLE canvas track live, the
+        # alternate rows must also be transparent (alpha 0), otherwise every
+        # other row freezes at the launch-captured colour. (Side effect: removes
+        # alternating-row striping in other KColorScheme item views too; they
+        # then show a uniform Base, which is fine.)
         return {
             "BackgroundNormal": c(bg),
-            "BackgroundAlternate": c(bg_alt),
+            "BackgroundAlternate": (c(bg_alt) + ",0") if alt_transparent else c(bg_alt),
             "ForegroundNormal": c(fg),
             "ForegroundInactive": c(muted(fg)),
             "ForegroundActive": c(accent),
@@ -60,9 +70,14 @@ def main():
         }
 
     groups = {
-        "Colors:View": section(primary, primary, ink_p),
+        "Colors:View": section(primary, primary, ink_p, alt_transparent=True),
         "Colors:Window": section(secondary, mixb(secondary, 0.93), ink_s),
-        "Colors:Button": section(mixb(secondary, 0.9), mixb(secondary, 0.82), ink_s),
+        # Button = the details-view column bar (Name/Size/Modified/Type) — it
+        # reads this group, NOT Colors:Header (verified empirically). The user
+        # wants that bar the MAIN (primary) surface, matching the file view, so
+        # Button is primary. (Most Dolphin buttons are QSS-styled chrome, so
+        # this mainly affects the column header + any unstyled buttons.)
+        "Colors:Button": section(primary, mixb(primary, 0.9), ink_p),
         "Colors:Selection": section(accent, mixb(accent, 0.9), ink_a),
         "Colors:Tooltip": section(secondary, mixb(secondary, 0.93), ink_s),
         "Colors:Complementary": section(mixb(secondary, 0.6), mixb(secondary, 0.5), gd.LIGHT if gd.ink_rgb(mixb(secondary, 0.6)) == gd.LIGHT else gd.DARK),
@@ -76,12 +91,31 @@ def main():
     if not os.path.exists(BACKUP) and text:
         open(BACKUP, "w").write(text)
 
-    # drop existing managed sections, then append fresh ones
-    for name in list(groups) + ["Colors:Header][Inactive"]:
+    # drop existing managed sections, then append fresh ones (incl. any
+    # pre-existing ColorEffects:Inactive, else our disabled one duplicates it)
+    for name in list(groups) + ["Colors:Header][Inactive", "ColorEffects:Inactive"]:
         text = re.sub(r"\[" + re.escape(name) + r"\][^\[]*", "", text)
     # AccentColor in [General] is intentionally NOT written: the named scheme
     # (see qt6ct note below) is the single source of truth, and a kdeglobals
     # AccentColor would override the scheme's Selection colors on KF6.
+
+    # Neutralize the inactive-window color effect. By default KDE desaturates/
+    # dims widgets when their window loses focus — that's the "scrollbar/URL box
+    # shifts color when Dolphin is unfocused" the user saw. All-zero amounts +
+    # Enable=false = inactive windows keep their active colors.
+    inactive_off = [
+        "[ColorEffects:Inactive]",
+        "ChangeSelectionColor=false",
+        "Color=112,111,110",
+        "ColorAmount=0",
+        "ColorEffect=0",
+        "ContrastAmount=0",
+        "ContrastEffect=0",
+        "Enable=false",
+        "IntensityAmount=0",
+        "IntensityEffect=0",
+        "",
+    ]
 
     out = [text.rstrip(), ""]
     for name, keys in groups.items():
@@ -89,6 +123,7 @@ def main():
         for k, v in keys.items():
             out.append("{}={}".format(k, v))
         out.append("")
+    out += inactive_off
     # point the named scheme at OUR generated scheme file and drop the hash —
     # KDE6 verifies ColorSchemeHash and falls back to the NAMED scheme when it
     # mismatches (it always would, we rewrite the colors), which resurrected
@@ -109,6 +144,7 @@ def main():
         for k, v in keys.items():
             sc.append("{}={}".format(k, v))
         sc.append("")
+    sc += inactive_off
     with open(os.path.join(scheme_dir, "Technicolor.colors"), "w") as f:
         f.write("\n".join(sc))
 
@@ -175,6 +211,16 @@ def main():
 QMainWindow {{ background-color: rgb{key}; }}
 QMainWindow::separator {{ background-color: rgb{key}; width: 8px; height: 8px; }}
 DolphinUrlNavigator, KUrlNavigator {{ background-color: rgb{sec}; color: rgb{inks}; border-radius: 10px; padding: 2px 6px; }}
+/* The breadcrumb segments + the editable path field paint their OWN opaque
+   background (from launch-captured KColorScheme), which covered the navigator's
+   live QSS background so the URL box stayed a stale colour on wallpaper change.
+   Force every child of the navigator transparent so the (live, QSS-reapplied)
+   secondary container colour shows through; only the navigator box recolors and
+   everything inside rides it. Text/handles stay the secondary ink. */
+KUrlNavigatorButton, DolphinUrlNavigator QToolButton, KUrlNavigator QToolButton,
+KUrlNavigator QPushButton, DolphinUrlNavigator QPushButton {{ background: transparent; color: rgb{inks}; border: none; }}
+DolphinUrlNavigator QLineEdit, KUrlNavigator QLineEdit, DolphinUrlNavigator QComboBox,
+KUrlNavigator QComboBox, KUrlComboBox {{ background: transparent; color: rgb{inks}; border: none; selection-background-color: rgb{acc}; selection-color: rgb{inka}; }}
 QDockWidget::title {{ background-color: rgb{sec}; color: rgb{inks}; border-radius: 8px; }}
 QToolBar {{ background-color: rgb{sec}; color: rgb{inks}; border: none; border-radius: 12px; margin: 8px; padding: 3px; }}
 QStatusBar {{ background-color: rgb{sec}; color: rgb{inks}; border-radius: 12px; margin: 8px; }}
@@ -206,8 +252,94 @@ InformationPanel QTextEdit {{ background: transparent; border: none; color: rgb{
    (AnimatedHeightWidget wrapper — the only stylable surface in there) */
 DolphinStatusBar QScrollArea {{ background-color: rgb{sec}; color: rgb{inks}; border: none; border-radius: 8px; margin: 0 0 20px 24px; }}
 DolphinStatusBar QLabel {{ background: transparent; color: rgb{inks}; }}
+/* details-view column bar (Name/Size/Modified/Type) — MAIN colour. The
+   in-scene KItemListHeaderWidget follows the KColorScheme Header group (set to
+   primary above); this QHeaderView rule covers the widget-based header paths. */
+QHeaderView {{ background-color: rgb{prim}; border: none; }}
+QHeaderView::section {{ background-color: rgb{prim}; color: rgb{inkp}; border: none; padding: 4px 8px; }}
+/* Tabs: connected "segmented control" strip (Apple vibe) — no gaps between
+   tabs, only the OUTER ends of the whole strip are rounded (via :first/:last/
+   :only-one), so adjacent tabs share a flush edge. A 1px secondary-ink divider
+   on every tab but the last separates two same-colour neighbours without a gap.
+   Close (x) moved to the LEFT of each tab (macOS-style) via subcontrol-position
+   — this genuinely relocates it (it's a real subcontrol slot, unlike padding/
+   margin which only nudged the right-edge default). */
+QTabBar::tab {{ background-color: rgb{sec}; color: rgb{inks}; border-radius: 0px; padding: 5px 10px; margin: 0px; min-width: 0px; border-right: 1px solid rgb{sec_div}; }}
+QTabBar::tab:last, QTabBar::tab:only-one {{ border-right: none; }}
+QTabBar::tab:first, QTabBar::tab:only-one {{ border-top-left-radius: 10px; border-bottom-left-radius: 10px; }}
+QTabBar::tab:last, QTabBar::tab:only-one {{ border-top-right-radius: 10px; border-bottom-right-radius: 10px; }}
+QTabBar::close-button {{ width: 20px; height: 20px; margin-right: 5px; image: url({home}/.config/qt6ct/tab-x.png); }}
+QTabBar::close-button:selected {{ image: url({home}/.config/qt6ct/tab-x-sel.png); }}
+/* hover highlight behind the x: a LIGHT circular disc (classic close-button
+   look) — the dark x reads clearly on it. The disc is baked into the icon
+   (tab-x-hover.png) rather than drawn via background-color+border-radius,
+   because Qt gives the close-button a vertical-pill background box, not a
+   square one, so QSS rounding came out an oval. A round disc in the square PNG
+   stays a true circle at the render size. (Accent isn't used: in many palettes
+   it's close to the tab colour and the disc would be near-invisible.) */
+QTabBar::close-button:hover {{ image: url({home}/.config/qt6ct/tab-x-hover.png); }}
+QTabBar::close-button:selected:hover {{ image: url({home}/.config/qt6ct/tab-x-sel-hover.png); }}
+QTabBar::tab:selected {{ background-color: rgb{acc}; color: rgb{inka}; border-right: none; }}
+QTabBar::tab:hover:!selected {{ background-color: rgb{sec_alt}; }}
+/* pane border:none alone left a 1px tab-bar BASE line drawn in the chroma key
+   colour (too thin for the shader to glass -> showed as a raw teal line between
+   tabs and files). Zero the pane + give the tab bar a flush key base so there's
+   nothing thin to mis-key. */
+QTabWidget::pane {{ border: none; margin: 0; padding: 0; top: 0; }}
+QTabBar {{ border: none; background: transparent; }}
+QTabBar::tab:bottom, QTabBar::tab:top {{ border-bottom: none; }}
+/* kill the faint gray frame the style draws around scroll/item views */
+QAbstractScrollArea {{ border: none; }}
+QAbstractItemView {{ border: none; outline: none; }}
+/* scrollbars: the gray right/bottom edges of the file view ARE the unstyled
+   scrollbar tracks. Transparent track + secondary rounded handle — no gray,
+   and being QSS they hot-swap with the wallpaper (KColorScheme didn't). */
+/* thin rounded-pill scrollbars. The reserved track (width/height 14) must be
+   BIGGER than twice the cross-axis margin, or the handle is left 0px and
+   vanishes: 14 - 3 - 3 = 8px handle, radius 4 = full capsule, inset from the
+   block edge. */
+QScrollBar:vertical {{ background: transparent; width: 14px; margin: 4px 3px; }}
+QScrollBar:horizontal {{ background: transparent; height: 14px; margin: 3px 4px; }}
+QScrollBar::handle {{ background-color: rgb{sec}; border-radius: 4px; min-height: 40px; min-width: 40px; }}
+QScrollBar::handle:hover {{ background-color: rgb{acc}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+/* info panel: drop the horizontal separator between the preview and the
+   metadata (a thin QFrame line that also never recolored) */
+InformationPanel QFrame {{ border: none; background: transparent; }}
 """.format(key=KEY, sec=secondary, prim=primary, prim_alt=mixb(primary, 0.93), acc=accent,
-           inks=ink_s, inkp=ink_p, inka=ink_a)
+           sec_alt=mixb(secondary, 0.88), sec_div=mixb(secondary, 0.78),
+           xhov=blend(secondary, (255, 255, 255), 0.72),
+           inks=ink_s, inkp=ink_p, inka=ink_a, home=os.path.expanduser("~"))
+    # Close (x) button icons in the contrasting ink for each tab state, so the
+    # x always reads against its background: ink_s on normal (secondary) tabs,
+    # ink_a on the selected (accent) tab. The stock x followed neither.
+    try:
+        from PIL import Image, ImageDraw
+        def make_x(col, path, disc=None):
+            # The close-button is enlarged to 20px by the tc-style.so proxy style
+            # (Breeze's PM_TabCloseIndicator metric caps it otherwise). This icon
+            # renders at that 20px. The X is inset in the 24px canvas (m=7) so it
+            # renders ~8-9px — a normal close-x size — while the disc (full canvas)
+            # fills the whole 20px circle, so the disc is ~2x the x. (disc baked
+            # into the square icon because Qt gives the close-button box a
+            # non-square shape, so a QSS border-radius came out an oval; a baked
+            # circle stays round.)
+            s, m, lw = 24, 7, 4
+            im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            if disc is not None:
+                d.ellipse((1, 1, s - 2, s - 2), fill=tuple(disc) + (255,))
+            d.line((m, m, s - m, s - m), fill=tuple(col) + (255,), width=lw)
+            d.line((s - m, m, m, s - m), fill=tuple(col) + (255,), width=lw)
+            im.save(path)
+        xhov_rgb = blend(secondary, (255, 255, 255), 0.72)
+        make_x(ink_s, os.path.expanduser("~/.config/qt6ct/tab-x.png"))
+        make_x(ink_a, os.path.expanduser("~/.config/qt6ct/tab-x-sel.png"))
+        make_x(ink_s, os.path.expanduser("~/.config/qt6ct/tab-x-hover.png"), disc=xhov_rgb)
+        make_x(ink_a, os.path.expanduser("~/.config/qt6ct/tab-x-sel-hover.png"), disc=xhov_rgb)
+    except Exception:
+        pass
     try:
         with open(os.path.expanduser("~/.config/qt6ct/technicolor.qss"), "w") as f:
             f.write(qss)
