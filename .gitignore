@@ -15,3 +15,8 @@ quickshell/silenced-apps.json.lock
 
 # Nested theme-repo metadata (the wofi theme is vendored, not a submodule)
 hypr/wofi/repo/.git/
+
+# hyprglass plugin build artifacts (BSD-3 source is vendored; hyprglass/load.sh
+# compiles it locally on first run, so the binary/objects are never committed)
+hypr/hyprglass/hyprglass.so
+hypr/hyprglass/src/*.o
