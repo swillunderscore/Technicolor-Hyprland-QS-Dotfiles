@@ -3462,9 +3462,29 @@ PanelWindow {
                     }
                 }
 
+                // Cycle wallpaper by mouse — mirrors $mainMod+W (wallpaper-cycle.sh
+                // next). In the launcher so it's reachable with no keyboard on hand;
+                // leaves the launcher open so you can keep clicking to find one.
+                Rectangle {
+                    width: parent.width; height: isPrimary ? 32 : 24
+                    radius: height / 2
+                    color: wallCycleMouse.containsMouse ? launcherShape.rowHover : launcherShape.rowBg
+                    Behavior on color { ColorAnimation { duration: 80 } }
+                    Row {
+                        anchors.centerIn: parent; spacing: isPrimary ? 8 : 5
+                        Text { text: String.fromCodePoint(0xF03E); color: launcherShape.fg; font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
+                        Text { text: "Cycle wallpaper"; color: launcherShape.fg; font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    MouseArea {
+                        id: wallCycleMouse
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                        onClicked: Hyprland.dispatch("exec ~/.config/hypr/wallpaper-cycle.sh next")
+                    }
+                }
+
                 Flickable {
                     id: appFlick
-                    width: parent.width; height: parent.height - (isPrimary ? 130 : 100)
+                    width: parent.width; height: parent.height - (isPrimary ? 172 : 130)
                     clip: true; contentHeight: appGrid.height
                     flickableDirection: Flickable.VerticalFlick; boundsBehavior: Flickable.StopAtBounds
                     pressDelay: 120
@@ -3483,27 +3503,6 @@ PanelWindow {
                             appScrollAnim.to = Math.max(0, Math.min(maxY, target))
                             appScrollAnim.restart()
                             ev.accepted = true
-                        }
-                    }
-
-                    // Cycle wallpaper by mouse — mirrors $mainMod+W
-                    // (wallpaper-cycle.sh next). Lives in the launcher quick-
-                    // settings so it's reachable with no keyboard on hand; leaves
-                    // the launcher open so you can keep clicking to find one.
-                    Rectangle {
-                        width: parent.width; height: isPrimary ? 32 : 24
-                        radius: height / 2
-                        color: wallCycleMouse.containsMouse ? launcherShape.rowHover : launcherShape.rowBg
-                        Behavior on color { ColorAnimation { duration: 80 } }
-                        Row {
-                            anchors.centerIn: parent; spacing: isPrimary ? 8 : 5
-                            Text { text: String.fromCodePoint(0xF03E); color: launcherShape.fg; font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "Cycle wallpaper"; color: launcherShape.fg; font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
-                        }
-                        MouseArea {
-                            id: wallCycleMouse
-                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                            onClicked: Hyprland.dispatch("exec ~/.config/hypr/wallpaper-cycle.sh next")
                         }
                     }
 
