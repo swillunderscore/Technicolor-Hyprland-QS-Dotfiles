@@ -127,8 +127,28 @@ def compute_vars(primary, secondary, third, accent):
     _r, _g, _b = colorsys.hls_to_rgb(ph / 360.0, tl, tsat)
     TP = "#{:02x}{:02x}{:02x}".format(int(_r * 255), int(_g * 255), int(_b * 255))
 
+    # readable LINK colours, computed PER SURFACE: links appear on BOTH the
+    # secondary sidebar/DM list AND the primary chat, and one colour can't
+    # contrast both when the two palette colours sit on opposite lightness sides
+    # (e.g. dark primary + light secondary). Keep the accent hue so they still
+    # read as a link colour; flip lightness to whatever contrasts each surface.
+    # lightness is driven to the CONTRASTING extreme (near-black on a light/mid
+    # surface, near-white on a dark one) via ink_rgb — the accent hue only
+    # carries the "this is a link" colour identity. Fixed mid-lightness failed on
+    # mid-tone surfaces (a teal link on a teal bg was ~2:1).
+    LNKP = "hsl({:.0f}, {:.0f}%, {}%)".format(ah, ACS, 88 if ink_rgb(primary) == LIGHT else 15)
+    LNKS = "hsl({:.0f}, {:.0f}%, {}%)".format(ah, ACS, 88 if ink_rgb(secondary) == LIGHT else 15)
+
     def fr(a):
         return "rgba({},{},{},{:.2f})".format(frost[0], frost[1], frost[2], a)
+
+    # frosted GLASS = the dark/light frost base tinted ~20% toward the wallpaper
+    # primary, at a REAL alpha so the box is a visible translucent surface (the
+    # backdrop blur frosts it). fr() was 4-18% = invisible; glass() is the pane.
+    gb = tuple(int(round(frost[i] * 0.80 + primary[i] * 0.20)) for i in range(3))
+
+    def glass(a):
+        return "rgba({},{},{},{:.2f})".format(gb[0], gb[1], gb[2], a)
 
     def hv(l):
         return "hsl({:.0f}, {:.0f}%, {}%)".format(ah, ACS, l)
@@ -143,9 +163,11 @@ def compute_vars(primary, secondary, third, accent):
         "acc1": hv(72), "acc2": hv(65), "acc3": hv(58), "acc4": hv(51), "acc5": hv(45), "accnew": hv(58),
         "hover": hva(60, 0.12), "active": hva(60, 0.20), "active2": hva(60, 0.28),
         "rfp": role_filter(primary), "rfs": role_filter(secondary),
-        "tp": TP, "rf": rf,
+        "tp": TP, "lnkp": LNKP, "lnks": LNKS, "rf": rf,
         "st0": st[0], "st1": st[1], "st2": st[2], "st3": st[3], "st4": st[4],
         "fr04": fr(0.04), "fr07": fr(0.07), "fr10": fr(0.10), "fr12": fr(0.12), "fr14": fr(0.14), "fr18": fr(0.18),
+        # glass panes: gl1 (pressed) -> gl4 (main box) -> gl5 (dense, for popouts/modals)
+        "gl1": glass(0.26), "gl2": glass(0.36), "gl3": glass(0.48), "gl4": glass(0.62), "gl5": glass(0.88),
     }
 
 
@@ -188,16 +210,25 @@ body {
   --tc-menh: linear-gradient(to right, color-mix(in hsl, var(--tc-t), transparent 90%) 40%, transparent);
   --tc-msgh: color-mix(in hsl, var(--tc-t), transparent 82%);
   --bg-3: var(--tc-p); --bg-4: var(--tc-s); --bg-2: var(--tc-s); --bg-1: var(--tc-s);
+  /* floating popouts (profile popup, context menus, tooltips) must stay SOLID —
+     Discord's --bg-floating isn't themed, so without this they fall back to an
+     undefined value = see-through. */
+  --bg-floating: var(--tc-s);
   --hover: var(--tc-hover); --active: var(--tc-active); --active-2: var(--tc-active2);
   --channeltextarea-background: var(--tc-s);
   --text-0: var(--tc-ai); --text-1: var(--tc-ts0); --text-2: var(--tc-ts1); --text-3: var(--tc-ts2); --text-4: var(--tc-ts3); --text-5: var(--tc-ts4);
   --text-default: var(--tc-ts2); --text-strong: var(--tc-ts1); --header-primary: var(--tc-ts0); --header-secondary: var(--tc-ts2);
-  --text-muted: var(--tc-ts4); --chat-text-muted: var(--tc-ts4); --interactive-normal: var(--tc-ts3); --interactive-text-default: var(--tc-ts3);
+  --text-muted: var(--tc-ts4); --chat-text-muted: var(--tc-ts4); --interactive-normal: var(--tc-ts2); --interactive-text-default: var(--tc-ts2);
+  /* modern Discord text tokens + interactive states — DM/friends names use
+     these; unset, they fell back to Discord's (light) defaults = invisible on
+     our secondary surface. Map them to the secondary-surface ink. */
+  --text-primary: var(--tc-ts0); --text-secondary: var(--tc-ts2); --text-tertiary: var(--tc-ts3); --text-low-contrast: var(--tc-ts3);
+  --channels-default: var(--tc-ts2); --interactive-hover: var(--tc-ts0); --interactive-active: var(--tc-ts0);
   --white-500: var(--tc-ts0); --white: var(--tc-ts0);
   --accent-1: var(--tc-acc1); --accent-2: var(--tc-acc2); --accent-3: var(--tc-acc3); --accent-4: var(--tc-acc4); --accent-5: var(--tc-acc5); --accent-new: var(--tc-accnew);
 }
 body, .theme-dark:not(.custom-user-profile-theme), .theme-light:not(.custom-user-profile-theme) {
-  --text-link: var(--tc-s); --mention-foreground: var(--tc-s);
+  --text-link: var(--tc-lnks); --mention-foreground: var(--tc-lnks);
   --input-background-default: var(--tc-p); --input-text-default: var(--tc-tc2); --input-placeholder-text-default: var(--tc-tc4);
   --background-code: var(--tc-s);
   --mention: var(--tc-men); --mention-hover: var(--tc-menh);
@@ -211,9 +242,16 @@ body, .theme-dark:not(.custom-user-profile-theme), .theme-light:not(.custom-user
   background-color: var(--tc-p) !important;
   --text-0: var(--tc-ai); --text-1: var(--tc-tc0); --text-2: var(--tc-tc1); --text-3: var(--tc-tc2); --text-4: var(--tc-tc3); --text-5: var(--tc-tc4);
   --text-default: var(--tc-tc2); --text-strong: var(--tc-tc1); --header-primary: var(--tc-tc0); --header-secondary: var(--tc-tc2);
-  --text-muted: var(--tc-tc4); --chat-text-muted: var(--tc-tc4); --interactive-normal: var(--tc-tc3); --interactive-text-default: var(--tc-tc3);
+  --text-muted: var(--tc-tc4); --chat-text-muted: var(--tc-tc4); --interactive-normal: var(--tc-tc2); --interactive-text-default: var(--tc-tc2);
+  --text-primary: var(--tc-tc0); --text-secondary: var(--tc-tc2); --text-tertiary: var(--tc-tc3); --text-low-contrast: var(--tc-tc3);
+  --channels-default: var(--tc-tc2); --interactive-hover: var(--tc-tc0); --interactive-active: var(--tc-tc0);
   --white-500: var(--tc-tc0); --white: var(--tc-tc0);
+  /* links/mentions on the chat (primary) surface -> primary-contrast colour */
+  --text-link: var(--tc-lnkp); --mention-foreground: var(--tc-lnkp);
 }
+/* chat links light/dark to contrast the primary surface; placed BEFORE the
+   form_ rules so the input box (secondary) still wins back to --tc-p below */
+[class*="chatContent"] a, [class*="chatContent"] [class*="anchor"] { color: var(--tc-lnkp) !important; }
 [class*="chatContent"] [class*="scroller_"], [class*="chatContent"] [class*="messagesWrapper"] { background-color: var(--tc-p) !important; }
 [class*="messagesWrapper"]::before { background: var(--tc-p) !important; }
 [class*="chatContent"] [class*="form_"] {
@@ -234,9 +272,13 @@ body, .theme-dark:not(.custom-user-profile-theme), .theme-light:not(.custom-user
   background-color: color-mix(in srgb, var(--tc-p), transparent 82%) !important;
 }
 [class*="channelTextArea"] { background-color: var(--tc-s) !important; }
-[class*="username"], [class*="nickname"], [class*="roleColor"] { filter: var(--tc-rfp); transition: filter 1.4s ease; }
-[class*="membersWrap"] [class*="username"], [class*="members_"] [class*="username"], [class*="membersWrap"] [class*="nickname"], [class*="members_"] [class*="nickname"] { filter: var(--tc-rfs); }
-a, [class*="anchor"] { color: var(--tc-s) !important; }
+/* role-name readability filter keyed to the SURFACE: names live mostly on the
+   secondary surface (DM/friends list, member list, sidebars) -> default to the
+   secondary filter; only chat-message authors sit on the primary surface. This
+   matches the exact primary/secondary boundary the text ink uses. */
+[class*="username"], [class*="nickname"], [class*="roleColor"] { filter: var(--tc-rfs); transition: filter 1.4s ease; }
+[class*="chatContent"] [class*="username"], [class*="chatContent"] [class*="nickname"], [class*="chatContent"] [class*="roleColor"] { filter: var(--tc-rfp); }
+a, [class*="anchor"] { color: var(--tc-lnks) !important; }
 code, [class*="codeBlock"] { color: var(--tc-ts2) !important; }
 """
 
@@ -255,6 +297,10 @@ body {
   --tc-menh: linear-gradient(to right, color-mix(in hsl, var(--tc-t), transparent 90%) 40%, transparent);
   --tc-msgh: color-mix(in hsl, var(--tc-t), transparent 82%);
   --bg-4: var(--tc-fr07); --bg-3: var(--tc-fr04); --bg-2: var(--tc-fr12); --bg-1: var(--tc-fr18);
+  /* floating popouts (profile popup, menus, tooltips) stay SOLID even in the
+     glassy gradient theme — Discord's --bg-floating isn't themed, so it'd be
+     see-through otherwise. */
+  --bg-floating: var(--tc-s);
   --hover: var(--tc-hover); --active: var(--tc-active); --active-2: var(--tc-active2);
   --channeltextarea-background: var(--tc-fr10);
   --text-0: var(--tc-ai); --text-1: var(--tc-st0); --text-2: var(--tc-st1); --text-3: var(--tc-st2); --text-4: var(--tc-st3); --text-5: var(--tc-st4);
@@ -275,6 +321,50 @@ body, .theme-dark:not(.custom-user-profile-theme), .theme-light:not(.custom-user
 }
 [class*="chatContent"] [class*="scroller_"], [class*="chatContent"] [class*="messagesWrapper"] { background: transparent !important; }
 [class*="messagesWrapper"]::before { background: transparent !important; }
+[class*="username"], [class*="nickname"], [class*="roleColor"] { filter: var(--tc-rf); transition: filter 1.4s ease; }
+a, [class*="anchor"] { color: var(--tc-tp) !important; }
+code, [class*="codeBlock"] { color: var(--tc-st2) !important; }
+"""
+
+
+GLASS_LAYER = """
+body {
+  --font: 'SF Pro'; --code-font: ''; --gap: 12px; --border-thickness: 0px; --custom-dms-icon: off;
+  --background-image: on; --background-image-url: var(--tc-grad);
+  --panel-blur: on; --blur-amount: 32px; --transparency-tweaks: on;
+}
+:root {
+  --colors: on;
+  --tc-grad: linear-gradient(135deg, var(--tc-p), var(--tc-s));
+  --tc-men: linear-gradient(to right, color-mix(in hsl, var(--tc-t), transparent 84%) 40%, transparent);
+  --tc-menh: linear-gradient(to right, color-mix(in hsl, var(--tc-t), transparent 90%) 40%, transparent);
+  --tc-msgh: color-mix(in hsl, var(--tc-t), transparent 82%);
+  /* LIQUID GLASS: every rounded box is a translucent wallpaper-tinted PANE that
+     the backdrop-blur frosts. The GAPS (app frame) are transparent so the
+     gradient/wallpaper shows between panes. Boxes are NEVER see-through —
+     gl4 (~62%) is the main pane; that's the whole design philosophy. */
+  --bg-4: var(--tc-gl4); --bg-3: var(--tc-gl3); --bg-2: var(--tc-gl2); --bg-1: var(--tc-gl1);
+  --bg-floating: var(--tc-gl5);
+  --hover: var(--tc-hover); --active: var(--tc-active); --active-2: var(--tc-active2);
+  --channeltextarea-background: var(--tc-gl3);
+  --text-0: var(--tc-ai); --text-1: var(--tc-st0); --text-2: var(--tc-st1); --text-3: var(--tc-st2); --text-4: var(--tc-st3); --text-5: var(--tc-st4);
+  --accent-1: var(--tc-acc1); --accent-2: var(--tc-acc2); --accent-3: var(--tc-acc3); --accent-4: var(--tc-acc4); --accent-5: var(--tc-acc5); --accent-new: var(--tc-accnew);
+}
+body, .theme-dark:not(.custom-user-profile-theme), .theme-light:not(.custom-user-profile-theme) {
+  /* gaps = transparent (wallpaper/gradient shows); panes carry the color */
+  --app-frame-background: transparent;
+  --modal-background: var(--tc-gl5); --modal-footer-background: var(--tc-gl5);
+  --border-subtle: transparent; --border-faint: transparent; --border-normal: transparent; --border-strong: transparent; --border-hover: transparent; --border: transparent; --border-light: transparent;
+  --background-code: var(--tc-gl2); --input-background-default: var(--tc-gl3);
+  --input-text-default: var(--tc-st2); --input-placeholder-text-default: var(--tc-st4);
+  --text-default: var(--tc-st2); --text-strong: var(--tc-st1); --header-primary: var(--tc-st0); --header-secondary: var(--tc-st2);
+  --text-muted: var(--tc-st4); --chat-text-muted: var(--tc-st4); --interactive-normal: var(--tc-st3); --interactive-text-default: var(--tc-st3);
+  --white-500: var(--tc-st0); --white: var(--tc-st0);
+  --text-link: var(--tc-tp); --mention-foreground: var(--tc-tp);
+  --mention: var(--tc-men); --mention-hover: var(--tc-menh);
+  --message-mentioned-background-default: var(--tc-men); --message-mentioned-background-hover: var(--tc-menh);
+  --background-message-highlight: var(--tc-msgh);
+}
 [class*="username"], [class*="nickname"], [class*="roleColor"] { filter: var(--tc-rf); transition: filter 1.4s ease; }
 a, [class*="anchor"] { color: var(--tc-tp) !important; }
 code, [class*="codeBlock"] { color: var(--tc-st2) !important; }
@@ -377,7 +467,10 @@ def main():
     # static structures — written only-if-changed -> never reloaded on wallpaper change
     write_if_changed(OUT_BLOCKS, struct("Technicolor Blocks", BLOCKS_LAYER))
     write_if_changed(OUT_GRAD, struct("Technicolor", GRADIENT_LAYER))
-    write_if_changed(OUT_GLASS, struct("Technicolor Glass", GRADIENT_LAYER, BLOCKS_LAYER))
+    # Glass = its own self-contained layer: frosted translucent PANES (gl*) for
+    # the boxes + transparent gaps + blur. NOT a merge of blocks/gradient (that
+    # made the panes resolve to 4-18% alpha = invisible).
+    write_if_changed(OUT_GLASS, struct("Technicolor Glass", GLASS_LAYER))
 
 
 if __name__ == "__main__":
