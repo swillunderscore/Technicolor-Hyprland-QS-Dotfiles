@@ -9,27 +9,44 @@
 
 SOCK="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
 
+# Restore a minimized window to the current workspace, focus it, and raise it
+# above other floating windows (alterzorder top).
+unminimize() {
+    local addr="$1" cur_ws
+    cur_ws=$(hyprctl activeworkspace -j | jq -r '.id')
+    hyprctl --batch "dispatch movetoworkspace $cur_ws,address:$addr ; dispatch focuswindow address:$addr ; dispatch alterzorder top,address:$addr"
+}
+
 socat -U - "UNIX-CONNECT:$SOCK" | while read -r line; do
-    [[ "$line" != minimize\>\>* ]] && continue
+    case "$line" in
+        minimize\>\>*)
+            rest="${line#minimize>>}"
+            addr="${rest%%,*}"
+            state="${rest##*,}"
+            [ -z "$addr" ] && continue
+            # hyprctl returns addresses as 0xHEX; the event drops the prefix
+            [[ "$addr" != 0x* ]] && addr="0x$addr"
 
-    rest="${line#minimize>>}"
-    addr="${rest%%,*}"
-    state="${rest##*,}"
+            if [ "$state" = "1" ]; then
+                # Skip if already on special:minimized (some apps spam the request)
+                ws_name=$(hyprctl clients -j | jq -r --arg a "$addr" '.[] | select(.address == $a) | .workspace.name')
+                [ "$ws_name" = "special:minimized" ] && continue
+                hyprctl dispatch movetoworkspacesilent "special:minimized,address:$addr"
+            elif [ "$state" = "0" ]; then
+                unminimize "$addr"
+            fi
+            ;;
 
-    [ -z "$addr" ] && continue
-    # hyprctl returns addresses as 0xHEX; the event drops the prefix
-    [[ "$addr" != 0x* ]] && addr="0x$addr"
-
-    if [ "$state" = "1" ]; then
-        # Skip if already on special:minimized (some apps spam the request)
-        ws_name=$(hyprctl clients -j | jq -r --arg a "$addr" '.[] | select(.address == $a) | .workspace.name')
-        [ "$ws_name" = "special:minimized" ] && continue
-
-        hyprctl dispatch movetoworkspacesilent "special:minimized,address:$addr"
-
-    elif [ "$state" = "0" ]; then
-        # Unminimize → restore to current workspace and focus it
-        cur_ws=$(hyprctl activeworkspace -j | jq -r '.id')
-        hyprctl --batch "dispatch movetoworkspace $cur_ws,address:$addr ; dispatch focuswindow address:$addr"
-    fi
+        urgent\>\>*)
+            # An app asked to RAISE/activate a window (xdg-activation) — e.g. Brave
+            # opening a link in an existing window, or Dolphin reusing a window. If
+            # that window is minimized, un-minimize it; otherwise leave it alone
+            # (just the normal urgency hint).
+            addr="${line#urgent>>}"
+            [ -z "$addr" ] && continue
+            [[ "$addr" != 0x* ]] && addr="0x$addr"
+            ws_name=$(hyprctl clients -j | jq -r --arg a "$addr" '.[] | select(.address == $a) | .workspace.name')
+            [ "$ws_name" = "special:minimized" ] && unminimize "$addr"
+            ;;
+    esac
 done

@@ -53,6 +53,31 @@ ShellRoot {
         onTextChanged: root.parseColors()
     }
 
+    // Text-contrast slider (Settings → Colors). 0.5 = default crossover, 0 =
+    // always dark text, 1 = always light. The bar reads it live; Settings can
+    // also set it directly for instant drag feedback (both write this property).
+    property real contrastBias: 0.5
+    function parseTuning() {
+        var content = tuningFile.text();
+        if (!content) return;
+        var lines = content.split("\n");
+        for (var i = 0; i < lines.length; i++) {
+            var parts = lines[i].split("=");
+            if (parts.length !== 2) continue;
+            if (parts[0].trim() === "CONTRAST_BIAS") {
+                var f = parseFloat(parts[1].trim());
+                if (!isNaN(f)) root.contrastBias = f;
+            }
+        }
+    }
+    FileView {
+        id: tuningFile
+        path: root.homeDir + "/.config/hypr/color-tuning.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onTextChanged: root.parseTuning()
+    }
+
     readonly property int workspaceCeiling: {
         var ceil = 2;
         var wsList = Hyprland.workspaces.values;
@@ -108,6 +133,18 @@ ShellRoot {
 
     property var primaryBar: null
 
+    // Settings window state — a stable singleton on the shell root, NOT on a bar
+    // instance (those go stale across config reloads, which left the window unable
+    // to open). 0=Apps, 1=Wallpaper, 2=System.
+    property bool settingsOpen: false
+    property int settingsTab: 0
+    // Reliable open: reset to false first, so a window the compositor closed
+    // (Super+C etc.) is rebuilt. A FloatingWindow destroyed by the WM leaves
+    // `visible` bound true with no surface — only a false->true transition
+    // recreates it; setting true again when already true is a no-op.
+    function showSettings() { root.settingsOpen = false; settingsShowTimer.restart() }
+    Timer { id: settingsShowTimer; interval: 24; onTriggered: root.settingsOpen = true }
+
     Variants {
         model: Quickshell.screens
 
@@ -116,6 +153,8 @@ ShellRoot {
             screen: modelData
 
             barScreen: modelData
+            shell: root
+            onSettingsRequested: root.showSettings()
             colorFocused: root.colorFocused
             colorVisible: root.colorVisible
             colorOccupied: root.colorOccupied
@@ -123,6 +162,7 @@ ShellRoot {
             workspaceCeiling: root.workspaceCeiling
             gradientStart: root.gradientStart
             gradientEnd: root.gradientEnd
+            contrastBias: root.contrastBias
             sharedNetTopUpComm: root.netTopUpComm
             sharedNetTopDownComm: root.netTopDownComm
 
@@ -132,4 +172,19 @@ ShellRoot {
     }
 
     AltTabPie { barRef: root.primaryBar }
+
+    // One settings window for the whole shell — a normal toplevel app window
+    // (FloatingWindow), bound to primaryBar's settings state. Opened by the bar's
+    // gear button OR from the app list via the IPC handler below.
+    Settings { bar: root.primaryBar; shell: root }
+
+    // Makes Settings launchable like any app: technicolor-settings.desktop runs
+    // `qs ipc call settings open`. Registered once, here at the shell root.
+    IpcHandler {
+        target: "settings"
+        function open(): void { root.showSettings() }
+        function toggle(): void { if (root.settingsOpen) root.settingsOpen = false; else root.showSettings() }
+        function tab(n: int): void { root.settingsTab = n; root.showSettings() }
+        function gear(): void { if (root.primaryBar) root.primaryBar.settingsRequested() }  // mirrors the gear button's signal path (diagnostic)
+    }
 }

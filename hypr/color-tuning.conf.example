@@ -1,0 +1,7 @@
+# Written by Settings → Colors (the sliders). Absent = these defaults.
+#   CONTRAST_BIAS: where text flips light/dark over the colors.
+#     0.5 = auto/default · 0 = always dark text · 1 = always light text.
+#   SATURATION: mute/boost the wallpaper colors everywhere (bar + all apps).
+#     0 = grayscale · 1 = as-extracted · >1 = boosted.
+CONTRAST_BIAS=0.5
+SATURATION=1.0

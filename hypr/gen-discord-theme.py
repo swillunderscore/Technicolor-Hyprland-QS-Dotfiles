@@ -78,9 +78,47 @@ def rel_lum(c):
     return 0.2126 * _lin(c[0]) + 0.7152 * _lin(c[1]) + 0.0722 * _lin(c[2])
 
 
+# ── user tuning (Settings → Colors). Shared by every generator that imports
+# this module (Spotify, Telegram, KDE, GTK, Brave all use ink_rgb), so a single
+# slider moves the light/dark text crossover everywhere at once.
+TUNING_PATH = os.path.expanduser("~/.config/hypr/color-tuning.conf")
+
+
+def load_tuning():
+    t = {"CONTRAST_BIAS": 0.5, "SATURATION": 1.0}
+    try:
+        for line in open(TUNING_PATH):
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() in t:
+                try:
+                    t[k.strip()] = float(v.strip())
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return t
+
+
+TUNING = load_tuning()
+
+# WCAG crossover where black/white text are equally readable (~0.1791). The
+# slider biases it: 0.5 = unchanged default, 0 = always dark text, 1 = always
+# light text. Mapped piecewise so 0.5 reproduces the original look exactly.
+_INK_BASE = 0.17912
+
+
+def _ink_threshold():
+    b = TUNING["CONTRAST_BIAS"]
+    if b <= 0.5:
+        return _INK_BASE * (b / 0.5)
+    return _INK_BASE + (1.06 - _INK_BASE) * ((b - 0.5) / 0.5)
+
+
 def ink_rgb(c):
-    L = rel_lum(c)
-    return DARK if (L + 0.05) / 0.05 >= 1.05 / (L + 0.05) else LIGHT
+    return DARK if rel_lum(c) >= _ink_threshold() else LIGHT
 
 
 def role_filter(surface):

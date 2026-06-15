@@ -21,6 +21,14 @@ PanelWindow {
     required property color gradientStart
     required property color gradientEnd
 
+    // Text-contrast slider (Settings → Colors), fed from shell.qml. 0.5 = the
+    // original 0.55 crossover; 0 = always dark text, 1 = always light. cthr is
+    // the perceived-brightness threshold all contrast* helpers compare against.
+    property real contrastBias: 0.5
+    readonly property real cthr: contrastBias <= 0.5
+        ? (contrastBias / 0.5) * 0.55
+        : 0.55 + ((contrastBias - 0.5) / 0.5) * 0.45
+
     // Fed from shell.qml's nethogs streamer. Used to annotate net history
     // buckets with the top sender/receiver app for that 1-second window.
     property string sharedNetTopUpComm: "-"
@@ -35,19 +43,52 @@ PanelWindow {
     // renders. At startup pinAvailProc drops any pin whose launch command
     // isn't present on this machine, so the shared config hides apps a given
     // system doesn't have (here, everything's installed -> all of them show).
-    readonly property var allAppPins: [
+    // Baked-in DEFAULTS: first-run seed + permanent fallback. The LIVE list is
+    // ~/.config/quickshell/launcher-apps.json, edited in Settings > Apps. When
+    // that file is empty/missing we fall back to these, so the bar never breaks.
+    readonly property var defaultPins: [
         { icon: "brave-desktop",                    cmd: "brave",                                   nerdGlyph: "", imgPath: "" },
         { icon: "kitty",                            cmd: "kitty",                                   nerdGlyph: "", imgPath: "" },
         { icon: "vesktop",                          cmd: "vesktop",                                 nerdGlyph: "", imgPath: "" },
         { icon: "steam",                            cmd: "steam",                                   nerdGlyph: "", imgPath: "" },
         { icon: "",                                 cmd: bar.homeDir + "/.local/bin/launch_slippi_and_keyb0xx.sh",nerdGlyph: "", imgPath: "file://" + bar.homeDir + "/Slippi/73bff6acc99072beb352c16a24b3e6cd.png" },
-        { icon: "org.kde.dolphin",                  cmd: "~/.config/hypr/dolphin-tc.sh",                                 nerdGlyph: "", imgPath: "" },
+        { icon: "org.kde.dolphin",                  cmd: bar.homeDir + "/.config/hypr/dolphin-tc.sh",                             nerdGlyph: "", imgPath: "" },
         { icon: "spotify",                          cmd: "spotify",                                 nerdGlyph: "", imgPath: "file:///usr/share/icons/char-white/apps/16/spotify-client.svg" },
         { icon: "org.telegram.desktop",             cmd: "flatpak run org.telegram.desktop",        nerdGlyph: "", imgPath: "" },
         { icon: "io.missioncenter.MissionCenter",   cmd: "missioncenter",                           nerdGlyph: "", imgPath: "" },
         { icon: "unityhub",                         cmd: "unityhub",                                nerdGlyph: "", imgPath: "" }
     ]
+    property var userPins: []   // loaded from launcher-apps.json; [] => use defaultPins
+    readonly property var allAppPins: (userPins && userPins.length) ? userPins : defaultPins
     property var appPins: allAppPins
+    onAllAppPinsChanged: pinAvailProc.running = true   // re-filter to installed when edited
+
+    // Live pin config — edited by Settings > Apps, watched so edits apply with no restart.
+    FileView {
+        id: pinsFile
+        path: bar.homeDir + "/.config/quickshell/launcher-apps.json"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: bar.parsePins()
+        onLoadFailed: bar.userPins = []
+    }
+    function parsePins() {
+        try { var t = pinsFile.text(); var a = t ? JSON.parse(t) : []; bar.userPins = Array.isArray(a) ? a : [] }
+        catch (e) { bar.userPins = [] }
+    }
+    // Edits start from the current list (file if present, else the baked defaults).
+    function pinsForEdit() { return (bar.userPins && bar.userPins.length) ? bar.userPins.slice() : bar.defaultPins.slice() }
+    Process { id: pinsWriteProc }
+    function savePins(arr) {
+        bar.userPins = arr
+        var b64 = Qt.btoa(JSON.stringify(arr, null, 2))
+        pinsWriteProc.command = ["bash", "-c",
+            "mkdir -p \"$(dirname '" + pinsFile.path + "')\"; printf %s '" + b64 + "' | base64 -d > '" + pinsFile.path + "'"]
+        pinsWriteProc.running = true
+    }
+    function addPin(p)      { var a = bar.pinsForEdit(); a.push(p);        bar.savePins(a) }
+    function removePinAt(i) { var a = bar.pinsForEdit(); if (i >= 0 && i < a.length) { a.splice(i, 1); bar.savePins(a) } }
+    function movePin(i, d)  { var a = bar.pinsForEdit(); var j = i + d; if (i >= 0 && i < a.length && j >= 0 && j < a.length) { var t = a[i]; a[i] = a[j]; a[j] = t; bar.savePins(a) } }
 
     Process {
         id: pinAvailProc
@@ -91,18 +132,18 @@ PanelWindow {
     function pad3(n) { return ("  " + n).slice(-3) }
     function contrastText(c) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
-        return lum > 0.55 ? "#000000" : "#FFFFFF"
+        return lum > cthr ? "#000000" : "#FFFFFF"
     }
     // Same polarity as contrastText but pulled toward the middle — a gray
     // that stays clearly visible yet reads as the "secondary" of the pair.
     // Used for the second I/O series (upload / write) and its labels.
     function contrastAlt(c) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
-        return lum > 0.55 ? Qt.rgba(0.27, 0.28, 0.33, 1.0) : Qt.rgba(0.78, 0.79, 0.84, 1.0)
+        return lum > cthr ? Qt.rgba(0.27, 0.28, 0.33, 1.0) : Qt.rgba(0.78, 0.79, 0.84, 1.0)
     }
     function contrastDim(c) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
-        return lum > 0.55 ? Qt.rgba(0, 0, 0, 0.35) : Qt.rgba(1, 1, 1, 0.35)
+        return lum > cthr ? Qt.rgba(0, 0, 0, 0.35) : Qt.rgba(1, 1, 1, 0.35)
     }
     function solidify(c) { return Qt.rgba(c.r, c.g, c.b, 1.0) }
 
@@ -149,11 +190,11 @@ PanelWindow {
     }
     function contrastHover(c) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
-        return lum > 0.55 ? Qt.rgba(0, 0, 0, 0.12) : Qt.rgba(1, 1, 1, 0.14)
+        return lum > cthr ? Qt.rgba(0, 0, 0, 0.12) : Qt.rgba(1, 1, 1, 0.14)
     }
     function contrastRow(c) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
-        return lum > 0.55 ? Qt.rgba(0, 0, 0, 0.06) : Qt.rgba(1, 1, 1, 0.07)
+        return lum > cthr ? Qt.rgba(0, 0, 0, 0.06) : Qt.rgba(1, 1, 1, 0.07)
     }
 
     readonly property color colText: "#ECEEF8"
@@ -1551,6 +1592,14 @@ PanelWindow {
 
     // Launcher panel state
     property bool launcherOpen: false
+
+    // Settings window state (tabbed): 0 = Apps, 1 = Wallpaper, 2 = System.
+    // The single Settings window (shell.qml) binds to whichever bar shell.qml
+    // tags as primaryBar; the gear + the `settings` IPC handler both target it.
+    property bool settingsOpen: false
+    property int settingsTab: 0
+    property var shell: null   // the ShellRoot (passed by shell.qml), for reaching primaryBar
+    signal settingsRequested() // gear button -> shell.qml opens the settings window
     // Re-scan DDC monitors each time the menu opens. `ddcutil detect` only sees
     // monitors that are powered on, and Hyprland drops/re-adds outputs when a
     // monitor is switched off overnight — which can leave the one-shot startup
@@ -3462,23 +3511,50 @@ PanelWindow {
                     }
                 }
 
-                // Cycle wallpaper by mouse — mirrors $mainMod+W (wallpaper-cycle.sh
-                // next). In the launcher so it's reachable with no keyboard on hand;
-                // leaves the launcher open so you can keep clicking to find one.
-                Rectangle {
+                // Cycle wallpaper (3/4) + Settings (1/4), side by side.
+                Row {
                     width: parent.width; height: isPrimary ? 32 : 24
-                    radius: height / 2
-                    color: wallCycleMouse.containsMouse ? launcherShape.rowHover : launcherShape.rowBg
-                    Behavior on color { ColorAnimation { duration: 80 } }
-                    Row {
-                        anchors.centerIn: parent; spacing: isPrimary ? 8 : 5
-                        Text { text: String.fromCodePoint(0xF03E); color: launcherShape.fg; font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
-                        Text { text: "Cycle wallpaper"; color: launcherShape.fg; font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
+                    spacing: isPrimary ? 6 : 4
+
+                    // ── Cycle wallpaper (3/4) — mirrors $mainMod+W; leaves the
+                    // launcher open so you can keep clicking to find one.
+                    Rectangle {
+                        width: (parent.width - parent.spacing) * 0.75
+                        height: parent.height; radius: height / 2
+                        color: wallCycleMouse.containsMouse ? launcherShape.rowHover : launcherShape.rowBg
+                        Behavior on color { ColorAnimation { duration: 80 } }
+                        Row {
+                            anchors.centerIn: parent; spacing: isPrimary ? 8 : 5
+                            Text { text: String.fromCodePoint(0xF03E); color: launcherShape.fg; font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "Cycle wallpaper"; color: launcherShape.fg; font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        MouseArea {
+                            id: wallCycleMouse
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                            // onPressed (not onClicked): the launcher can re-layer/close between
+                            // press and release, which swallows the composed click. Press fires
+                            // immediately — same as the brightness sliders, which work.
+                            onPressed: Hyprland.dispatch("exec ~/.config/hypr/wallpaper-cycle.sh next")
+                        }
                     }
-                    MouseArea {
-                        id: wallCycleMouse
-                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                        onClicked: Hyprland.dispatch("exec ~/.config/hypr/wallpaper-cycle.sh next")
+
+                    // ── Settings (1/4) — opens the tabbed settings window.
+                    Rectangle {
+                        width: (parent.width - parent.spacing) * 0.25
+                        height: parent.height; radius: height / 2
+                        color: settingsBtnMouse.containsMouse ? launcherShape.rowHover : launcherShape.rowBg
+                        Behavior on color { ColorAnimation { duration: 80 } }
+                        Text {
+                            anchors.centerIn: parent
+                            text: String.fromCodePoint(0xF013)  // gear (FA)
+                            color: launcherShape.fg; font.pixelSize: isPrimary ? 15 : 12; font.family: bar.fontFamily
+                        }
+                        MouseArea {
+                            id: settingsBtnMouse
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                            // onPressed (not onClicked) — see wallpaper button above.
+                            onPressed: { bar.settingsRequested(); bar.closeLauncher() }
+                        }
                     }
                 }
 
@@ -3616,11 +3692,11 @@ PanelWindow {
         readonly property color dim: bar.contrastDim(bar.borderVol)
         readonly property color hover: {
             var lum = 0.299 * bar.borderVol.r + 0.587 * bar.borderVol.g + 0.114 * bar.borderVol.b
-            return lum > 0.55 ? Qt.rgba(0, 0, 0, 0.10) : Qt.rgba(1, 1, 1, 0.14)
+            return lum > bar.cthr ? Qt.rgba(0, 0, 0, 0.10) : Qt.rgba(1, 1, 1, 0.14)
         }
         readonly property color rowBg: {
             var lum = 0.299 * bar.borderVol.r + 0.587 * bar.borderVol.g + 0.114 * bar.borderVol.b
-            return lum > 0.55 ? Qt.rgba(0, 0, 0, 0.05) : Qt.rgba(1, 1, 1, 0.07)
+            return lum > bar.cthr ? Qt.rgba(0, 0, 0, 0.05) : Qt.rgba(1, 1, 1, 0.07)
         }
 
         property int anchorX: 0
@@ -4222,7 +4298,7 @@ PanelWindow {
         // Denser than bar.contrastRow so cards visibly pop against the tray fill.
         readonly property color rowBg: {
             var lum = 0.299 * bar.borderNotif.r + 0.587 * bar.borderNotif.g + 0.114 * bar.borderNotif.b
-            return lum > 0.55 ? Qt.rgba(0, 0, 0, 0.20) : Qt.rgba(1, 1, 1, 0.18)
+            return lum > bar.cthr ? Qt.rgba(0, 0, 0, 0.20) : Qt.rgba(1, 1, 1, 0.18)
         }
 
         property int anchorX: 0

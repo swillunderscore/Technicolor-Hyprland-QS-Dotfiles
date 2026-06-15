@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Technicolor Settings
+Comment=Bar pins, wallpaper, and machine config for the Technicolor desktop
+Exec=qs ipc call settings open
+Icon=preferences-desktop
+Terminal=false
+Categories=Settings;DesktopSettings;Utility;
+Keywords=technicolor;bar;wallpaper;pins;hyprland;

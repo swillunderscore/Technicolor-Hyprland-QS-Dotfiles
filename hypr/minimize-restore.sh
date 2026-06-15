@@ -6,4 +6,6 @@ addr="$1"
 [ -z "$addr" ] && exit 1
 
 cur_ws=$(hyprctl activeworkspace -j | jq -r '.id')
-hyprctl --batch "dispatch movetoworkspace $cur_ws,address:$addr ; dispatch focuswindow address:$addr"
+# movetoworkspace = unminimize; focuswindow = focus; alterzorder top = raise it
+# above other floating windows (without this it restores but stays behind them).
+hyprctl --batch "dispatch movetoworkspace $cur_ws,address:$addr ; dispatch focuswindow address:$addr ; dispatch alterzorder top,address:$addr"

@@ -5,7 +5,10 @@ if ! flock -n 9; then
     exit 0
 fi
 
-WALLPAPER_DIR="$HOME/Wallpapers/animated"
+# Source folder — set in Settings (writes wallpaper-dir.conf). Re-read every run,
+# so changing it takes effect on the next cycle without restarting anything.
+WALLPAPER_DIR="$(cat "$HOME/.config/hypr/wallpaper-dir.conf" 2>/dev/null)"
+[ -z "$WALLPAPER_DIR" ] && WALLPAPER_DIR="$HOME/Wallpapers/animated"
 STATE_FILE="/tmp/wallpaper-current-index"
 CURRENT_PATH_FILE="/tmp/wallpaper-current-path"
 CACHE_DIR="$HOME/.cache/wallpapers-upscaled"
@@ -23,6 +26,14 @@ if [ "$MODE" = "random" ]; then
     INDEX=$((RANDOM % COUNT))
 elif [ "$MODE" = "restore" ]; then
     INDEX=$(cat "$STATE_FILE" 2>/dev/null || echo "0")
+elif [ -f "$MODE" ]; then
+    # Explicit file (Settings cover-flow picks one): find its index in the
+    # sorted list so STATE_FILE / colors / hourly rotation stay aligned.
+    INDEX=-1
+    for i in "${!WALLPAPERS[@]}"; do
+        if [ "${WALLPAPERS[$i]}" = "$MODE" ]; then INDEX=$i; break; fi
+    done
+    [ "$INDEX" -lt 0 ] && exit 0
 else
     CURRENT=$(cat "$STATE_FILE" 2>/dev/null || echo "-1")
     INDEX=$(( (CURRENT + 1) % COUNT ))

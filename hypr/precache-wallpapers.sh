@@ -13,7 +13,8 @@
 # Run once, and again after adding/removing wallpapers.
 set -u
 
-ANIM_DIR="$HOME/Wallpapers/animated"
+ANIM_DIR="$(cat "$HOME/.config/hypr/wallpaper-dir.conf" 2>/dev/null)"
+[ -z "$ANIM_DIR" ] && ANIM_DIR="$HOME/Wallpapers/animated"
 KEEP_LIST="$HOME/.cache/hypr-heavy-wallpapers.txt"
 HEAVY_FRAMES=60
 FLAGS=(--fill-color 000000 --resize crop --filter Nearest -t none --transition-fps 255)

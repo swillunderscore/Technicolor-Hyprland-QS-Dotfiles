@@ -1,11 +1,20 @@
-# Per-machine / personal — created by install.sh from the .example files
+# Per-machine / personal — created by install.sh or the Settings app from the
+# .example files (sensible defaults apply when absent)
 hypr/local.conf
 hypr/monitors.conf
+hypr/colors.conf
+hypr/color-tuning.conf
+hypr/hyprglass-tuning.conf
+hypr/wallpaper-dir.conf
 quickshell/colors.env
+quickshell/launcher-apps.json
 
 # Runtime state
 quickshell/silenced-apps.json
 quickshell/silenced-apps.json.lock
+hypr/__pycache__/
+quickshell/__pycache__/
+*.working
 
 # Editor / backup noise
 *.bak

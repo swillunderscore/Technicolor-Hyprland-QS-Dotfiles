@@ -1,0 +1,5 @@
+# Written by Settings → Wallpaper ("Change…"). A single absolute path to your
+# wallpapers folder. Absent = ~/Wallpapers/animated. Every wallpaper script
+# re-reads it, so changing it takes effect on the next cycle. Note: ~ is NOT
+# expanded here — use a full path. Example:
+# /home/youruser/Pictures/wallpapers

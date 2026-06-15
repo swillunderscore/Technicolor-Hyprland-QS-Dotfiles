@@ -5,7 +5,8 @@ echo "COLORS SCRIPT STARTED $(date)" >> /tmp/cycle-debug.log
 # Called after wallpaper changes. Extracts colors.
 # Quickshell watches colors.env directly — no bar restart needed.
 # ============================================================
-WALLPAPER_DIR="$HOME/Wallpapers/animated"
+WALLPAPER_DIR="$(cat "$HOME/.config/hypr/wallpaper-dir.conf" 2>/dev/null)"
+[ -z "$WALLPAPER_DIR" ] && WALLPAPER_DIR="$HOME/Wallpapers/animated"
 STATE_FILE="/tmp/wallpaper-current-index"
 # Figure out current wallpaper
 mapfile -t WALLPAPERS < <(find "$WALLPAPER_DIR" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.webp' -o -name '*.webm' -o -name '*.mp4' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) -size +0c | sort)

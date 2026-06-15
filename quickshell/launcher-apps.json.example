@@ -1,0 +1,6 @@
+[
+  { "icon": "brave-desktop",   "cmd": "brave",                       "nerdGlyph": "", "imgPath": "" },
+  { "icon": "kitty",           "cmd": "kitty",                       "nerdGlyph": "", "imgPath": "" },
+  { "icon": "vesktop",         "cmd": "vesktop",                     "nerdGlyph": "", "imgPath": "" },
+  { "icon": "org.kde.dolphin", "cmd": "~/.config/hypr/dolphin-tc.sh","nerdGlyph": "", "imgPath": "" }
+]

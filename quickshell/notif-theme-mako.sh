@@ -29,18 +29,30 @@ ge="${GRADIENT_END#\#}"
 # whichever palette color is the more accent-y one; if GRADIENT_END is the
 # darker of the two, swap roles.
 contrast=$(python3 - "$gs" "$ge" <<'PY'
-import sys
+import sys, os
 gs, ge = sys.argv[1], sys.argv[2]
 def parse(h):  return int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
 def hex_(rgb): return '{:02X}{:02X}{:02X}'.format(*[max(0,min(255,int(c))) for c in rgb])
 def lerp(a, b, t): return tuple(a[i] + (b[i]-a[i])*t for i in range(3))
-# Match the bar's contrastText() exactly: luminance 0..1, threshold 0.55.
+# Match the bar's contrastText() exactly: luminance 0..1, threshold from the
+# CONTRAST_BIAS slider (0.5 -> 0.55, the original default).
 def lum01(rgb): return (0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]) / 255.0
+def bias():
+    try:
+        for ln in open(os.path.expanduser('~/.config/hypr/color-tuning.conf')):
+            ln = ln.strip()
+            if ln.startswith('#') or '=' not in ln: continue
+            k, v = ln.split('=', 1)
+            if k.strip() == 'CONTRAST_BIAS': return float(v.strip())
+    except Exception: pass
+    return 0.5
+b = bias()
+thr = (b/0.5)*0.55 if b <= 0.5 else 0.55 + ((b-0.5)/0.5)*0.45
 s, e = parse(gs), parse(ge)
 # Match the bar's notification-tray pill exactly: lerpColor(0.86).
 # Keep in sync with `borderNotif` in Bar.qml.
 accent = lerp(s, e, 0.86)
-text = 'FFFFFF' if lum01(accent) <= 0.55 else '000000'
+text = 'FFFFFF' if lum01(accent) <= thr else '000000'
 print(f"{hex_(accent)} {text}")
 PY
 )
