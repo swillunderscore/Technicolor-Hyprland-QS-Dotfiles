@@ -13,7 +13,7 @@ The same wallpaper palette can also theme your actual apps — Discord (Vesktop)
 ## Demo
 
 clickable video
-[![Demo](https://img.youtube.com/vi/fFTZ00qKpcg/maxresdefault.jpg)]([https://youtu.be/WGOLzbLe-U8])
+[![Demo](https://img.youtube.com/vi/WGOLzbLe-U8/maxresdefault.jpg)](https://youtu.be/WGOLzbLe-U8)
 
 ![screenshot](screenshot.png)
 
