@@ -5,7 +5,7 @@
 
 Uses [Hyprland](https://hyprland.org/), [Quickshell](https://quickshell.org/), and [mako](https://github.com/emersion/mako).
 
-The bar is custom Quickshell, and its colors are pulled live from the current wallpaper. Workspaces are one long carousel that slides across every monitor together. It has an app launcher, live system monitors, a notification tray, per-monitor brightness, and an alt-tab pie menu.
+The bar is custom Quickshell, and its colors are pulled live from the current wallpaper. Workspaces are one long carousel that slides across every monitor together. It has an app launcher, live system monitors, a notification tray, per-monitor brightness, an alt-tab pie menu, and a [Settings app](#settings-app) — a real window with a cover-flow wallpaper picker and live color/glass tuning.
 
 The same wallpaper palette can also theme your actual apps — Discord (Vesktop), Spotify, Dolphin and Brave get full-strength color blocks with auto-contrasting text, re-tinted on every wallpaper change, with optional per-pixel "glass" transparency between the blocks via a compositor chromakey shader. See [App theming](#app-theming-discord--spotify--dolphin--brave).
 
@@ -86,17 +86,20 @@ sudo dnf copr enable errornointernet/quickshell && sudo dnf install quickshell
 ### 2. Copy the configs
 ```
 cp -r hypr quickshell mako ~/.config/
+mkdir -p ~/.local/share/applications && cp applications/*.desktop ~/.local/share/applications/
 ```
-(If you're doing the Spotify theming below, also `cp -r spicetify ~/.config/` — it only contains the live-color extension.)
+(The `.desktop` makes the Settings app show up in your launcher / app list. If you're doing the Spotify theming below, also `cp -r spicetify ~/.config/` — it only contains the live-color extension.)
 
-### 3. Set up the two per-machine files
+### 3. Set up the per-machine files
 `hyprland.conf` sources these, so they need to exist:
 ```
-cp ~/.config/hypr/monitors.conf.example ~/.config/hypr/monitors.conf
-cp ~/.config/hypr/local.conf.example    ~/.config/hypr/local.conf
+cp ~/.config/hypr/monitors.conf.example       ~/.config/hypr/monitors.conf
+cp ~/.config/hypr/local.conf.example          ~/.config/hypr/local.conf
+cp ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf
 ```
 - Edit `monitors.conf` for your displays. Run `hyprctl monitors` for names and modes, or use `nwg-displays`. The `preferred, auto` fallback works for a single screen as-is.
 - `local.conf` is for machine-specific Hyprland bits (GPU driver, input quirks). It can stay empty.
+- `hyprglass-tuning.conf` starts empty (just defaults); the Settings app's Glass tab writes to it. The other per-machine files (`color-tuning.conf`, `wallpaper-dir.conf`, `launcher-apps.json`) are created by the Settings app on demand and aren't needed up front — sensible defaults apply when they're absent.
 
 ### 4. Add wallpapers
 Put animated wallpapers in `~/Wallpapers/animated/` (see the Wallpapers section). The bar regenerates its color palette from the current wallpaper automatically.
@@ -122,9 +125,21 @@ A Nerd Font is required or the icons render as boxes; I use JetBrainsMono Nerd F
 export QS_FONT="Inter"
 ```
 
+## Settings app
+
+A real app window (`quickshell/Settings.qml`) — it appears in your app list as **Technicolor Settings**, and opens from the gear on the bar's launcher popup or with `qs ipc call settings open`. It's styled like the themed windows: solid rounded blocks with live liquid glass in the gaps. Tabs:
+
+- **Apps** — edit the launcher's pinned apps (reorder, swap icons, add/remove). Pins are stored in `quickshell/launcher-apps.json`; a built-in default set is used until you customize.
+- **Wallpaper** — set the wallpapers folder, and browse a **cover-flow** of every wallpaper in it: scroll or drag to spin it (a vertical mouse wheel scrolls it horizontally), click the centered cover to set it. Plus shuffle and open-folder.
+- **Colors** — two sliders that retint **every** themed app at once, with a live preview and reset buttons: a text **contrast** threshold (where text flips light↔dark — center is the current default, full-left forces dark text, full-right forces light) and a **saturation** mute/boost (0 = grayscale). A slider release re-runs the whole palette pipeline, so the bar and all themed apps follow.
+- **Glass** — live sliders for the hyprglass liquid-glass effect (refraction, fresnel, specular, blur, lens distortion, chromatic aberration, brightness/contrast/saturation/vibrancy), each with a reset, plus a write-in box for any value past a slider's range or any option without a slider. Applies instantly via `hyprctl keyword` and persists to `hypr/hyprglass-tuning.conf`.
+- **System** — GUI picker for the default file manager, and an editor for `local.conf` with Save & reload.
+
+Everything it writes (`color-tuning.conf`, `hyprglass-tuning.conf`, `wallpaper-dir.conf`, `launcher-apps.json`) is per-machine and gitignored; defaults apply when the files are absent.
+
 ## App theming (Discord / Spotify / Dolphin / Brave / GTK)
 
-All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper-colors.py` already calls on every wallpaper change (failures are silently skipped, so nothing breaks if you skip an app). The shared engine lives in `gen-discord-theme.py`: it picks the bar's gradient pair as primary/secondary, computes WCAG black-or-white ink per surface, and feeds every other generator.
+All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper-colors.py` already calls on every wallpaper change (failures are silently skipped, so nothing breaks if you skip an app). The shared engine lives in `gen-discord-theme.py`: it picks the bar's gradient pair as primary/secondary, computes WCAG black-or-white ink per surface, and feeds every other generator. The ink crossover and the overall color saturation are tunable live for every app at once from [Settings → Colors](#settings-app).
 
 The themed apps aren't part of the core install — install whichever you use (this is the same optional line as in [step 1](#1-dependencies); the generators just no-op for anything you don't have):
 ```
@@ -132,7 +147,7 @@ paru -S vesktop spotify spicetify-cli dolphin qt6ct-kde gcc brave-bin
 ```
 Each app still needs its one-time hook-up described below (Vencord QuickCSS, `spicetify` apply, the qt6ct `color_scheme_path`, the Brave flags).
 
-**Discord (Vesktop + Vencord):** generated themes land in `~/.config/vesktop/themes/` — enable exactly ONE (`technicolor-glass.css` is the good one: solid color blocks on a liquid-glass gradient). Live colors go through Vencord's QuickCSS (enable "Use QuickCSS"), which is how wallpaper changes apply with zero flash and a 1.4s cross-fade. Built on [midnight-discord](https://github.com/refact0r/midnight-discord) (inlined).
+**Discord (Vesktop + Vencord):** generated themes land in `~/.config/vesktop/themes/`. In Vesktop → Settings → Themes, enable **Technicolor**, then **Technicolor Blocks** (in that order — base then the block layout on top). Live colors go through Vencord's QuickCSS (enable "Use QuickCSS"), which is how wallpaper changes apply with zero flash and a 1.4s cross-fade. Built on [midnight-discord](https://github.com/refact0r/midnight-discord) (inlined).
 
 **Spotify (spicetify):** `gen-spotify-theme.py` writes a full Technicolor theme (`spicetify config current_theme Technicolor`, then `spicetify backup apply`). Live colors poll a tiny local HTTP server (`technicolor-color-server.py`, already in `hyprland.conf`'s exec-once) via the `spicetify/Extensions/technicolor-sync.js` extension (`spicetify config extensions technicolor-sync.js`). For real per-pixel transparency behind the blocks, add the chromakey shader (below).
 
@@ -151,8 +166,9 @@ The first loads the theme on every launch (no `brave://extensions` clicking — 
 
 ## What's where
 
-- `hypr/` — Hyprland config and its scripts: the workspace carousel, wallpaper cycling and theming, taskbar, minimize, alt-tab, plus the app-theming engine (`gen-*.py`), the chromakey shaders (`technicolor-chromakey*.glsl`), the color server, and the Dolphin launcher/shim.
-- `quickshell/` — the bar (`Bar.qml`), the alt-tab pie, notification scripts, system-monitor helpers, shaders.
+- `hypr/` — Hyprland config and its scripts: the workspace carousel, wallpaper cycling/colors/thumbnails (`wallpaper-*.sh/.py`), taskbar, minimize, alt-tab, the Dolphin-reusing folder opener (`open-folder.sh`), the hyprglass tuning helpers (`hyprglass-get.sh`/`hyprglass-set.sh`), plus the app-theming engine (`gen-*.py`), the chromakey shaders (`technicolor-chromakey*.glsl`), the color server, and the Dolphin launcher/shim.
+- `quickshell/` — the bar (`Bar.qml`), the Settings app (`Settings.qml`), the alt-tab pie, notification scripts, system-monitor helpers, shaders.
+- `applications/` — the `.desktop` entry so the Settings app appears in your launcher.
 - `mako/` — notification styling. The bar's tray reads from mako.
 - `spicetify/` — the Spotify live-color extension (`Extensions/technicolor-sync.js`).
 
@@ -209,10 +225,12 @@ for d in hypr quickshell mako spicetify; do
   [ -e ~/.config/$d ] && mv ~/.config/$d ~/.config/$d.bak.$(date +%s)
 done
 cp -r /tmp/technicolor/hypr /tmp/technicolor/quickshell /tmp/technicolor/mako /tmp/technicolor/spicetify ~/.config/
+mkdir -p ~/.local/share/applications && cp /tmp/technicolor/applications/*.desktop ~/.local/share/applications/
 
 # 3. per-machine files + wallpaper dir
-cp ~/.config/hypr/monitors.conf.example ~/.config/hypr/monitors.conf
-cp ~/.config/hypr/local.conf.example    ~/.config/hypr/local.conf
+cp ~/.config/hypr/monitors.conf.example         ~/.config/hypr/monitors.conf
+cp ~/.config/hypr/local.conf.example            ~/.config/hypr/local.conf
+cp ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf
 mkdir -p ~/Wallpapers/animated
 
 # 4. monitor brightness (takes effect after re-login)
