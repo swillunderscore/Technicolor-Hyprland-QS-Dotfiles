@@ -6,6 +6,8 @@ hypr/colors.conf
 hypr/color-tuning.conf
 hypr/hyprglass-tuning.conf
 hypr/wallpaper-dir.conf
+hypr/window-geometry.conf
+hypr/workspaces.conf
 quickshell/colors.env
 quickshell/launcher-apps.json
 

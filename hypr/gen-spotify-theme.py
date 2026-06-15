@@ -259,6 +259,26 @@ html [class*="searchCategory-contentArea"]::after {{
   background-image: none !important;
 }}
 
+/* The entity-header text (artist/album title + "Verified by Spotify" + monthly
+   listeners) sits over Spotify's PHOTO banner, not a theme surface — so the
+   blanket encore-base -> tc-tc1 mapping below makes it dark and unreadable on
+   the photo. Force the whole header text block white + a soft shadow so it
+   reads over any image (Spotify's own white, minus the dark scrim we removed).
+   Scoped to main-entityHeader-headerText so body text elsewhere is unaffected.
+   html body = higher specificity than the encore-base rule, so it wins. */
+html body [class*="main-entityHeader-headerText"] *,
+html body [class*="main-entityHeader-subtitle"] {{
+  color: #fff !important;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.55) !important;
+}}
+/* byline icons (the Spotify logo on "Made for X" / algorithmic playlists) use
+   SVG fill, not color, and keep an explicit dark fill — so they show as a black
+   smudge over the photo. Follow the white text via currentColor. */
+html body [class*="main-entityHeader-headerText"] svg {{
+  fill: currentColor !important;
+  filter: drop-shadow(0 1px 4px rgba(0,0,0,0.5));
+}}
+
 /* ALL masks in the main view die (carousel edge fades, marquee text fades) —
    technicolor doesn't fade, content just ends. Spinner keeps its conic mask.
    (html prefix = exact selectors verified live; class-based masks are hashed) */

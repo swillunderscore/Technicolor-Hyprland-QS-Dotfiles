@@ -230,7 +230,11 @@ QToolTip {{ background-color: rgb{sec}; color: rgb{inks}; border: none; }}
 /* center file view: KItemListContainer paints the rounded primary block; the
    inner QGraphicsView fills square with the KColorScheme View color (from
    DolphinView::updatePalette) — force it transparent so the radius shows. */
-KItemListContainer {{ background-color: rgb{prim}; color: rgb{inkp}; selection-background-color: rgb{acc}; selection-color: rgb{inka}; border: none; border-radius: 12px; margin: 8px; padding: 12px; }}
+/* top margin 0 + square top corners: the file block butts flush against the tab
+   strip (browser-style), instead of floating 8px below it — that 8px gap was the
+   chroma-key region showing the wallpaper as a thin coloured line under the tabs.
+   Sides + bottom keep the 8px float + rounded corners. */
+KItemListContainer {{ background-color: rgb{prim}; color: rgb{inkp}; selection-background-color: rgb{acc}; selection-color: rgb{inka}; border: none; border-radius: 12px; border-top-left-radius: 0px; border-top-right-radius: 0px; margin: 0px 8px 8px 8px; padding: 12px; }}
 KItemListContainer QGraphicsView {{ background: transparent; border: none; qproperty-autoFillBackground: false; }}
 KItemListContainer QGraphicsView > QWidget {{ background: transparent; qproperty-autoFillBackground: false; }}
 PlacesPanel {{ background-color: rgb{sec}; color: rgb{inks}; border: none; border-radius: 12px; margin: 8px; padding: 10px; }}
@@ -266,8 +270,11 @@ QHeaderView::section {{ background-color: rgb{prim}; color: rgb{inkp}; border: n
    margin which only nudged the right-edge default). */
 QTabBar::tab {{ background-color: rgb{sec}; color: rgb{inks}; border-radius: 0px; padding: 5px 10px; margin: 0px; min-width: 0px; border-right: 1px solid rgb{sec_div}; }}
 QTabBar::tab:last, QTabBar::tab:only-one {{ border-right: none; }}
-QTabBar::tab:first, QTabBar::tab:only-one {{ border-top-left-radius: 10px; border-bottom-left-radius: 10px; }}
-QTabBar::tab:last, QTabBar::tab:only-one {{ border-top-right-radius: 10px; border-bottom-right-radius: 10px; }}
+/* shift the whole connected strip right by the file view's 8px left margin, so
+   the first tab's left edge lines up with the file block's left edge instead of
+   jutting 8px past it */
+QTabBar::tab:first, QTabBar::tab:only-one {{ border-top-left-radius: 10px; border-bottom-left-radius: 0px; margin-left: 8px; }}
+QTabBar::tab:last, QTabBar::tab:only-one {{ border-top-right-radius: 10px; border-bottom-right-radius: 0px; }}
 QTabBar::close-button {{ width: 20px; height: 20px; margin-right: 5px; image: url({home}/.config/qt6ct/tab-x.png); }}
 QTabBar::close-button:selected {{ image: url({home}/.config/qt6ct/tab-x-sel.png); }}
 /* hover highlight behind the x: a LIGHT circular disc (classic close-button
