@@ -8,12 +8,17 @@ technicolor-chromakey-brave.glsl shader (hyprland.conf) renders it as glass
 to the wallpaper; the toolbar/tabs/new-tab page take the palette colors.
 
 Install — add two lines to ~/.config/brave-flags.conf (NO manual
-brave://extensions step needed; verified working on Chrome 149):
-    --load-extension=~/.config/brave-technicolor-theme   # auto-loads the theme each launch
-    --remote-debugging-port=9222                          # lets the pipeline hot-recolor (see brave-theme-reload.py)
-Chromium flashes a dismissable "turn off developer-mode extensions" bubble on
-launch — cosmetic. (Manual alternative: brave://extensions -> Developer mode
--> Load unpacked -> this folder.)
+brave://extensions step needed; verified working on Chrome 149). Use an
+ABSOLUTE path — the brave launcher reads this file line-by-line and does NOT
+expand ~, so a tilde silently fails to load the theme:
+    --load-extension=/home/YOU/.config/brave-technicolor-theme   # loads + RE-READS the theme on every launch
+    --remote-debugging-port=9222                                  # lets the pipeline hot-recolor while open (see brave-theme-reload.py)
+--load-extension is what makes a wallpaper change pick up on the NEXT launch
+(it re-reads the regenerated files, and the per-palette version below makes
+Chromium re-bake rather than serve its cache). Without it, Brave keeps showing
+the last theme it baked while running. Chromium flashes a dismissable "turn off
+developer-mode extensions" bubble on launch — cosmetic. (Manual alternative:
+brave://extensions -> Developer mode -> Load unpacked -> this folder.)
 
 Live recolor: Chromium bakes the theme into a profile-side cache, so just
 rewriting these files does nothing on its own. brave-theme-reload.py forces a
