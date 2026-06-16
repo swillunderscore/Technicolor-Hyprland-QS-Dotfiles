@@ -394,7 +394,7 @@ PanelWindow {
     readonly property int fs: isPrimary ? 15 : 12
     readonly property int vm: isPrimary ? 4 : 1
     readonly property int hm: isPrimary ? 5 : 4
-    readonly property string fontFamily: Quickshell.env("QS_FONT") || "SF Pro"
+    property string fontFamily: Quickshell.env("QS_FONT") || "SF Pro"   // overridden by shell.qml (Settings → System → Font)
 
     readonly property color borderDrawer: lerpColorAlpha(0.0, 0.8)
     readonly property color borderCpu:    lerpColorAlpha(0.10, 0.7)

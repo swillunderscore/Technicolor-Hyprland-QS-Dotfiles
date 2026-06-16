@@ -8,6 +8,8 @@ hypr/hyprglass-tuning.conf
 hypr/wallpaper-dir.conf
 hypr/window-geometry.conf
 hypr/workspaces.conf
+hypr/font.conf
+hypr/wofi/font.css
 quickshell/colors.env
 quickshell/launcher-apps.json
 

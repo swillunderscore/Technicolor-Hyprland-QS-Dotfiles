@@ -1,0 +1,4 @@
+# Written by Settings → System → Font. A single line: the UI font family used by
+# the bar, the Settings window, and wofi (via gen-wofi-font.sh). Absent = SF Pro
+# (or $QS_FONT if set). Example:
+# SF Pro

@@ -78,6 +78,19 @@ ShellRoot {
         onTextChanged: root.parseTuning()
     }
 
+    // UI font (Settings → System → Font). Bar + Settings window read this live;
+    // wofi follows via gen-wofi-font.sh. Default = QS_FONT env, else SF Pro.
+    readonly property string fontFallback: Quickshell.env("QS_FONT") || "SF Pro"
+    property string uiFont: root.fontFallback
+    FileView {
+        id: fontFile
+        path: root.homeDir + "/.config/hypr/font.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: { var t = this.text().trim(); root.uiFont = t !== "" ? t : root.fontFallback }
+        onLoadFailed: root.uiFont = root.fontFallback
+    }
+
     readonly property int workspaceCeiling: {
         var ceil = 2;
         var wsList = Hyprland.workspaces.values;
@@ -163,6 +176,7 @@ ShellRoot {
             gradientStart: root.gradientStart
             gradientEnd: root.gradientEnd
             contrastBias: root.contrastBias
+            fontFamily: root.uiFont
             sharedNetTopUpComm: root.netTopUpComm
             sharedNetTopDownComm: root.netTopDownComm
 

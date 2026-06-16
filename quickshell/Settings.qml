@@ -141,6 +141,45 @@ FloatingWindow {
         win.defaultFM = id
     }
 
+    // ── UI font (System tab) ── source of truth = ~/.config/hypr/font.conf.
+    // Bar + this window read it live via shell.uiFont; wofi via gen-wofi-font.sh.
+    property var installedFonts: []
+    property string currentFont: ""
+    property string fontSearch: ""
+    readonly property string effFont: win.currentFont !== "" ? win.currentFont : (win.bar ? win.bar.fontFamily : "SF Pro")
+    Process {
+        id: fontListProc
+        running: win.visible
+        command: ["bash", "-c", "fc-list : family | sed 's/,.*//' | sort -u"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var a = []
+                var lines = this.text.split("\n")
+                for (var i = 0; i < lines.length; i++) { var s = lines[i].trim(); if (s !== "") a.push(s) }
+                win.installedFonts = a
+            }
+        }
+    }
+    FileView {
+        id: fontConfFile
+        path: win.homeDir + "/.config/hypr/font.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: win.currentFont = this.text().trim()
+        onLoadFailed: win.currentFont = ""
+    }
+    Process { id: fontSetProc }
+    function setFont(name) {
+        if (!name) return
+        win.currentFont = name
+        if (win.shell) win.shell.uiFont = name   // instant: bar + this window re-font live
+        var b64 = Qt.btoa(name)
+        fontSetProc.command = ["bash", "-c",
+            "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/font.conf'; " +
+            "\"$HOME/.config/hypr/gen-wofi-font.sh\""]
+        fontSetProc.running = true
+    }
+
     // ── wallpapers folder (Wallpaper tab) — single source of truth in
     // ~/.config/hypr/wallpaper-dir.conf; every wallpaper script reads it. ──
     property string wallpaperDir: win.homeDir + "/Wallpapers/animated"
@@ -906,8 +945,50 @@ FloatingWindow {
                 Item {
                     anchors.fill: parent
                     visible: win.shell && win.shell.settingsTab === 4
-                    Column {
-                        anchors.fill: parent; spacing: 10
+                    SmoothList {
+                        anchors.fill: parent; clip: true; contentHeight: sysCol.height
+                        Column {
+                            id: sysCol; width: parent.width; spacing: 10
+
+                        // ── UI font (bar + this window live; wofi via gen-wofi-font.sh) ──
+                        Item {
+                            width: parent.width; height: 22
+                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Font"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: win.effFont; color: win.fg; opacity: 0.7; font.pixelSize: 12; font.family: win.ff }
+                        }
+                        Rectangle {
+                            width: parent.width; height: 30; radius: 8; color: win.rowBg
+                            TextInput { id: fontSearchIn; anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10
+                                verticalAlignment: TextInput.AlignVCenter; color: win.fg; font.pixelSize: 12; font.family: win.ff; clip: true
+                                onTextChanged: win.fontSearch = text }
+                            Text { anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                                visible: fontSearchIn.text === ""; text: "Search fonts…"; color: win.fg; opacity: 0.45; font.pixelSize: 12; font.family: win.ff }
+                        }
+                        SmoothList {
+                            width: parent.width; height: 130; clip: true; contentHeight: fontCol.height
+                            Column {
+                                id: fontCol; width: parent.width; spacing: 2
+                                Repeater {
+                                    model: {
+                                        var q = win.fontSearch.toLowerCase()
+                                        if (q === "") return win.installedFonts
+                                        var r = []
+                                        for (var i = 0; i < win.installedFonts.length; i++)
+                                            if (win.installedFonts[i].toLowerCase().indexOf(q) >= 0) r.push(win.installedFonts[i])
+                                        return r
+                                    }
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        width: fontCol.width; height: 28; radius: 7
+                                        color: win.effFont === modelData ? win.rowHover : (fRowM.containsMouse ? win.rowBg : "transparent")
+                                        Text { anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                                            text: modelData; color: win.fg; font.pixelSize: 13; font.family: modelData }   // previewed in its own font
+                                        MouseArea { id: fRowM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.setFont(modelData) }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
                         // ── Default file manager (GUI picker) ──
                         Text { text: "Default file manager"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
@@ -932,7 +1013,7 @@ FloatingWindow {
                         Text { width: parent.width; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff; wrapMode: Text.WordWrap
                             text: "Advanced — ~/.config/hypr/local.conf (GPU, input, monitors). Save then Apply." }
                         Rectangle {
-                            width: parent.width; height: parent.height - 172; radius: 9; color: win.rowBg
+                            width: parent.width; height: 220; radius: 9; color: win.rowBg
                             Flickable {
                                 anchors.fill: parent; anchors.margins: 8; clip: true
                                 contentWidth: width; contentHeight: confEdit.paintedHeight
@@ -954,6 +1035,7 @@ FloatingWindow {
                                 Text { anchors.centerIn: parent; text: "Save & Apply (reload Hyprland)"; color: win.fg; font.pixelSize: 13; font.family: win.ff }
                                 MouseArea { id: applyM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { win.saveConf(); Hyprland.dispatch("exec hyprctl reload") } } }
                         }
+                    }
                     }
                 }
                 }
