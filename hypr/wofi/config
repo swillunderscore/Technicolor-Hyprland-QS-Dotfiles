@@ -1,0 +1,16 @@
+# Technicolor wofi config (Super+R). Used via:
+#   wofi --show drun --conf ~/.config/hypr/wofi/config --style ~/.config/hypr/wofi/style.css
+show=drun
+prompt=Search
+allow_images=true
+image_size=30
+insensitive=true
+matching=fuzzy
+no_actions=true
+hide_scroll=true
+width=560
+height=520
+lines=9
+columns=1
+gtk_dark=true
+exec_search=false

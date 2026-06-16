@@ -1,0 +1,54 @@
+/* Technicolor wofi theme (Super+R). Colors come from the active Technicolor GTK
+ * theme (gen-gtk-theme.py defines @theme_bg_color / @theme_fg_color /
+ * @theme_selected_bg_color / @theme_selected_fg_color from the wallpaper), so
+ * this follows the palette automatically. The translucent window is glassed by
+ * hyprglass (the "wofi" layer namespace is whitelisted in hyprland.conf). */
+
+* {
+    font-family: "JetBrainsMono Nerd Font", "SF Pro", sans-serif;
+    font-size: 15px;
+}
+
+window {
+    background-color: alpha(@theme_bg_color, 0.62);
+    border: 2px solid alpha(@theme_fg_color, 0.14);
+    border-radius: 20px;
+    color: @theme_fg_color;
+}
+
+#outer-box { margin: 0; padding: 14px; }
+
+#input {
+    margin-bottom: 12px;
+    padding: 11px 16px;
+    border: none;
+    outline: none;
+    box-shadow: none;
+    border-radius: 14px;
+    background-color: alpha(@theme_fg_color, 0.10);
+    color: @theme_fg_color;
+}
+#input:focus { border: none; box-shadow: none; outline: none; }
+#input image { color: @theme_fg_color; }
+
+#scroll { margin: 0; border: none; }
+#inner-box { margin: 0; }
+
+#entry {
+    padding: 10px 14px;
+    margin: 3px 2px;
+    border: none;
+    border-radius: 14px;
+}
+#entry:selected {
+    background-color: @theme_selected_bg_color;
+    outline: none;
+}
+#entry image { margin-right: 14px; }
+#img { margin-right: 14px; }
+
+#text { color: @theme_fg_color; }
+#entry:selected #text,
+#entry:selected { color: @theme_selected_fg_color; }
+
+#unselected { color: @theme_fg_color; }
