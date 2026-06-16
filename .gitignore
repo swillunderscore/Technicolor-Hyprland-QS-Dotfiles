@@ -10,6 +10,7 @@ hypr/window-geometry.conf
 hypr/workspaces.conf
 hypr/font.conf
 hypr/terminal.conf
+hypr/glass-tint.conf
 hypr/wofi/font.css
 quickshell/colors.env
 quickshell/launcher-apps.json
