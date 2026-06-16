@@ -199,6 +199,22 @@ FloatingWindow {
         updateProc.command = ["bash", "-c", "\"$HOME/.config/hypr/technicolor-update.sh\""]
         updateProc.running = true
     }
+    // Preview: list the commits not yet pulled (GitHub API, no clone).
+    property var newCommits: []
+    property string commitCount: ""
+    property bool checking: false
+    Process {
+        id: checkProc
+        stdout: StdioCollector {
+            onStreamFinished: {
+                win.checking = false
+                var lines = this.text.split("\n").filter(function (s) { return s.trim() !== "" })
+                win.commitCount = lines.length ? lines[0] : "?"
+                win.newCommits = lines.slice(1)
+            }
+        }
+    }
+    function runCheck() { win.checking = true; win.newCommits = []; win.commitCount = ""; checkProc.command = ["bash", "-c", "\"$HOME/.config/hypr/technicolor-check.sh\""]; checkProc.running = true }
 
     // ── wallpapers folder (Wallpaper tab) — single source of truth in
     // ~/.config/hypr/wallpaper-dir.conf; every wallpaper script reads it. ──
@@ -1088,12 +1104,42 @@ FloatingWindow {
                         Text { text: "Update"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
                             text: "Pull the latest Technicolor from GitHub and copy it in. Your colors, glass, font, pins, monitors and local.conf are kept (they're gitignored)." }
-                        Rectangle {
-                            width: parent.width; height: 36; radius: 9
-                            color: updM.containsMouse ? win.rowHover : (win.updateArmed ? Qt.rgba(0.9, 0.6, 0.2, 0.30) : win.rowBg)
-                            Text { anchors.centerIn: parent; color: win.fg; font.pixelSize: 13; font.family: win.ff
-                                text: win.updateArmed ? "Click again to confirm" : (updateProc.running ? "Updating…" : "Update now") }
-                            MouseArea { id: updM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; enabled: !updateProc.running; onClicked: win.runUpdate() }
+                        Row {
+                            width: parent.width; height: 36; spacing: 8
+                            Rectangle {
+                                width: (parent.width - 8) / 2; height: 36; radius: 9
+                                color: chkM.containsMouse ? win.rowHover : win.rowBg
+                                Text { anchors.centerIn: parent; color: win.fg; font.pixelSize: 13; font.family: win.ff
+                                    text: win.checking ? "Checking…" : "Check for updates" }
+                                MouseArea { id: chkM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; enabled: !win.checking; onClicked: win.runCheck() }
+                            }
+                            Rectangle {
+                                width: (parent.width - 8) / 2; height: 36; radius: 9
+                                color: updM.containsMouse ? win.rowHover : (win.updateArmed ? Qt.rgba(0.9, 0.6, 0.2, 0.30) : win.rowBg)
+                                Text { anchors.centerIn: parent; color: win.fg; font.pixelSize: 13; font.family: win.ff
+                                    text: win.updateArmed ? "Click again to confirm" : (updateProc.running ? "Updating…" : "Update now") }
+                                MouseArea { id: updM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; enabled: !updateProc.running; onClicked: win.runUpdate() }
+                            }
+                        }
+                        // what's new (preview before updating)
+                        Text { visible: win.commitCount !== ""; color: win.fg; opacity: 0.8; font.pixelSize: 12; font.bold: true; font.family: win.ff
+                            text: win.commitCount === "0" ? "You're up to date."
+                                : (win.commitCount === "?" ? "Latest changes on GitHub:"
+                                : win.commitCount + (win.commitCount === "1" ? " new commit:" : " new commits:")) }
+                        SmoothList {
+                            visible: win.newCommits.length > 0
+                            width: parent.width; height: Math.min(170, win.newCommits.length * 24 + 8); clip: true; contentHeight: commitCol.height
+                            Column {
+                                id: commitCol; width: parent.width; spacing: 0
+                                Repeater {
+                                    model: win.newCommits
+                                    delegate: Text {
+                                        required property var modelData
+                                        width: commitCol.width; height: 24; verticalAlignment: Text.AlignVCenter
+                                        text: modelData; color: win.fg; opacity: 0.8; font.pixelSize: 11; font.family: "monospace"; elide: Text.ElideRight
+                                    }
+                                }
+                            }
                         }
                         Text { width: parent.width; visible: win.updateStatus !== ""; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.7; font.pixelSize: 11; font.family: "monospace"
                             text: win.updateStatus }

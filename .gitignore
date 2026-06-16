@@ -12,6 +12,7 @@ hypr/font.conf
 hypr/wofi/font.css
 quickshell/colors.env
 quickshell/launcher-apps.json
+hypr/.technicolor-version
 mako/config
 
 # Runtime state
