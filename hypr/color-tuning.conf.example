@@ -3,5 +3,9 @@
 #     0.5 = auto/default · 0 = always dark text · 1 = always light text.
 #   SATURATION: mute/boost the wallpaper colors everywhere (bar + all apps).
 #     0 = grayscale · 1 = as-extracted · >1 = boosted.
+#   BRIGHTNESS: darken/lighten every color. 0 = black · 1 = as-extracted · 2 = brighter.
+#   HUE: rotate every color around the wheel, in degrees. 0 = unchanged (-180..180).
 CONTRAST_BIAS=0.5
 SATURATION=1.0
+BRIGHTNESS=1.0
+HUE=0.0

@@ -59,29 +59,36 @@ def to_hex(rgb):
     return '#{:02X}{:02X}{:02X}'.format(*rgb)
 
 
-def load_saturation():
-    """SATURATION knob from Settings → Colors (default 1.0 = as-extracted).
-    Applied to the final 5 colors here at the source, so EVERY app that reads
-    colors.env (bar, Discord, Spotify, Telegram, Brave, GTK, KDE, mako) is muted
-    together — no per-app wiring needed."""
+def load_tuning():
+    """SATURATION / BRIGHTNESS / HUE knobs from Settings → Colors. Applied to the
+    final 5 colors here at the source, so EVERY app that reads colors.env (bar,
+    Discord, Spotify, Telegram, Brave, GTK, KDE, mako) shifts together — no
+    per-app wiring. Defaults: sat 1.0 = as-extracted, bright 1.0 = unchanged,
+    hue 0 = unchanged (degrees, -180..180)."""
+    t = {'SATURATION': 1.0, 'BRIGHTNESS': 1.0, 'HUE': 0.0}
     try:
         for line in open(os.path.expanduser('~/.config/hypr/color-tuning.conf')):
             line = line.strip()
             if line.startswith('#') or '=' not in line:
                 continue
             k, v = line.split('=', 1)
-            if k.strip() == 'SATURATION':
-                return max(0.0, float(v.strip()))
+            if k.strip() in t:
+                try:
+                    t[k.strip()] = float(v.strip())
+                except ValueError:
+                    pass
     except Exception:
         pass
-    return 1.0
+    return t
 
 
-def apply_saturation(rgb, factor):
-    if abs(factor - 1.0) < 1e-3:
+def apply_tuning(rgb, sat, bright, hue):
+    if abs(sat - 1.0) < 1e-3 and abs(bright - 1.0) < 1e-3 and abs(hue) < 1e-3:
         return rgb
     h, s, l = rgb_to_hsl(*rgb)
-    s = max(0.0, min(1.0, s * factor))
+    h = (h + hue / 360.0) % 1.0
+    s = max(0.0, min(1.0, s * sat))
+    l = max(0.0, min(1.0, l * bright))
     return hsl_to_rgb(h, s, l)
 
 def get_palette(img_path, n_colors=16):
@@ -237,14 +244,15 @@ def main():
         focused, occupied, visible = pick_three_colors(palette)
         grad_start, grad_end = pick_gradient_pair(palette)
 
-        # User saturation/muting (Settings → Colors), applied at the source so
-        # it flows to every app through colors.env.
-        sat = load_saturation()
-        focused    = apply_saturation(focused, sat)
-        occupied   = apply_saturation(occupied, sat)
-        visible    = apply_saturation(visible, sat)
-        grad_start = apply_saturation(grad_start, sat)
-        grad_end   = apply_saturation(grad_end, sat)
+        # User saturation/brightness/hue (Settings → Colors), applied at the
+        # source so it flows to every app through colors.env.
+        tn = load_tuning()
+        sat, bright, hue = tn['SATURATION'], tn['BRIGHTNESS'], tn['HUE']
+        focused    = apply_tuning(focused, sat, bright, hue)
+        occupied   = apply_tuning(occupied, sat, bright, hue)
+        visible    = apply_tuning(visible, sat, bright, hue)
+        grad_start = apply_tuning(grad_start, sat, bright, hue)
+        grad_end   = apply_tuning(grad_end, sat, bright, hue)
 
         env_path = os.path.expanduser('~/.config/quickshell/colors.env')
         with open(env_path, 'w') as f:

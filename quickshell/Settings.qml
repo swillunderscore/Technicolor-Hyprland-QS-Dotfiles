@@ -220,10 +220,13 @@ FloatingWindow {
     Timer { id: wpWatchDebounce; interval: 400; onTriggered: win.refreshWallpapers() }
 
     // ── Colors tab state ── single source of truth = ~/.config/hypr/color-tuning.conf
-    // (CONTRAST_BIAS, SATURATION). The bar reads it live via shell.qml; the python
-    // generators read it on regen. Default-absent = 0.5 / 1.0 (no change).
+    // (CONTRAST_BIAS, SATURATION, BRIGHTNESS, HUE). The bar reads CONTRAST_BIAS live
+    // via shell.qml; the other three transform the colors at the source
+    // (wallpaper-colors.py) so they flow to every app via colors.env on regen.
     property real tuneContrast: 0.5      // 0 dark .. 0.5 default .. 1 light
     property real tuneSaturation: 1.0    // 0 grayscale .. 1 as-is .. 1.5 vivid
+    property real tuneBrightness: 1.0    // 0 black .. 1 as-is .. 2 brighter
+    property real tuneHue: 0.0           // -180..180 degrees, 0 = unchanged
     FileView {
         id: tuneFile
         path: win.homeDir + "/.config/hypr/color-tuning.conf"
@@ -236,17 +239,22 @@ FloatingWindow {
                 var k = p[0].trim(); var f = parseFloat(p[1].trim()); if (isNaN(f)) continue
                 if (k === "CONTRAST_BIAS") win.tuneContrast = f
                 else if (k === "SATURATION") win.tuneSaturation = f
+                else if (k === "BRIGHTNESS") win.tuneBrightness = f
+                else if (k === "HUE") win.tuneHue = f
             }
         }
-        onLoadFailed: { win.tuneContrast = 0.5; win.tuneSaturation = 1.0 }
+        onLoadFailed: { win.tuneContrast = 0.5; win.tuneSaturation = 1.0; win.tuneBrightness = 1.0; win.tuneHue = 0.0 }
     }
     // Write the config AND re-run the whole color pipeline in ONE sequential
     // command, so wallpaper-colors.py / the generators never read a half-written
-    // config. Re-extracts from the current wallpaper, applies SATURATION at the
+    // config. Re-extracts from the current wallpaper, applies the knobs at the
     // source, regenerates every app theme, refreshes mako.
     Process { id: tuneCommitProc }
     function commitTuning() {
-        var body = "CONTRAST_BIAS=" + win.tuneContrast.toFixed(3) + "\nSATURATION=" + win.tuneSaturation.toFixed(3) + "\n"
+        var body = "CONTRAST_BIAS=" + win.tuneContrast.toFixed(3)
+                 + "\nSATURATION=" + win.tuneSaturation.toFixed(3)
+                 + "\nBRIGHTNESS=" + win.tuneBrightness.toFixed(3)
+                 + "\nHUE=" + win.tuneHue.toFixed(1) + "\n"
         var conf = win.homeDir + "/.config/hypr/color-tuning.conf"
         tuneCommitProc.command = ["bash", "-c",
             "printf %s '" + Qt.btoa(body) + "' | base64 -d > '" + conf + "'; " +
@@ -255,20 +263,23 @@ FloatingWindow {
             "\"$HOME/.config/quickshell/notif-theme-mako.sh\""]
         tuneCommitProc.running = true
     }
-    // Live preview helpers (depend on the tune properties so the swatches update
-    // instantly while dragging; the real apply happens on release).
-    function previewInk(c) {
+    // Live preview helpers. Take the knobs as arguments so the swatch bindings
+    // track them (a value read only inside the function body wouldn't re-evaluate).
+    function previewInk(c, bias) {
         var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
-        var b = win.tuneContrast
-        var thr = b <= 0.5 ? (b / 0.5) * 0.55 : 0.55 + ((b - 0.5) / 0.5) * 0.45
+        var thr = bias <= 0.5 ? (bias / 0.5) * 0.55 : 0.55 + ((bias - 0.5) / 0.5) * 0.45
         return lum > thr ? "#000000" : "#FFFFFF"
     }
-    function muteColor(c, f) {
+    function previewColor(c, sat, bright, hue) {
         var hh = c.hslHue; if (hh < 0) hh = 0
-        return Qt.hsla(hh, Math.max(0, Math.min(1, c.hslSaturation * f)), c.hslLightness, 1)
+        hh = hh + hue / 360.0; hh = hh - Math.floor(hh)
+        return Qt.hsla(hh, Math.max(0, Math.min(1, c.hslSaturation * sat)),
+                       Math.max(0, Math.min(1, c.hslLightness * bright)), 1)
     }
-    function resetContrast() { win.tuneContrast = 0.5; if (win.shell) win.shell.contrastBias = 0.5; win.commitTuning() }
+    function resetContrast()   { win.tuneContrast = 0.5; if (win.shell) win.shell.contrastBias = 0.5; win.commitTuning() }
     function resetSaturation() { win.tuneSaturation = 1.0; win.commitTuning() }
+    function resetBrightness() { win.tuneBrightness = 1.0; win.commitTuning() }
+    function resetHue()        { win.tuneHue = 0.0; win.commitTuning() }
 
     // ── Glass tab (hyprglass) ── live via `hyprctl keyword`, persisted to
     // hyprglass-tuning.conf (sourced by hyprland.conf). Each spec: key/label/
@@ -700,8 +711,10 @@ FloatingWindow {
                     property var palette: win.bar
                         ? [win.bar.gradientStart, win.bar.gradientEnd, win.bar.colorFocused, win.bar.colorVisible, win.bar.colorOccupied]
                         : []
-                    Column {
-                        anchors.fill: parent; spacing: 12
+                    SmoothList {
+                        anchors.fill: parent; clip: true; contentHeight: colorsCol.height
+                        Column {
+                            id: colorsCol; width: parent.width; spacing: 12
 
                         // ── live preview swatches ──
                         Row {
@@ -711,9 +724,9 @@ FloatingWindow {
                                 delegate: Rectangle {
                                     required property var modelData
                                     width: (parent.width - 8 * 4) / 5; height: 56; radius: 10
-                                    color: win.muteColor(modelData, win.tuneSaturation)
+                                    color: win.previewColor(modelData, win.tuneSaturation, win.tuneBrightness, win.tuneHue)
                                     Text { anchors.centerIn: parent; text: "Ag"; font.pixelSize: 18; font.bold: true; font.family: win.ff
-                                        color: win.previewInk(win.muteColor(modelData, win.tuneSaturation)) }
+                                        color: win.previewInk(win.previewColor(modelData, win.tuneSaturation, win.tuneBrightness, win.tuneHue), win.tuneContrast) }
                                 }
                             }
                         }
@@ -762,12 +775,55 @@ FloatingWindow {
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
                             text: "Mute (left, grayscale) or boost (right) the wallpaper colors everywhere — bar, Discord, Spotify, Brave, Dolphin, GTK, notifications." }
 
+                        // ── brightness ──
+                        Item {
+                            width: parent.width; height: 22
+                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Brightness"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { anchors.right: rstB.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                                text: Math.round(win.tuneBrightness * 100) + "%"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                            Rectangle {
+                                id: rstB; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                width: 54; height: 22; radius: 7; color: rstBm.containsMouse ? win.rowHover : win.rowBg
+                                Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 11; font.family: win.ff }
+                                MouseArea { id: rstBm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.resetBrightness() }
+                            }
+                        }
+                        TcSlider {
+                            width: parent.width; from: 0; to: 2; value: win.tuneBrightness
+                            onMoved: (v) => win.tuneBrightness = v
+                            onCommitted: (v) => win.commitTuning()
+                        }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                            text: "Darken (left) or lighten (right) every color. Affects readability, so pair it with Text contrast." }
+
+                        // ── hue shift (the artsy / off-palette knob) ──
+                        Item {
+                            width: parent.width; height: 22
+                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Hue shift"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { anchors.right: rstH.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                                text: (win.tuneHue > 0 ? "+" : "") + Math.round(win.tuneHue) + "°"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                            Rectangle {
+                                id: rstH; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                width: 54; height: 22; radius: 7; color: rstHm.containsMouse ? win.rowHover : win.rowBg
+                                Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 11; font.family: win.ff }
+                                MouseArea { id: rstHm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.resetHue() }
+                            }
+                        }
+                        TcSlider {
+                            width: parent.width; from: -180; to: 180; value: win.tuneHue
+                            onMoved: (v) => win.tuneHue = v
+                            onCommitted: (v) => win.commitTuning()
+                        }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                            text: "Rotate every color around the wheel. 0 keeps the wallpaper's real colors; nudge it for a deliberately off-palette / artsy tint (yes, it changes the whole vibe)." }
+
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
                         // ── Discord (Vesktop) ──
                         Text { text: "Discord (Vesktop)"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.75; font.pixelSize: 12; font.family: win.ff
                             text: "In Vesktop → Settings → Themes, enable \"Technicolor\", then \"Technicolor Blocks\" (in that order). Colors then follow your wallpaper live." }
+                        }
                     }
                 }
 
