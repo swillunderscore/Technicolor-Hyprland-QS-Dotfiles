@@ -13,7 +13,10 @@
 }
 
 window {
-    background-color: alpha(@theme_bg_color, 0.40);
+    /* near-clear NEUTRAL panel so hyprglass shows UNTINTED glass (a theme-colored
+     * alpha here tinted the whole launcher). Matches the alt-tab pie's clear disc;
+     * the wofi mask threshold in hyprland.conf is lowered to glass this. */
+    background-color: rgba(150, 150, 160, 0.06);
     border: 2px solid alpha(@theme_fg_color, 0.12);
     border-radius: 20px;
     color: @theme_fg_color;
