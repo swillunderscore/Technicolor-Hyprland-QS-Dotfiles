@@ -1,0 +1,3 @@
+# Written by Settings → System → Default terminal. Sets Hyprland's $terminal
+# (Super+Q). Sourced by hyprland.conf after the default, so this wins. Example:
+$terminal = kitty

@@ -141,6 +141,48 @@ FloatingWindow {
         win.defaultFM = id
     }
 
+    // ── Default terminal (System tab) ── sets Hyprland's $terminal (Super+Q, via
+    // the gitignored terminal.conf) and KDE's TerminalApplication (Dolphin's
+    // Open Terminal). Lists installed TerminalEmulator apps.
+    property var terminals: []        // [{ name, cmd }]
+    property string currentTerminal: "kitty"
+    Process {
+        id: termListProc
+        running: win.visible
+        command: ["bash", "-c",
+            "for f in /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop; do " +
+            "[ -f \"$f\" ] || continue; grep -qiE '^Categories=.*TerminalEmulator' \"$f\" || continue; " +
+            "grep -qi '^NoDisplay=true' \"$f\" && continue; case \"$(basename \"$f\")\" in *-open.desktop) continue;; esac; " +
+            "n=$(grep -m1 '^Name=' \"$f\" | cut -d= -f2-); ex=$(grep -m1 '^Exec=' \"$f\" | cut -d= -f2- | awk '{print $1}'); " +
+            "[ -n \"$n\" ] && [ -n \"$ex\" ] && printf '%s|%s\\n' \"$n\" \"$ex\"; done | sort -u -t'|' -k2,2"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var out = []; var lines = this.text.split("\n")
+                for (var i = 0; i < lines.length; i++) { var p = lines[i].split("|"); if (p.length >= 2 && p[0]) out.push({ name: p[0], cmd: p[1] }) }
+                win.terminals = out
+            }
+        }
+    }
+    FileView {
+        id: termConfFile
+        path: win.homeDir + "/.config/hypr/terminal.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: { var m = this.text().match(/\$terminal\s*=\s*(.+)/); win.currentTerminal = m ? m[1].trim() : "kitty" }
+        onLoadFailed: win.currentTerminal = "kitty"
+    }
+    Process { id: termSetProc }
+    function setTerminal(cmd) {
+        if (!cmd) return
+        win.currentTerminal = cmd
+        var b64 = Qt.btoa("$terminal = " + cmd + "\n")
+        termSetProc.command = ["bash", "-c",
+            "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/terminal.conf'; " +
+            "hyprctl reload >/dev/null 2>&1; " +
+            "kwriteconfig6 --file kdeglobals --group General --key TerminalApplication '" + cmd + "' 2>/dev/null"]
+        termSetProc.running = true
+    }
+
     // ── UI font (System tab) ── source of truth = ~/.config/hypr/font.conf.
     // Bar + this window read it live via shell.uiFont; wofi via gen-wofi-font.sh.
     property var installedFonts: []
@@ -1066,6 +1108,25 @@ FloatingWindow {
                                     border.width: sel ? 2 : 0; border.color: win.fg
                                     Text { id: fmLabel; anchors.centerIn: parent; text: modelData.name; color: win.fg; font.pixelSize: 12; font.family: win.ff }
                                     MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.setFM(modelData.id) }
+                                }
+                            }
+                        }
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+
+                        // ── Default terminal (Super+Q + Dolphin's Open Terminal) ──
+                        Text { text: "Default terminal"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                        Flow {
+                            width: parent.width; spacing: 6
+                            Repeater {
+                                model: win.terminals
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    readonly property bool sel: win.currentTerminal === modelData.cmd
+                                    height: 30; radius: 8; width: tLabel.implicitWidth + 24
+                                    color: sel ? win.rowHover : win.rowBg
+                                    border.width: sel ? 2 : 0; border.color: win.fg
+                                    Text { id: tLabel; anchors.centerIn: parent; text: modelData.name; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                    MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.setTerminal(modelData.cmd) }
                                 }
                             }
                         }
