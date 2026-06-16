@@ -17,6 +17,7 @@ size. Hyprland 0.55 has no native equivalent.
 Per-app (by class). First time an app is seen it uses its default; once you
 tile/float/move/size it, that's remembered.
 """
+import fcntl
 import json
 import os
 import re
@@ -112,6 +113,10 @@ def apply_live(cls, v):
 
 def poll_loop():
     global _max_mons
+    # Addresses seen on the PREVIOUS poll. A window is only recorded once it has
+    # persisted ≥1 interval — so a splash/loader that flashes up and vanishes
+    # within a poll is never recorded (this is the "shotcut splash" problem).
+    prev_addrs = set()
     while True:
         time.sleep(POLL)
         mons = hyprctl_json("monitors")
@@ -125,14 +130,33 @@ def poll_loop():
         if len(mons) < _max_mons:
             continue
         moff = {m["id"]: (m["name"], m["x"], m["y"]) for m in mons}
-        changed = False
+
+        # Group this poll's eligible windows by class. An app's dialogs, popups
+        # and splash share its class, so keying on class alone let whichever one
+        # came last in the list overwrite the main window's saved geometry. Pick
+        # ONE canonical window per class instead: the largest-area surface that
+        # has persisted ≥1 poll. The main window is reliably the biggest, and is
+        # always older than any dialog it spawns — so dialogs/popups/splashes are
+        # skipped while the real window is recorded.
+        cur_addrs = set()
+        per_class = {}
         for c in cls_list:
             cls = c.get("class") or ""
-            if not cls or cls in EXCLUDE:
+            addr = c.get("address") or ""
+            if not cls or cls in EXCLUDE or not addr:
                 continue
             ws = (c.get("workspace") or {}).get("name", "")
             if ws.startswith("special"):
                 continue
+            cur_addrs.add(addr)
+            if addr not in prev_addrs:        # not stable yet — skip this poll
+                continue
+            sz = c.get("size") or [0, 0]
+            per_class.setdefault(cls, []).append(((sz[0] or 0) * (sz[1] or 0), c))
+
+        changed = False
+        for cls, lst in per_class.items():
+            _, c = max(lst, key=lambda t: t[0])   # largest-area window of this class
             if c.get("floating"):
                 at, sz, mid = c.get("at"), c.get("size"), c.get("monitor")
                 if not at or not sz or sz[0] < MIN_SIZE or sz[1] < MIN_SIZE:
@@ -154,7 +178,18 @@ def poll_loop():
         if changed:
             write_state()
             write_conf()
+        prev_addrs = cur_addrs
 
 
 if __name__ == "__main__":
+    # Single instance: a reload/relaunch (or a stale daemon from a prior session)
+    # otherwise leaves two pollers racing on the same state + conf. Hold an
+    # exclusive lock for our whole lifetime; a second copy exits immediately.
+    _lock_path = os.path.expanduser("~/.local/state/hypr/window-geometry.lock")
+    os.makedirs(os.path.dirname(_lock_path), exist_ok=True)
+    _lock = open(_lock_path, "w")
+    try:
+        fcntl.flock(_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit(0)
     poll_loop()
