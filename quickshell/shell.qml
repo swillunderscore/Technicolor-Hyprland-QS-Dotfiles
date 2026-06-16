@@ -194,11 +194,16 @@ ShellRoot {
 
     // Makes Settings launchable like any app: technicolor-settings.desktop runs
     // `qs ipc call settings open`. Registered once, here at the shell root.
+    // Emitted when the keybind-capture submap's escape hatch fires (see
+    // hyprland.conf __tc_capture); the Settings window listens and cancels its
+    // pending rebind so the UI doesn't sit stuck in "press a key".
+    signal rebindCancelled()
     IpcHandler {
         target: "settings"
         function open(): void { root.showSettings() }
         function toggle(): void { if (root.settingsOpen) root.settingsOpen = false; else root.showSettings() }
         function tab(n: int): void { root.settingsTab = n; root.showSettings() }
         function gear(): void { if (root.primaryBar) root.primaryBar.settingsRequested() }  // mirrors the gear button's signal path (diagnostic)
+        function rebindcancel(): void { root.rebindCancelled() }
     }
 }

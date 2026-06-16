@@ -34,7 +34,7 @@ FloatingWindow {
         if (visible) {
             confFile.reload(); curWpFile.reload(); tuneFile.reload(); win.loadGlass(); win.loadHotkeys()
             if (shell && shell.settingsTab === 1) win.refreshWallpapers()
-        } else win.addOpen = false
+        } else { win.addOpen = false; win.endCapture() }
     }
     Connections {
         target: shell
@@ -44,7 +44,10 @@ FloatingWindow {
             else if (shell.settingsTab === 2) tuneFile.reload()
             else if (shell.settingsTab === 1) win.refreshWallpapers()
             else if (shell.settingsTab === 5) win.loadHotkeys()
+            if (shell.settingsTab !== 5) win.endCapture()   // leaving Hotkeys cancels a pending rebind
         }
+        // escape hatch from the capture submap (hyprland.conf) fired — clear UI
+        function onRebindCancelled() { win.capturingBind = null; win.captureWarn = ""; captureTimeout.stop() }
     }
 
     // ── Installed apps (for the Apps > Add picker) ──
@@ -313,6 +316,7 @@ FloatingWindow {
         }
         return n
     }
+    property var rawBinds: []        // last raw `hyprctl binds` payload
     Process {
         id: bindsProc
         command: ["hyprctl", "binds", "-j"]
@@ -320,22 +324,174 @@ FloatingWindow {
             onStreamFinished: {
                 var arr = []
                 try { arr = JSON.parse(this.text) } catch (e) { arr = [] }
-                var out = [], seen = ({})
-                for (var i = 0; i < arr.length; i++) {
-                    var desc = win.describeBind(arr[i])
-                    if (!desc) continue
-                    var caps = win.modNames(arr[i].modmask).concat([win.keyName(arr[i].key)])
-                    var combo = caps.join(" ").toLowerCase()
-                    var key = desc.label + "|" + combo
-                    if (seen[key]) continue          // collapse exact duplicates (e.g. Play+Pause keys)
-                    seen[key] = 1
-                    out.push({ cat: desc.cat, label: desc.label, caps: caps, combo: combo })
-                }
-                win.keybinds = out
+                win.rawBinds = arr
+                win.rebuildKeybinds()
             }
         }
     }
     function loadHotkeys() { bindsProc.running = true }
+
+    // ── Rebinding ── overrides persist to keybind-overrides.json (gitignored);
+    // from them keybinds.conf is generated (unbind original + bind new) and
+    // sourced last in hyprland.conf so it wins. Editing captures a combo in the
+    // __tc_capture submap; reset drops the override so the shipped default
+    // re-applies. An override entry stores the ORIGINAL combo (its def, for the
+    // unbind + reset) and the new combo.
+    property var overrides: []       // [{mods,key,dispatcher,arg,newMods,newKey}]
+    FileView {
+        id: overridesFile
+        path: win.homeDir + "/.config/hypr/keybind-overrides.json"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var v = []
+            try { v = JSON.parse(this.text()) } catch (e) { v = [] }
+            win.overrides = Array.isArray(v) ? v : []
+            win.rebuildKeybinds()
+        }
+        onLoadFailed: { win.overrides = []; win.rebuildKeybinds() }
+    }
+    Process { id: overridesSetProc; onRunningChanged: if (!running) win.loadHotkeys() }
+
+    function findOverride(mods, key, disp, arg) {   // by NEW combo (what's live now)
+        for (var i = 0; i < win.overrides.length; i++) {
+            var o = win.overrides[i]
+            if (o.newMods === mods && o.newKey === key && o.dispatcher === disp && o.arg === arg) return i
+        }
+        return -1
+    }
+    function rebuildKeybinds() {
+        var arr = win.rawBinds, out = [], seen = ({})
+        for (var i = 0; i < arr.length; i++) {
+            var b = arr[i]
+            var desc = win.describeBind(b)
+            if (!desc) continue
+            var mods = b.modmask, rawKey = b.key, arg = (b.arg || "")
+            var caps = win.modNames(mods).concat([win.keyName(rawKey)])
+            var combo = caps.join(" ").toLowerCase()
+            var dk = desc.label + "|" + combo
+            if (seen[dk]) continue
+            seen[dk] = 1
+            // editable = plain keyboard bind (no flags, not a mouse/scroll bind)
+            var editable = !b.mouse && !b.repeat && !b.locked && !b.release && rawKey.indexOf("mouse") < 0
+            out.push({ cat: desc.cat, label: desc.label, caps: caps, combo: combo,
+                       editable: editable, modmask: mods, rawKey: rawKey,
+                       dispatcher: b.dispatcher, arg: arg,
+                       overridden: win.findOverride(mods, rawKey, b.dispatcher, arg) >= 0 })
+        }
+        win.keybinds = out
+    }
+
+    // capture state
+    property var capturingBind: null
+    property string captureWarn: ""
+    Timer { id: captureTimeout; interval: 9000; onTriggered: win.endCapture() }
+    function startCapture(row) {
+        if (!row || !row.editable) return
+        win.captureWarn = ""
+        win.capturingBind = row
+        captureKey.forceActiveFocus()
+        Hyprland.dispatch("submap __tc_capture")
+        captureTimeout.restart()
+    }
+    function endCapture() {
+        win.capturingBind = null
+        win.captureWarn = ""
+        captureTimeout.stop()
+        Hyprland.dispatch("submap reset")
+    }
+    function isCapturing(row) {
+        var c = win.capturingBind
+        return c !== null && c.dispatcher === row.dispatcher && c.arg === row.arg
+            && c.modmask === row.modmask && c.rawKey === row.rawKey
+    }
+    function isModifierKey(k) {
+        return k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt
+            || k === Qt.Key_Meta || k === Qt.Key_Super_L || k === Qt.Key_Super_R
+            || k === Qt.Key_AltGr || k === Qt.Key_CapsLock || k === Qt.Key_NumLock
+    }
+    function qtKeyName(e) {
+        var k = e.key
+        if (k >= Qt.Key_A && k <= Qt.Key_Z) return String.fromCharCode(k)   // 'A'..'Z'
+        if (k >= Qt.Key_0 && k <= Qt.Key_9) return String.fromCharCode(k)   // '0'..'9'
+        if (k >= Qt.Key_F1 && k <= Qt.Key_F12) return "F" + (k - Qt.Key_F1 + 1)
+        var m = {}
+        m[Qt.Key_Left]="left"; m[Qt.Key_Right]="right"; m[Qt.Key_Up]="up"; m[Qt.Key_Down]="down"
+        m[Qt.Key_Space]="space"; m[Qt.Key_Return]="return"; m[Qt.Key_Enter]="KP_Enter"
+        m[Qt.Key_Tab]="tab"; m[Qt.Key_Backspace]="backspace"; m[Qt.Key_Delete]="delete"
+        m[Qt.Key_Home]="home"; m[Qt.Key_End]="end"; m[Qt.Key_PageUp]="prior"; m[Qt.Key_PageDown]="next"
+        m[Qt.Key_Insert]="insert"; m[Qt.Key_Print]="print"
+        m[Qt.Key_BracketLeft]="bracketleft"; m[Qt.Key_BracketRight]="bracketright"
+        m[Qt.Key_Comma]="comma"; m[Qt.Key_Period]="period"; m[Qt.Key_Slash]="slash"
+        m[Qt.Key_Semicolon]="semicolon"; m[Qt.Key_Apostrophe]="apostrophe"
+        m[Qt.Key_Minus]="minus"; m[Qt.Key_Equal]="equal"; m[Qt.Key_Backslash]="backslash"
+        m[Qt.Key_QuoteLeft]="grave"
+        if (m[k] !== undefined) return m[k]
+        if (e.text && e.text.length === 1 && e.text.charCodeAt(0) > 32) return e.text.toUpperCase()
+        return ""    // unsupported
+    }
+    function modConfStr(mask) {
+        var p = []
+        if (mask & 64) p.push("SUPER")
+        if (mask & 4)  p.push("CTRL")
+        if (mask & 8)  p.push("ALT")
+        if (mask & 1)  p.push("SHIFT")
+        return p.join(" ")
+    }
+    function comboText(mods, key) { return win.modNames(mods).concat([win.keyName(key)]).join("+") }
+    function conflictLabel(mods, key, row) {
+        for (var i = 0; i < win.keybinds.length; i++) {
+            var kb = win.keybinds[i]
+            if (kb.modmask === mods && kb.rawKey === key && !(kb.dispatcher === row.dispatcher && kb.arg === row.arg)) return kb.label
+        }
+        return ""
+    }
+    function commitCapture(mods, key) {
+        var row = win.capturingBind
+        if (!row) return
+        if (key === "") { win.captureWarn = "Unsupported key — try another"; captureTimeout.restart(); return }
+        if (mods === row.modmask && key === row.rawKey) { win.endCapture(); return }   // unchanged
+        var cl = win.conflictLabel(mods, key, row)
+        if (cl !== "") { win.captureWarn = win.comboText(mods, key) + " is already “" + cl + "”"; captureTimeout.restart(); return }
+        win.endCapture()
+        win.applyRebind(row, mods, key)
+    }
+    function applyRebind(row, newMods, newKey) {
+        var cur = win.overrides.slice()
+        var idx = win.findOverride(row.modmask, row.rawKey, row.dispatcher, row.arg)
+        if (idx >= 0) { cur[idx].newMods = newMods; cur[idx].newKey = newKey }   // keep original def
+        else cur.push({ mods: row.modmask, key: row.rawKey, dispatcher: row.dispatcher, arg: row.arg, newMods: newMods, newKey: newKey })
+        win.overrides = cur
+        win.persistOverrides()
+    }
+    function resetBind(row) {
+        var idx = win.findOverride(row.modmask, row.rawKey, row.dispatcher, row.arg)
+        if (idx < 0) return
+        var cur = win.overrides.slice(); cur.splice(idx, 1)
+        win.overrides = cur
+        win.persistOverrides()
+    }
+    function buildKeybindsConf() {
+        var L = ["# Keybind overrides written by Settings → Hotkeys. Sourced last in",
+                 "# hyprland.conf so these win; gitignored so updates never revert them.", ""]
+        for (var i = 0; i < win.overrides.length; i++) {
+            var o = win.overrides[i]
+            L.push("unbind = " + win.modConfStr(o.mods) + ", " + o.key)
+            var b = "bind = " + win.modConfStr(o.newMods) + ", " + o.newKey + ", " + o.dispatcher
+            if (o.arg && o.arg !== "") b += ", " + o.arg
+            L.push(b)
+        }
+        return L.join("\n") + "\n"
+    }
+    function persistOverrides() {
+        var jb64 = Qt.btoa(JSON.stringify(win.overrides))
+        var cb64 = Qt.btoa(win.buildKeybindsConf())
+        overridesSetProc.command = ["bash", "-c",
+            "printf %s '" + jb64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/keybind-overrides.json'; " +
+            "printf %s '" + cb64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/keybinds.conf'; " +
+            "hyprctl reload >/dev/null 2>&1"]
+        overridesSetProc.running = true
+    }
 
     // ── UI font (System tab) ── source of truth = ~/.config/hypr/font.conf.
     // Bar + this window read it live via shell.uiFont; wofi via gen-wofi-font.sh.
@@ -1484,32 +1640,71 @@ FloatingWindow {
                                         Repeater {
                                             model: catCol.rows
                                             delegate: Rectangle {
+                                                id: hkRow
                                                 required property var modelData
+                                                property bool capturing: win.isCapturing(modelData)
                                                 width: catCol.width; height: 38; radius: 8
-                                                color: hkRowM.containsMouse ? win.rowBg : "transparent"
+                                                color: hkRow.capturing ? Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.12)
+                                                                       : (hkRowM.containsMouse ? win.rowBg : "transparent")
                                                 Text {
                                                     anchors.left: parent.left; anchors.leftMargin: 10
-                                                    anchors.right: capRow.left; anchors.rightMargin: 10
+                                                    anchors.right: rightRow.left; anchors.rightMargin: 10
                                                     anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideRight
                                                     text: modelData.label; color: win.fg; font.pixelSize: 13; font.family: win.ff
                                                 }
                                                 Row {
-                                                    id: capRow
+                                                    id: rightRow
                                                     anchors.right: parent.right; anchors.rightMargin: 10
-                                                    anchors.verticalCenter: parent.verticalCenter; spacing: 4
-                                                    Repeater {
-                                                        model: modelData.caps
-                                                        delegate: Rectangle {
-                                                            required property string modelData
-                                                            height: 24; width: capT.implicitWidth + 16; radius: 6
-                                                            color: win.rowHover
-                                                            border.width: 1; border.color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.18)
-                                                            Text { id: capT; anchors.centerIn: parent; text: modelData
-                                                                   color: win.fg; font.pixelSize: 11; font.bold: true; font.family: win.ff }
+                                                    anchors.verticalCenter: parent.verticalCenter; spacing: 6
+
+                                                    // capture prompt / conflict warning
+                                                    Rectangle {
+                                                        visible: hkRow.capturing
+                                                        height: 24; radius: 6
+                                                        width: Math.min(pT.implicitWidth + 18, hkRow.width * 0.66)
+                                                        color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.18)
+                                                        border.width: 1; border.color: win.captureWarn !== "" ? "#ff6b6b" : win.fg
+                                                        Text { id: pT; anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
+                                                               verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+                                                               text: win.captureWarn !== "" ? ("⚠ " + win.captureWarn) : "Press a combo…  (Esc cancels)"
+                                                               color: win.fg; font.pixelSize: 11; font.bold: true; font.family: win.ff }
+                                                    }
+                                                    // reset to the shipped default (only when overridden)
+                                                    Rectangle {
+                                                        visible: !hkRow.capturing && modelData.overridden
+                                                        height: 24; width: 24; radius: 6
+                                                        color: rstM.containsMouse ? win.rowHover : win.rowBg
+                                                        Text { anchors.centerIn: parent; text: "↺"; color: win.fg; font.pixelSize: 14; font.family: win.ff }
+                                                        MouseArea { id: rstM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                                            onClicked: win.resetBind(modelData) }
+                                                    }
+                                                    // keycaps — click to rebind (editable binds only)
+                                                    Rectangle {
+                                                        visible: !hkRow.capturing
+                                                        width: capsRow.implicitWidth + (modelData.editable ? 14 : 0); height: 24; radius: 6
+                                                        color: (modelData.editable && capM.containsMouse) ? win.rowHover : "transparent"
+                                                        Row {
+                                                            id: capsRow
+                                                            anchors.centerIn: parent; spacing: 4
+                                                            Repeater {
+                                                                model: modelData.caps
+                                                                delegate: Rectangle {
+                                                                    required property string modelData
+                                                                    height: 24; width: capT.implicitWidth + 16; radius: 6
+                                                                    color: win.rowHover
+                                                                    border.width: 1; border.color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.18)
+                                                                    Text { id: capT; anchors.centerIn: parent; text: modelData
+                                                                           color: win.fg; font.pixelSize: 11; font.bold: true; font.family: win.ff }
+                                                                }
+                                                            }
                                                         }
+                                                        MouseArea { id: capM; anchors.fill: parent; hoverEnabled: true
+                                                            enabled: modelData.editable
+                                                            cursorShape: modelData.editable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                            onClicked: win.startCapture(modelData) }
                                                     }
                                                 }
-                                                MouseArea { id: hkRowM; anchors.fill: parent; hoverEnabled: true }
+                                                MouseArea { id: hkRowM; anchors.fill: parent; hoverEnabled: true; z: -1 }
                                             }
                                         }
                                     }
@@ -1522,13 +1717,34 @@ FloatingWindow {
                                 Text {
                                     width: parent.width; wrapMode: Text.WordWrap; topPadding: 6
                                     color: win.fg; opacity: 0.45; font.pixelSize: 11; font.family: win.ff
-                                    text: "Read live from Hyprland, so this always matches your real binds. Add or change them in local.conf (System tab) — they'll show up here on next open."
+                                    text: "Click a shortcut's keys to rebind it — hold your modifiers (Super/Ctrl/Alt/Shift) and press the key. ↺ resets one to its default. Media, volume and mouse binds are fixed. Your rebinds are saved to keybinds.conf and survive updates."
                                 }
                             }
                         }
                     }
                 }
                 }
+            }
+        }
+
+        // Keyboard sink for rebinding: focused only while capturing. While the
+        // __tc_capture submap is active (entered in startCapture), every combo —
+        // even normally-bound ones — lands here instead of firing its action.
+        Item {
+            id: captureKey
+            width: 0; height: 0
+            focus: win.capturingBind !== null
+            Keys.onPressed: (e) => {
+                if (win.capturingBind === null) return
+                e.accepted = true
+                if (win.isModifierKey(e.key)) return          // wait for the non-modifier key
+                if (e.key === Qt.Key_Escape) { win.endCapture(); return }
+                var mods = 0
+                if (e.modifiers & Qt.ShiftModifier)   mods |= 1
+                if (e.modifiers & Qt.ControlModifier) mods |= 4
+                if (e.modifiers & Qt.AltModifier)     mods |= 8
+                if (e.modifiers & Qt.MetaModifier)    mods |= 64
+                win.commitCapture(mods, win.qtKeyName(e))
             }
         }
 

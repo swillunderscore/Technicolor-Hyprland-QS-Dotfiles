@@ -37,3 +37,5 @@ hypr/wofi/repo/.git/
 hypr/hyprglass/hyprglass.so
 hypr/hyprglass/src/*.o
 hypr/wallpaper-timer.conf
+hypr/keybinds.conf
+hypr/keybind-overrides.json
