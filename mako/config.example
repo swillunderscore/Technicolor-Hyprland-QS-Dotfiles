@@ -1,11 +1,15 @@
+# Copy to ~/.config/mako/config. The QS_THEME block is regenerated from the
+# wallpaper on every change (notif-theme-mako.sh), and the QS_SILENCE block is
+# managed by the bar's notification silences (notif-silence.sh) — both live only
+# in your real config, which is gitignored so updates never touch your silences.
 # QS_THEME_BEGIN
 # (managed by ~/.config/quickshell/notif-theme-mako.sh — regenerated on wallpaper change)
 default-timeout=7000
 on-notify=exec ~/.config/quickshell/notif-bump.sh "$id"
 font=JetBrainsMono Nerd Font 11
-background-color=#B8C8B7F0
-text-color=#000000
-border-color=#B8C8B7F0
+background-color=#1e1e2eF0
+text-color=#cdd6f4
+border-color=#1e1e2eF0
 border-size=2
 border-radius=12
 padding=14
@@ -25,15 +29,4 @@ default-timeout=0
 
 # QS_SILENCE_BEGIN
 # (managed by ~/.config/quickshell/notif-silence.sh — do not edit by hand)
-[desktop-entry=org.kde.kded6]
-invisible=1
-[app-name="Network Management"]
-invisible=1
-[app-name="blueman"]
-invisible=1
-[app-name="tray-icon"]
-invisible=1
-[app-name="Cachy-Update"]
-invisible=1
-
 # QS_SILENCE_END

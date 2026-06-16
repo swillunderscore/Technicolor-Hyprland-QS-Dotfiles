@@ -93,9 +93,10 @@ mkdir -p ~/.local/share/applications && cp applications/*.desktop ~/.local/share
 ### 3. Set up the per-machine files
 `hyprland.conf` sources these, so they need to exist:
 ```
-cp ~/.config/hypr/monitors.conf.example       ~/.config/hypr/monitors.conf
-cp ~/.config/hypr/local.conf.example          ~/.config/hypr/local.conf
+cp ~/.config/hypr/monitors.conf.example         ~/.config/hypr/monitors.conf
+cp ~/.config/hypr/local.conf.example            ~/.config/hypr/local.conf
 cp ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf
+cp ~/.config/mako/config.example                ~/.config/mako/config
 ```
 - Edit `monitors.conf` for your displays. Run `hyprctl monitors` for names and modes, or use `nwg-displays`. The `preferred, auto` fallback works for a single screen as-is.
 - `local.conf` is for machine-specific Hyprland bits (GPU driver, input quirks). It can stay empty.
@@ -251,6 +252,7 @@ mkdir -p ~/.local/share/applications && cp /tmp/technicolor/applications/*.deskt
 cp ~/.config/hypr/monitors.conf.example         ~/.config/hypr/monitors.conf
 cp ~/.config/hypr/local.conf.example            ~/.config/hypr/local.conf
 cp ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf
+cp ~/.config/mako/config.example                ~/.config/mako/config
 mkdir -p ~/Wallpapers/animated
 
 # 4. monitor brightness (takes effect after re-login)

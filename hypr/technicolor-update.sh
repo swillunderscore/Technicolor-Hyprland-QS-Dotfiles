@@ -18,6 +18,10 @@ echo "Copying configs…"
 cp -r "$TMP"/hypr "$TMP"/quickshell "$TMP"/mako "$TMP"/spicetify ~/.config/ 2>/dev/null
 mkdir -p ~/.local/share/applications
 cp "$TMP"/applications/*.desktop ~/.local/share/applications/ 2>/dev/null
+# Files with safe defaults that are gitignored (so the copy above doesn't touch
+# the user's): create them from the .example ONLY if missing — never clobber.
+cp -n ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf 2>/dev/null
+cp -n ~/.config/mako/config.example ~/.config/mako/config 2>/dev/null
 
 echo "Reloading Hyprland…"
 hyprctl reload >/dev/null 2>&1
