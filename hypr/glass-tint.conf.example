@@ -1,9 +1,0 @@
-# Written by Settings → Glass → Tint. Tints every liquid-glass surface at once
-# (composed into hyprglass tint_color by gen-glass-tint.sh). Absent = off.
-#   MODE     : wallpaper (the palette accent — follows the wallpaper + the Colors
-#              HSV sliders) | custom (a fixed colour, unaffected by them)
-#   STRENGTH : 0..0.6 tint alpha (0 = off)
-#   COLOR    : rrggbb, used in custom mode
-MODE=wallpaper
-STRENGTH=0
-COLOR=ffffff
