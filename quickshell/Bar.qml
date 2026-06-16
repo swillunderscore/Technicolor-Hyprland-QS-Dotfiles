@@ -61,7 +61,18 @@ PanelWindow {
     property var userPins: []   // loaded from launcher-apps.json; [] => use defaultPins
     readonly property var allAppPins: (userPins && userPins.length) ? userPins : defaultPins
     property var appPins: allAppPins
-    onAllAppPinsChanged: pinAvailProc.running = true   // re-filter to installed when edited
+    // Reflect edits INSTANTLY: set appPins to the full list right away, so the
+    // launcher container resizes and a newly-added pin appears immediately;
+    // pinAvailProc then narrows to installed apps asynchronously. The old bare
+    // `pinAvailProc.running = true` was a no-op while a prior pass was still in
+    // flight, so a quick remove-then-add dropped the refresh and left the
+    // launcher stale (added pins didn't show; removed ones left a gap). Debounce
+    // + re-arm via a timer so the latest edit always gets a fresh filter pass.
+    onAllAppPinsChanged: { bar.appPins = bar.allAppPins; pinRefilter.restart() }
+    Timer {
+        id: pinRefilter; interval: 80
+        onTriggered: { if (pinAvailProc.running) pinRefilter.restart(); else pinAvailProc.running = true }
+    }
 
     // Live pin config — edited by Settings > Apps, watched so edits apply with no restart.
     FileView {
@@ -98,8 +109,9 @@ PanelWindow {
         running: true
         stdout: StdioCollector {
             onStreamFinished: {
+                if (pinRefilter.running) return   // a newer edit is queued — these indices are stale
                 var idxs = this.text.trim().split(/\s+/).filter(function (s) { return s !== "" })
-                if (!idxs.length) return
+                if (!idxs.length) return          // leave the optimistic full list (set on edit)
                 var filtered = []
                 for (var i = 0; i < idxs.length; i++) {
                     var n = parseInt(idxs[i])
