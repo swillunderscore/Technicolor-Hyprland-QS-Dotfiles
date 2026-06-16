@@ -32,7 +32,7 @@ FloatingWindow {
     function close() { win.addOpen = false; if (shell) shell.settingsOpen = false }
     onVisibleChanged: {
         if (visible) {
-            confFile.reload(); curWpFile.reload(); tuneFile.reload(); win.loadGlass()
+            confFile.reload(); curWpFile.reload(); tuneFile.reload(); win.loadGlass(); win.loadHotkeys()
             if (shell && shell.settingsTab === 1) win.refreshWallpapers()
         } else win.addOpen = false
     }
@@ -43,6 +43,7 @@ FloatingWindow {
             else if (shell.settingsTab === 3) win.loadGlass()
             else if (shell.settingsTab === 2) tuneFile.reload()
             else if (shell.settingsTab === 1) win.refreshWallpapers()
+            else if (shell.settingsTab === 5) win.loadHotkeys()
         }
     }
 
@@ -214,6 +215,127 @@ FloatingWindow {
             "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/wallpaper-timer.conf'"]
         timerSetProc.running = true
     }
+
+    // ── Hotkeys (Hotkeys tab) ── a read-only cheat sheet built live from
+    // `hyprctl binds`, so it always matches the real active binds (including
+    // anything added via local.conf). This config uses plain `bind` (no bindd
+    // descriptions), so friendly labels are derived from the dispatcher + arg.
+    property var keybinds: []
+    property string hotkeySearch: ""
+    readonly property var hotkeyCategories: ["Apps", "Windows", "Focus & layout", "Workspaces", "Wallpaper", "Screenshots", "Media", "System", "Other"]
+    function modNames(mask) {
+        var o = []
+        if (mask & 64) o.push("Super")
+        if (mask & 4)  o.push("Ctrl")
+        if (mask & 8)  o.push("Alt")
+        if (mask & 1)  o.push("Shift")
+        return o
+    }
+    function keyName(k) {
+        var m = {
+            "left":"←","right":"→","up":"↑","down":"↓","ESCAPE":"Esc","SPACE":"Space",
+            "PRINT":"PrtSc","bracketleft":"[","bracketright":"]","mouse_down":"Scroll ↑",
+            "mouse_up":"Scroll ↓","mouse:272":"L-Click","mouse:273":"R-Click","SUPER_L":"Super",
+            "XF86AudioRaiseVolume":"Vol +","XF86AudioLowerVolume":"Vol −","XF86AudioMute":"Mute",
+            "XF86AudioMicMute":"Mic Mute","XF86MonBrightnessUp":"Bright +","XF86MonBrightnessDown":"Bright −",
+            "XF86AudioNext":"⏭","XF86AudioPrev":"⏮","XF86AudioPlay":"⏯","XF86AudioPause":"⏯"
+        }
+        return m[k] || k
+    }
+    function describeBind(b) {
+        var d = b.dispatcher, a = (b.arg || "")
+        if (a.indexOf("alttabrelease") >= 0) return null   // implementation plumbing
+        var dir = { l:"left", r:"right", u:"up", d:"down" }
+        if (d === "movefocus")   return { cat:"Focus & layout", label:"Focus window " + (dir[a.trim()] || a) }
+        if (d === "movewindow") {
+            if (a.trim() === "") return { cat:"Focus & layout", label:"Drag to move window" }
+            return { cat:"Focus & layout", label:"Move window " + (dir[a.trim()] || a) }
+        }
+        if (d === "resizewindow")   return { cat:"Focus & layout", label:"Drag to resize window" }
+        if (d === "mouse") {        // bindm: Super + click-drag
+            if (a === "movewindow")   return { cat:"Focus & layout", label:"Drag to move window" }
+            if (a === "resizewindow") return { cat:"Focus & layout", label:"Drag to resize window" }
+            return { cat:"Focus & layout", label: a }
+        }
+        if (d === "global" && a.indexOf("alttab") >= 0) return { cat:"Focus & layout", label:"Window switcher" }
+        if (d === "dpms")           return { cat:"System", label:"Sleep the displays" }
+        if (d === "killactive")     return { cat:"Windows", label:"Close window" }
+        if (d === "togglefloating") return { cat:"Windows", label:"Toggle floating" }
+        if (d === "fullscreen")     return { cat:"Windows", label:"Toggle fullscreen" }
+        if (d === "exec") {
+            var rules = [
+                ["wallpaper-cycle.sh next", "Wallpaper", "Next wallpaper"],
+                ["window-action.sh close", "Windows", "Close window"],
+                ["window-action.sh maximize", "Windows", "Maximize (stays floating)"],
+                ["window-action.sh float", "Windows", "Toggle tiling"],
+                ["minimize.sh", "Windows", "Minimize window"],
+                ["workspace-move.sh left --move", "Workspaces", "Send window to previous"],
+                ["workspace-move.sh right --move", "Workspaces", "Send window to next"],
+                ["workspace-move.sh left", "Workspaces", "Previous workspace"],
+                ["workspace-move.sh right", "Workspaces", "Next workspace"],
+                ["wlogout", "System", "Logout / power menu"],
+                ["tmux kill-server", "System", "Kill AI background tasks"],
+                ["volume.sh up", "Media", "Volume up"],
+                ["volume.sh down", "Media", "Volume down"],
+                ["volume.sh mute", "Media", "Mute audio"],
+                ["set-mute @DEFAULT_AUDIO_SOURCE", "Media", "Mute microphone"],
+                ["playerctl next", "Media", "Next track"],
+                ["playerctl previous", "Media", "Previous track"],
+                ["playerctl play-pause", "Media", "Play / pause"]
+            ]
+            for (var i = 0; i < rules.length; i++)
+                if (a.indexOf(rules[i][0]) >= 0) return { cat: rules[i][1], label: rules[i][2] }
+            if (a.indexOf("brightnessctl") >= 0) return { cat:"Media", label: a.indexOf("5%+") >= 0 ? "Brightness up" : "Brightness down" }
+            if (a.indexOf("grim") >= 0) return { cat:"Screenshots", label: a.indexOf("slurp") >= 0 ? "Screenshot a region" : "Screenshot full screen" }
+            var prog = a.split(" ")[0].split("/").pop()
+            if (prog === win.currentTerminal || ["kitty","alacritty","konsole","foot","wezterm"].indexOf(prog) >= 0) return { cat:"Apps", label:"Open terminal" }
+            if (a.indexOf("wofi") >= 0 || a.indexOf("--show drun") >= 0 || a.indexOf("rofi") >= 0) return { cat:"Apps", label:"App launcher" }
+            if (/dolphin|nautilus|thunar|nemo|pcmanfm|caja|files/.test(prog)) return { cat:"Apps", label:"Open file manager" }   // also matches wrappers like dolphin-tc.sh
+            return { cat:"Other", label:"Run " + prog }
+        }
+        return { cat:"Other", label: d + (a ? " " + a : "") }
+    }
+    function bindsFor(cat) {
+        var q = win.hotkeySearch.toLowerCase(), r = []
+        for (var i = 0; i < win.keybinds.length; i++) {
+            var b = win.keybinds[i]
+            if (b.cat !== cat) continue
+            if (q !== "" && b.label.toLowerCase().indexOf(q) < 0 && b.combo.indexOf(q) < 0) continue
+            r.push(b)
+        }
+        return r
+    }
+    readonly property int hotkeyMatchCount: {
+        var q = win.hotkeySearch.toLowerCase(), n = 0
+        for (var i = 0; i < win.keybinds.length; i++) {
+            var b = win.keybinds[i]
+            if (q === "" || b.label.toLowerCase().indexOf(q) >= 0 || b.combo.indexOf(q) >= 0) n++
+        }
+        return n
+    }
+    Process {
+        id: bindsProc
+        command: ["hyprctl", "binds", "-j"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var arr = []
+                try { arr = JSON.parse(this.text) } catch (e) { arr = [] }
+                var out = [], seen = ({})
+                for (var i = 0; i < arr.length; i++) {
+                    var desc = win.describeBind(arr[i])
+                    if (!desc) continue
+                    var caps = win.modNames(arr[i].modmask).concat([win.keyName(arr[i].key)])
+                    var combo = caps.join(" ").toLowerCase()
+                    var key = desc.label + "|" + combo
+                    if (seen[key]) continue          // collapse exact duplicates (e.g. Play+Pause keys)
+                    seen[key] = 1
+                    out.push({ cat: desc.cat, label: desc.label, caps: caps, combo: combo })
+                }
+                win.keybinds = out
+            }
+        }
+    }
+    function loadHotkeys() { bindsProc.running = true }
 
     // ── UI font (System tab) ── source of truth = ~/.config/hypr/font.conf.
     // Bar + this window read it live via shell.uiFont; wofi via gen-wofi-font.sh.
@@ -615,7 +737,7 @@ FloatingWindow {
                 Row {
                     id: tabBar
                     anchors.fill: parent; anchors.margins: 6; spacing: 6
-                    property var tabs: ["Apps", "Wallpaper", "Colors", "Glass", "System"]
+                    property var tabs: ["Apps", "Wallpaper", "Colors", "Glass", "System", "Hotkeys"]
                     Repeater {
                         model: tabBar.tabs
                         delegate: Rectangle {
@@ -1319,6 +1441,91 @@ FloatingWindow {
                         Text { width: parent.width; visible: win.updateStatus !== ""; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.7; font.pixelSize: 11; font.family: "monospace"
                             text: win.updateStatus }
                     }
+                    }
+                }
+
+                // ===== Hotkeys tab =====
+                Item {
+                    anchors.fill: parent
+                    visible: win.shell && win.shell.settingsTab === 5
+                    Column {
+                        anchors.fill: parent; spacing: 10
+
+                        // search
+                        Rectangle {
+                            width: parent.width; height: 40; radius: 9; color: win.rowBg
+                            TextInput {
+                                id: hkSearch
+                                anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: win.fg; font.pixelSize: 13; font.family: win.ff; clip: true
+                                selectByMouse: true; selectionColor: win.rowHover
+                                onTextChanged: win.hotkeySearch = text
+                                Text { anchors.verticalCenter: parent.verticalCenter; visible: hkSearch.text === ""
+                                       text: "Search shortcuts…"; color: win.fg; opacity: 0.5; font.pixelSize: 13; font.family: win.ff }
+                            }
+                        }
+
+                        // grouped, searchable cheat sheet
+                        SmoothList {
+                            width: parent.width; height: parent.height - 50; clip: true; contentHeight: hkCol.height
+                            Column {
+                                id: hkCol; width: parent.width; spacing: 10
+                                Repeater {
+                                    model: win.hotkeyCategories
+                                    delegate: Column {
+                                        id: catCol
+                                        required property string modelData
+                                        property var rows: win.bindsFor(modelData)
+                                        width: hkCol.width; spacing: 3
+                                        visible: catCol.rows.length > 0
+                                        Text { topPadding: 4; text: catCol.modelData; color: win.fg; opacity: 0.55
+                                               font.pixelSize: 11; font.bold: true; font.family: win.ff }
+                                        Repeater {
+                                            model: catCol.rows
+                                            delegate: Rectangle {
+                                                required property var modelData
+                                                width: catCol.width; height: 38; radius: 8
+                                                color: hkRowM.containsMouse ? win.rowBg : "transparent"
+                                                Text {
+                                                    anchors.left: parent.left; anchors.leftMargin: 10
+                                                    anchors.right: capRow.left; anchors.rightMargin: 10
+                                                    anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideRight
+                                                    text: modelData.label; color: win.fg; font.pixelSize: 13; font.family: win.ff
+                                                }
+                                                Row {
+                                                    id: capRow
+                                                    anchors.right: parent.right; anchors.rightMargin: 10
+                                                    anchors.verticalCenter: parent.verticalCenter; spacing: 4
+                                                    Repeater {
+                                                        model: modelData.caps
+                                                        delegate: Rectangle {
+                                                            required property string modelData
+                                                            height: 24; width: capT.implicitWidth + 16; radius: 6
+                                                            color: win.rowHover
+                                                            border.width: 1; border.color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.18)
+                                                            Text { id: capT; anchors.centerIn: parent; text: modelData
+                                                                   color: win.fg; font.pixelSize: 11; font.bold: true; font.family: win.ff }
+                                                        }
+                                                    }
+                                                }
+                                                MouseArea { id: hkRowM; anchors.fill: parent; hoverEnabled: true }
+                                            }
+                                        }
+                                    }
+                                }
+                                Text {
+                                    width: parent.width; visible: win.hotkeyMatchCount === 0; topPadding: 8
+                                    text: win.keybinds.length === 0 ? "Loading shortcuts…" : "No shortcuts match your search."
+                                    color: win.fg; opacity: 0.6; font.pixelSize: 13; font.family: win.ff
+                                }
+                                Text {
+                                    width: parent.width; wrapMode: Text.WordWrap; topPadding: 6
+                                    color: win.fg; opacity: 0.45; font.pixelSize: 11; font.family: win.ff
+                                    text: "Read live from Hyprland, so this always matches your real binds. Add or change them in local.conf (System tab) — they'll show up here on next open."
+                                }
+                            }
+                        }
                     }
                 }
                 }
