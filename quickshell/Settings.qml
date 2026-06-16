@@ -146,6 +146,8 @@ FloatingWindow {
     property var installedFonts: []
     property string currentFont: ""
     property string fontSearch: ""
+    property real fontListH: 220     // resizable via the drag-divider below the list
+    property real confEditH: 240     // resizable local.conf editor
     readonly property string effFont: win.currentFont !== "" ? win.currentFont : (win.bar ? win.bar.fontFamily : "SF Pro")
     Process {
         id: fontListProc
@@ -178,6 +180,24 @@ FloatingWindow {
             "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/font.conf'; " +
             "\"$HOME/.config/hypr/gen-wofi-font.sh\""]
         fontSetProc.running = true
+    }
+
+    // ── Update (System tab) ── pull latest from GitHub + copy configs (tuning
+    // files are gitignored, so they're preserved). Two-click confirm so it can't
+    // wipe uncommitted work by accident.
+    property string updateStatus: ""
+    property bool updateArmed: false
+    Process {
+        id: updateProc
+        stdout: SplitParser { splitMarker: "\n"; onRead: function (line) { if (line.trim() !== "") win.updateStatus = line } }
+    }
+    Timer { id: updateDisarm; interval: 4000; onTriggered: win.updateArmed = false }
+    function runUpdate() {
+        if (!win.updateArmed) { win.updateArmed = true; win.updateStatus = "Click again to confirm — this overwrites shipped files with GitHub's latest."; updateDisarm.restart(); return }
+        win.updateArmed = false; updateDisarm.stop()
+        win.updateStatus = "Starting…"
+        updateProc.command = ["bash", "-c", "\"$HOME/.config/hypr/technicolor-update.sh\""]
+        updateProc.running = true
     }
 
     // ── wallpapers folder (Wallpaper tab) — single source of truth in
@@ -394,6 +414,29 @@ FloatingWindow {
         }
     }
 
+    // A grabbable horizontal splitter. Drag it to resize the section above: it
+    // emits the vertical drag delta; the owner adds it to that section's height
+    // property (clamped). Uses global Y so the delta is right even as it moves.
+    component DragDivider: Item {
+        id: dd
+        signal dragged(real dy)
+        width: parent ? parent.width : 100
+        height: 14
+        Rectangle { anchors.centerIn: parent; width: parent.width; height: 1; color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.16) }
+        Rectangle { anchors.centerIn: parent; width: 34; height: 4; radius: 2
+            color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, (ddM.containsMouse || ddM.pressed) ? 0.55 : 0.30) }
+        MouseArea {
+            id: ddM; anchors.fill: parent; anchors.margins: -3; hoverEnabled: true; cursorShape: Qt.SizeVerCursor
+            property real lastY: 0
+            onPressed: (m) => ddM.lastY = dd.mapToGlobal(m.x, m.y).y
+            onPositionChanged: (m) => {
+                if (!pressed) return
+                var gy = dd.mapToGlobal(m.x, m.y).y
+                dd.dragged(gy - ddM.lastY); ddM.lastY = gy
+            }
+        }
+    }
+
     component TcSlider: Item {
         id: sl
         property real from: 0
@@ -567,8 +610,10 @@ FloatingWindow {
                 Item {
                     anchors.fill: parent
                     visible: win.shell && win.shell.settingsTab === 1
-                    Column {
-                        width: parent.width; spacing: 10
+                    SmoothList {
+                        anchors.fill: parent; clip: true; contentHeight: wpCol.height
+                        Column {
+                            id: wpCol; width: parent.width; spacing: 10
 
                         // ── Wallpapers folder: current path + Change… ──
                         Rectangle {
@@ -739,6 +784,7 @@ FloatingWindow {
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
                             text: "Scroll to browse · click a cover to center it · click the centered one to set it." }
+                        }
                     }
                 }
 
@@ -965,7 +1011,7 @@ FloatingWindow {
                                 visible: fontSearchIn.text === ""; text: "Search fonts…"; color: win.fg; opacity: 0.45; font.pixelSize: 12; font.family: win.ff }
                         }
                         SmoothList {
-                            width: parent.width; height: 130; clip: true; contentHeight: fontCol.height
+                            width: parent.width; height: win.fontListH; clip: true; contentHeight: fontCol.height
                             Column {
                                 id: fontCol; width: parent.width; spacing: 2
                                 Repeater {
@@ -988,7 +1034,7 @@ FloatingWindow {
                                 }
                             }
                         }
-                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+                        DragDivider { width: parent.width; onDragged: (dy) => win.fontListH = Math.max(90, Math.min(520, win.fontListH + dy)) }
 
                         // ── Default file manager (GUI picker) ──
                         Text { text: "Default file manager"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
@@ -1013,7 +1059,7 @@ FloatingWindow {
                         Text { width: parent.width; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff; wrapMode: Text.WordWrap
                             text: "Advanced — ~/.config/hypr/local.conf (GPU, input, monitors). Save then Apply." }
                         Rectangle {
-                            width: parent.width; height: 220; radius: 9; color: win.rowBg
+                            width: parent.width; height: win.confEditH; radius: 9; color: win.rowBg
                             Flickable {
                                 anchors.fill: parent; anchors.margins: 8; clip: true
                                 contentWidth: width; contentHeight: confEdit.paintedHeight
@@ -1026,6 +1072,7 @@ FloatingWindow {
                                 }
                             }
                         }
+                        DragDivider { width: parent.width; onDragged: (dy) => win.confEditH = Math.max(100, Math.min(560, win.confEditH + dy)) }
                         Row {
                             width: parent.width; height: 34; spacing: 8
                             Rectangle { width: (parent.width - 8) / 2; height: 34; radius: 8; color: saveM.containsMouse ? win.rowHover : win.rowBg
@@ -1035,6 +1082,21 @@ FloatingWindow {
                                 Text { anchors.centerIn: parent; text: "Save & Apply (reload Hyprland)"; color: win.fg; font.pixelSize: 13; font.family: win.ff }
                                 MouseArea { id: applyM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { win.saveConf(); Hyprland.dispatch("exec hyprctl reload") } } }
                         }
+
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+                        // ── Update (pull latest from GitHub) ──
+                        Text { text: "Update"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                            text: "Pull the latest Technicolor from GitHub and copy it in. Your colors, glass, font, pins, monitors and local.conf are kept (they're gitignored)." }
+                        Rectangle {
+                            width: parent.width; height: 36; radius: 9
+                            color: updM.containsMouse ? win.rowHover : (win.updateArmed ? Qt.rgba(0.9, 0.6, 0.2, 0.30) : win.rowBg)
+                            Text { anchors.centerIn: parent; color: win.fg; font.pixelSize: 13; font.family: win.ff
+                                text: win.updateArmed ? "Click again to confirm" : (updateProc.running ? "Updating…" : "Update now") }
+                            MouseArea { id: updM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; enabled: !updateProc.running; onClicked: win.runUpdate() }
+                        }
+                        Text { width: parent.width; visible: win.updateStatus !== ""; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.7; font.pixelSize: 11; font.family: "monospace"
+                            text: win.updateStatus }
                     }
                     }
                 }
