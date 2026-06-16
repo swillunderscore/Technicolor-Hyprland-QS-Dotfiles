@@ -99,6 +99,7 @@ PanelWindow {
     }
     function addPin(p)      { var a = bar.pinsForEdit(); a.push(p);        bar.savePins(a) }
     function removePinAt(i) { var a = bar.pinsForEdit(); if (i >= 0 && i < a.length) { a.splice(i, 1); bar.savePins(a) } }
+    function setPinCmd(i, cmd) { var a = bar.pinsForEdit(); if (i >= 0 && i < a.length) { a[i] = Object.assign({}, a[i], { cmd: cmd }); bar.savePins(a) } }
     function movePin(i, d)  { var a = bar.pinsForEdit(); var j = i + d; if (i >= 0 && i < a.length && j >= 0 && j < a.length) { var t = a[i]; a[i] = a[j]; a[j] = t; bar.savePins(a) } }
 
     Process {

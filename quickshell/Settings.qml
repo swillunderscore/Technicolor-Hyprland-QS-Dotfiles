@@ -323,6 +323,27 @@ FloatingWindow {
 
     // Reusable slider: track + fill + draggable knob. moved() fires live while
     // dragging, committed() on release.
+    // Vertical Flickable with smooth, accelerated mouse-wheel scrolling. A bare
+    // Flickable jumps a fixed step per notch with no easing (feels janky); this
+    // animates contentY to an accumulating target so fast scrolls glide. Trackpad
+    // wheel (pixel deltas) is left to the Flickable's native smooth handling.
+    component SmoothList: Flickable {
+        id: sfl
+        flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        NumberAnimation { id: sflAnim; target: sfl; property: "contentY"; duration: 200; easing.type: Easing.OutCubic }
+        WheelHandler {
+            acceptedDevices: PointerDevice.Mouse
+            onWheel: (ev) => {
+                var max = Math.max(0, sfl.contentHeight - sfl.height)
+                if (max <= 0) return
+                var base = sflAnim.running ? sflAnim.to : sfl.contentY
+                var t = Math.max(0, Math.min(max, base - (ev.angleDelta.y / 120) * 120))
+                sflAnim.to = t; sflAnim.restart()
+            }
+        }
+    }
+
     component TcSlider: Item {
         id: sl
         property real from: 0
@@ -435,10 +456,9 @@ FloatingWindow {
                                 MouseArea { id: addM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.addOpen = true }
                             }
                         }
-                        Flickable {
+                        SmoothList {
                             width: parent.width; height: parent.height - 40
                             clip: true; contentHeight: pinCol.height
-                            flickableDirection: Flickable.VerticalFlick; boundsBehavior: Flickable.StopAtBounds
                             Column {
                                 id: pinCol; width: parent.width; spacing: 6
                                 Repeater {
@@ -455,10 +475,20 @@ FloatingWindow {
                                                 source: modelData.imgPath && modelData.imgPath !== "" ? modelData.imgPath
                                                         : (win.bar ? win.bar.resolveAppIcon(modelData.icon, "") : "")
                                             }
-                                            Text {
+                                            // editable launch command — click to fix things like
+                                            // Kate's ".desktop"-derived "kate -b" down to just "kate".
+                                            Rectangle {
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                text: modelData.cmd; color: win.fg; font.pixelSize: 12; font.family: win.ff
-                                                elide: Text.ElideRight; width: parent.parent.width - 220
+                                                width: parent.parent.width - 220; height: 26; radius: 6
+                                                color: cmdIn.activeFocus ? Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.10) : "transparent"
+                                                TextInput {
+                                                    id: cmdIn
+                                                    anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6
+                                                    verticalAlignment: TextInput.AlignVCenter
+                                                    text: modelData.cmd; color: win.fg; font.pixelSize: 12; font.family: win.ff
+                                                    clip: true; selectByMouse: true
+                                                    onEditingFinished: { if (win.bar && text !== modelData.cmd) win.bar.setPinCmd(index, text) }
+                                                }
                                             }
                                         }
                                         Row {
@@ -899,9 +929,8 @@ FloatingWindow {
                         Text { anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
                             visible: appSearch.text === ""; text: "Search…"; color: win.fg; opacity: 0.5; font.pixelSize: 13; font.family: win.ff }
                     }
-                    Flickable {
+                    SmoothList {
                         width: parent.width; height: parent.height - 84; clip: true; contentHeight: resCol.height
-                        flickableDirection: Flickable.VerticalFlick; boundsBehavior: Flickable.StopAtBounds
                         Column {
                             id: resCol; width: parent.width; spacing: 4
                             Repeater {
