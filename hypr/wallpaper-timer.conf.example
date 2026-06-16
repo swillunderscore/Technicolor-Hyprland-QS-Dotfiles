@@ -1,0 +1,6 @@
+# Wallpaper auto-cycle settings — Settings → Wallpaper → Auto-cycle writes this.
+# Re-read live by wallpaper-timer.sh. Gitignored and copied from this .example
+# on install, so an update never resets your interval / pause choices.
+INTERVAL_MIN=60
+PAUSED=0
+PAUSE_ON_FULLSCREEN=1

@@ -23,6 +23,7 @@ cp "$TMP"/applications/*.desktop ~/.local/share/applications/ 2>/dev/null
 cp -n ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf 2>/dev/null
 cp -n ~/.config/mako/config.example ~/.config/mako/config 2>/dev/null
 cp -n ~/.config/hypr/terminal.conf.example ~/.config/hypr/terminal.conf 2>/dev/null
+cp -n ~/.config/hypr/wallpaper-timer.conf.example ~/.config/hypr/wallpaper-timer.conf 2>/dev/null
 # record the pulled commit so "Check for updates" can list what's new next time
 git -C "$TMP" rev-parse HEAD > "$HOME/.config/hypr/.technicolor-version" 2>/dev/null
 

@@ -183,6 +183,38 @@ FloatingWindow {
         termSetProc.running = true
     }
 
+    // ── Wallpaper auto-cycle timer (Wallpaper tab) ── source of truth =
+    // ~/.config/hypr/wallpaper-timer.conf, re-read live by wallpaper-timer.sh
+    // (interval, pause, pause-while-a-fullscreen-app-is-open).
+    property int  cycleInterval: 60      // minutes
+    property bool cyclePaused: false
+    property bool cyclePauseFs: true
+    FileView {
+        id: timerConfFile
+        path: win.homeDir + "/.config/hypr/wallpaper-timer.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var t = this.text()
+            var mi = t.match(/INTERVAL_MIN\s*=\s*([0-9]+)/)
+            var mp = t.match(/PAUSED\s*=\s*([01])/)
+            var mf = t.match(/PAUSE_ON_FULLSCREEN\s*=\s*([01])/)
+            if (mi) win.cycleInterval = parseInt(mi[1])
+            win.cyclePaused   = mp ? mp[1] === "1" : false
+            win.cyclePauseFs  = mf ? mf[1] === "1" : true
+        }
+    }
+    Process { id: timerSetProc }
+    function writeTimerConf() {
+        var body = "INTERVAL_MIN=" + Math.round(win.cycleInterval) +
+                   "\nPAUSED=" + (win.cyclePaused ? 1 : 0) +
+                   "\nPAUSE_ON_FULLSCREEN=" + (win.cyclePauseFs ? 1 : 0) + "\n"
+        var b64 = Qt.btoa(body)
+        timerSetProc.command = ["bash", "-c",
+            "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/wallpaper-timer.conf'"]
+        timerSetProc.running = true
+    }
+
     // ── UI font (System tab) ── source of truth = ~/.config/hypr/font.conf.
     // Bar + this window read it live via shell.uiFont; wofi via gen-wofi-font.sh.
     property var installedFonts: []
@@ -449,42 +481,6 @@ FloatingWindow {
         return (v === undefined) ? spec.def : v
     }
 
-    // ── system-wide glass tint ── hyprglass tint_color, composed by
-    // gen-glass-tint.sh from glass-tint.conf. Wallpaper mode = the palette accent
-    // (follows the wallpaper + the Colors HSV sliders); Custom = a fixed hex.
-    property real glassTintStrength: 0          // 0..0.6 (tint alpha)
-    property string glassTintMode: "wallpaper"  // "wallpaper" | "custom"
-    property string glassTintColor: "ffffff"    // custom hex (no #)
-    FileView {
-        id: glassTintFile
-        path: win.homeDir + "/.config/hypr/glass-tint.conf"
-        watchChanges: true
-        onFileChanged: this.reload()
-        onLoaded: {
-            var lines = this.text().split("\n")
-            for (var i = 0; i < lines.length; i++) {
-                var p = lines[i].split("="); if (p.length !== 2) continue
-                var k = p[0].trim(), v = p[1].trim()
-                if (k === "MODE") win.glassTintMode = v
-                else if (k === "STRENGTH") { var f = parseFloat(v); if (!isNaN(f)) win.glassTintStrength = f }
-                else if (k === "COLOR") win.glassTintColor = v.replace("#", "")
-            }
-        }
-        onLoadFailed: { win.glassTintStrength = 0; win.glassTintMode = "wallpaper"; win.glassTintColor = "ffffff" }
-    }
-    Process { id: glassTintProc }
-    function commitGlassTint() {
-        var body = "MODE=" + win.glassTintMode + "\nSTRENGTH=" + win.glassTintStrength.toFixed(3) + "\nCOLOR=" + win.glassTintColor + "\n"
-        var conf = win.homeDir + "/.config/hypr/glass-tint.conf"
-        glassTintProc.command = ["bash", "-c", "printf %s '" + Qt.btoa(body) + "' | base64 -d > '" + conf + "'; \"$HOME/.config/hypr/gen-glass-tint.sh\""]
-        glassTintProc.running = true
-    }
-    // the resolved tint color (for the preview swatch): wallpaper accent or custom
-    function tintColor() {
-        if (win.glassTintMode === "wallpaper") return win.bar ? win.bar.solidify(win.bar.colorFocused) : "#888888"
-        return "#" + win.glassTintColor
-    }
-
     // Reusable slider: track + fill + draggable knob. moved() fires live while
     // dragging, committed() on release.
     // Vertical Flickable with smooth, accelerated mouse-wheel scrolling. A bare
@@ -563,6 +559,25 @@ FloatingWindow {
             onPositionChanged: (m) => { if (pressed) emit(m.x) }
             onReleased: sl.committed(sl.value)
         }
+    }
+
+    // A pill switch. Owner binds `on` and updates it in onToggled (don't self-assign).
+    component TcToggle: Rectangle {
+        id: tg
+        property bool on: false
+        signal toggled(bool v)
+        width: 46; height: 26; radius: 13
+        color: tg.on ? win.fg : Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.18)
+        Behavior on color { ColorAnimation { duration: 130 } }
+        Rectangle {
+            width: 20; height: 20; radius: 10
+            anchors.verticalCenter: parent.verticalCenter
+            x: tg.on ? parent.width - width - 3 : 3
+            color: tg.on ? win.blockColor : win.fg
+            Behavior on x { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+        }
+        MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onClicked: tg.toggled(!tg.on) }
     }
 
     // ── content: solid rounded blocks, live liquid glass in the gaps ──
@@ -878,6 +893,69 @@ FloatingWindow {
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
                             text: "Scroll to browse · click a cover to center it · click the centered one to set it." }
+
+                        // ── auto-cycle timer ──
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+                        Text { text: "Auto-cycle"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+
+                        // interval (dimmed while paused — it has no effect then)
+                        Column {
+                            width: parent.width; spacing: 8
+                            opacity: win.cyclePaused ? 0.45 : 1.0
+                            Row {
+                                width: parent.width
+                                Text { width: parent.width - ivVal.implicitWidth; text: "Change wallpaper every"
+                                       color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                Text { id: ivVal; text: win.cycleInterval + (win.cycleInterval === 1 ? " minute" : " minutes")
+                                       color: win.fg; opacity: 0.7; font.pixelSize: 12; font.bold: true; font.family: win.ff }
+                            }
+                            TcSlider {
+                                width: parent.width
+                                from: 1; to: 120; value: win.cycleInterval
+                                onMoved: (v) => win.cycleInterval = Math.round(v)
+                                onCommitted: (v) => win.writeTimerConf()
+                            }
+                        }
+
+                        // pause toggle
+                        Rectangle {
+                            width: parent.width; height: Math.max(50, pauseCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                            Column {
+                                id: pauseCol
+                                anchors.left: parent.left; anchors.leftMargin: 12
+                                anchors.right: pauseTg.left; anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                Text { text: "Pause auto-cycle"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                       text: "Stop rotating wallpapers entirely until you switch this back off." }
+                            }
+                            TcToggle {
+                                id: pauseTg
+                                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                on: win.cyclePaused
+                                onToggled: (v) => { win.cyclePaused = v; win.writeTimerConf() }
+                            }
+                        }
+
+                        // pause while a fullscreen app is open
+                        Rectangle {
+                            width: parent.width; height: Math.max(50, fsCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                            Column {
+                                id: fsCol
+                                anchors.left: parent.left; anchors.leftMargin: 12
+                                anchors.right: fsTg.left; anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                Text { text: "Pause during fullscreen apps"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                       text: "Hold off while a game or fullscreen video is open — no transition stutter or CPU spike mid-game. Cycles as soon as you exit." }
+                            }
+                            TcToggle {
+                                id: fsTg
+                                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                on: win.cyclePauseFs
+                                onToggled: (v) => { win.cyclePauseFs = v; win.writeTimerConf() }
+                            }
+                        }
                         }
                     }
                 }
@@ -1021,59 +1099,6 @@ FloatingWindow {
                             Text { text: "Liquid glass (hyprglass)"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                             Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
                                 text: "Live tuning of the glass effect on every window — applies instantly and persists. For values past a slider's range, or other options, use the write-in below." }
-
-                            // ── system-wide tint ──
-                            Item {
-                                width: parent.width; height: 22
-                                Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Tint (all glass)"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
-                                Text { anchors.right: tintRst.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
-                                    text: Math.round(win.glassTintStrength * 100) + "%"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
-                                Rectangle { id: tintRst; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                                    width: 48; height: 22; radius: 7; color: tintRstM.containsMouse ? win.rowHover : win.rowBg
-                                    Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 10; font.family: win.ff }
-                                    MouseArea { id: tintRstM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { win.glassTintStrength = 0; win.commitGlassTint() } }
-                                }
-                            }
-                            TcSlider {
-                                width: parent.width; from: 0; to: 0.6; value: win.glassTintStrength
-                                onMoved: (v) => win.glassTintStrength = v
-                                onCommitted: (v) => win.commitGlassTint()
-                            }
-                            Row {
-                                width: parent.width; height: 30; spacing: 8
-                                Repeater {
-                                    model: [ { label: "Wallpaper", m: "wallpaper" }, { label: "Custom", m: "custom" } ]
-                                    delegate: Rectangle {
-                                        required property var modelData
-                                        readonly property bool sel: win.glassTintMode === modelData.m
-                                        width: 96; height: 30; radius: 8
-                                        color: sel ? win.rowHover : (tmM.containsMouse ? win.rowBg : Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.08))
-                                        border.width: sel ? 2 : 0; border.color: win.fg
-                                        Text { anchors.centerIn: parent; text: modelData.label; color: win.fg; font.pixelSize: 12; font.bold: parent.sel; font.family: win.ff }
-                                        MouseArea { id: tmM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { win.glassTintMode = modelData.m; win.commitGlassTint() } }
-                                    }
-                                }
-                                Rectangle {   // preview swatch of the tint colour
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 30; height: 30; radius: 8
-                                    color: { var _ = win.glassTintMode + win.glassTintColor + (win.bar ? win.bar.colorFocused : ""); return win.tintColor() }
-                                    border.width: 1; border.color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.2)
-                                }
-                                Rectangle {   // custom hex (custom mode only)
-                                    visible: win.glassTintMode === "custom"
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 104; height: 30; radius: 8; color: win.rowBg
-                                    TextInput { id: tintHexIn; anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 6
-                                        verticalAlignment: TextInput.AlignVCenter; color: win.fg; font.pixelSize: 12; font.family: "monospace"; clip: true
-                                        text: win.glassTintColor; maximumLength: 6
-                                        onEditingFinished: { var h = text.replace("#", "").trim(); if (/^[0-9a-fA-F]{6}$/.test(h)) { win.glassTintColor = h; win.commitGlassTint() } } }
-                                    Text { anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
-                                        visible: tintHexIn.text === ""; text: "rrggbb"; color: win.fg; opacity: 0.4; font.pixelSize: 12; font.family: "monospace" }
-                                }
-                            }
-                            Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
-                                text: "Tints every glass surface at once. Wallpaper = the accent (follows your wallpaper + the Colors HSV sliders); Custom = a fixed colour, unaffected by them." }
-                            Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
                             Repeater {
                                 model: win.glassSpecs

@@ -126,7 +126,8 @@ cp -r hypr quickshell mako ~/.config/
 **Your personal settings are NOT touched.** Everything you tune at runtime —
 the [Settings app](#settings-app)'s colors (`color-tuning.conf`), liquid-glass
 sliders (`hyprglass-tuning.conf`), wallpaper folder (`wallpaper-dir.conf`),
-pinned apps (`launcher-apps.json`) — plus your `monitors.conf` / `local.conf` —
+auto-cycle prefs (`wallpaper-timer.conf`), pinned apps (`launcher-apps.json`) —
+plus your `monitors.conf` / `local.conf` —
 are **gitignored**, so they live only in `~/.config` and aren't in the repo. A
 `git pull` + copy overwrites the shipped code but leaves those files alone, so
 your glass/color/launcher tweaks survive updates. (New tunables added in an
@@ -152,10 +153,10 @@ export QS_FONT="Inter"
 A real app window (`quickshell/Settings.qml`) — it appears in your app list as **Technicolor Settings**, and opens from the gear on the bar's launcher popup or with `qs ipc call settings open`. It's styled like the themed windows: solid rounded blocks with live liquid glass in the gaps. Tabs:
 
 - **Apps** — edit the launcher's pinned apps (reorder, swap icons, add/remove). Pins are stored in `quickshell/launcher-apps.json`; a built-in default set is used until you customize.
-- **Wallpaper** — set the wallpapers folder, and browse a **cover-flow** of every wallpaper in it: scroll or drag to spin it (a vertical mouse wheel scrolls it horizontally), click the centered cover to set it. Plus shuffle and open-folder.
-- **Colors** — two sliders that retint **every** themed app at once, with a live preview and reset buttons: a text **contrast** threshold (where text flips light↔dark — center is the current default, full-left forces dark text, full-right forces light) and a **saturation** mute/boost (0 = grayscale). A slider release re-runs the whole palette pipeline, so the bar and all themed apps follow.
+- **Wallpaper** — set the wallpapers folder, and browse a **cover-flow** of every wallpaper in it: scroll or drag to spin it (a vertical mouse wheel scrolls it horizontally), click the centered cover to set it. Plus shuffle, open-folder, and **auto-cycle** controls: how often it rotates the wallpaper, a pause toggle, and pause-while-a-fullscreen-app-is-open — so a game or fullscreen video never gets a transition (or the CPU spike of one) mid-frame.
+- **Colors** — four sliders that retint **every** themed app at once, with live previews and reset buttons: a text **contrast** threshold (where text flips light↔dark — center is the default, full-left forces dark text, full-right forces light), plus **saturation** (0 = grayscale), **brightness**, and **hue** rotation. A slider release re-runs the whole palette pipeline, so the bar and all themed apps follow.
 - **Glass** — live sliders for the hyprglass liquid-glass effect (refraction, fresnel, specular, blur, lens distortion, chromatic aberration, brightness/contrast/saturation/vibrancy), each with a reset, plus a write-in box for any value past a slider's range or any option without a slider. Applies instantly via `hyprctl keyword` and persists to `hypr/hyprglass-tuning.conf`.
-- **System** — GUI picker for the default file manager, and an editor for `local.conf` with Save & reload.
+- **System** — GUI pickers for the **UI font** (any installed family, previewed in itself), **default file manager**, and **default terminal** (sets Hyprland's Super+Q *and* the file manager's "Open Terminal"); an editor for `local.conf` with Save & reload; and an **Update** section that checks GitHub for new commits, lists them, and pulls + re-copies on a two-click confirm (leaving all your gitignored settings untouched).
 
 Everything it writes (`color-tuning.conf`, `hyprglass-tuning.conf`, `wallpaper-dir.conf`, `launcher-apps.json`) is per-machine and gitignored; defaults apply when the files are absent.
 

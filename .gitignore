@@ -10,7 +10,6 @@ hypr/window-geometry.conf
 hypr/workspaces.conf
 hypr/font.conf
 hypr/terminal.conf
-hypr/glass-tint.conf
 hypr/wofi/font.css
 quickshell/colors.env
 quickshell/launcher-apps.json
@@ -37,3 +36,4 @@ hypr/wofi/repo/.git/
 # compiles it locally on first run, so the binary/objects are never committed)
 hypr/hyprglass/hyprglass.so
 hypr/hyprglass/src/*.o
+hypr/wallpaper-timer.conf
