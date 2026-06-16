@@ -308,6 +308,23 @@ html .Root__right-sidebar [class*="aboutArtist"] * {{
 html [class*="encore-internal-color-text-base"] {{ color: var(--spice-text) !important; }}
 html [class*="encore-internal-color-text-subdued"] {{ color: var(--spice-subtext) !important; }}
 
+/* Snackbars/toasts ("Added to Liked Songs", "Added to queue", …) render at BODY
+   level on Spotify's fixed dark elevated surface (--background-elevated-base is
+   a near-black), so the body-level --spice-text (which is the dark ink for the
+   LIGHT secondary) put dark text on a dark box. Scope the toast like a secondary
+   panel: secondary bg + its own ink (ts1) — contrast is guaranteed by
+   construction and it matches the sidebar/player. Native toasts AND
+   Spicetify.Snackbar both render through notistack, so this covers both. */
+html .notistack-Snackbar {{
+  --background-elevated-base: var(--tc-s);
+  --background-base: var(--tc-s);
+  --spice-text: var(--tc-ts1);
+  --spice-subtext: var(--tc-ts3);
+  --text-base: var(--tc-ts1);
+  --text-subdued: var(--tc-ts3);
+}}
+html .notistack-Snackbar [class*="box--elevated"] {{ background-color: var(--tc-s) !important; }}
+
 /* NO SHADOWS ANYWHERE: Spotify's elevation box-shadows composite over the
    chroma-key background as "darkened key" pixels — too far from the key to be
    keyed out -> opaque BLACK HALOS around every rounded element. Technicolor is
