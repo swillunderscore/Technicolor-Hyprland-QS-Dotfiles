@@ -314,14 +314,6 @@ def main():
         except Exception:
             pass
 
-        # Glass tint: if it's in "wallpaper" mode, recompute it from the new
-        # palette (no-op when the tint is off or custom).
-        try:
-            subprocess.run([os.path.expanduser('~/.config/hypr/gen-glass-tint.sh')],
-                           capture_output=True)
-        except Exception:
-            pass
-
         print(f"Focused:        {to_hex(focused)}")
         print(f"Occupied:       {to_hex(occupied)}")
         print(f"Visible:        {to_hex(visible)}")
