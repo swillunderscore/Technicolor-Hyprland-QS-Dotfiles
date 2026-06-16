@@ -1701,15 +1701,10 @@ PanelWindow {
                 // While open, closing is handled by the launcher window's
                 // cursor-position watchdog (immune to Qt hover wipes).
                 onExited: launcherOpenDwell.stop()
-                onClicked: function(mouse) {
-                    if (Date.now() - bar.lastMenuCloseTime < 150) return;
-                    if (bar.launcherOpen) {
-                        bar.closeLauncher();
-                    } else {
-                        launcherOpenDwell.stop();
-                        bar.launcherOpen = true;
-                    }
-                }
+                // No onClicked: the launcher is hover-driven now, so a click
+                // (out of old muscle memory) shouldn't toggle/close it. The click
+                // is still swallowed here so it doesn't fall through to anything.
+                onClicked: function(mouse) {}
             }
             Timer {
                 id: launcherOpenDwell
