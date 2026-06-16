@@ -47,7 +47,7 @@ FloatingWindow {
             if (shell.settingsTab !== 5) win.endCapture()   // leaving Hotkeys cancels a pending rebind
         }
         // escape hatch from the capture submap (hyprland.conf) fired — clear UI
-        function onRebindCancelled() { win.capturingBind = null; win.captureWarn = ""; captureTimeout.stop() }
+        function onRebindCancelled() { win.endCapture() }
     }
 
     // ── Installed apps (for the Apps > Add picker) ──
@@ -384,26 +384,36 @@ FloatingWindow {
 
     // capture state
     property var capturingBind: null
+    property var warnBind: null        // row flashing a transient conflict message
     property string captureWarn: ""
     Timer { id: captureTimeout; interval: 9000; onTriggered: win.endCapture() }
+    Timer { id: warnTimer; interval: 3500; onTriggered: { win.warnBind = null; win.captureWarn = "" } }
     function startCapture(row) {
         if (!row || !row.editable) return
-        win.captureWarn = ""
+        win.warnBind = null; win.captureWarn = ""; warnTimer.stop()
         win.capturingBind = row
         captureKey.forceActiveFocus()
         Hyprland.dispatch("submap __tc_capture")
         captureTimeout.restart()
     }
-    function endCapture() {
+    function stopMonitor() {            // leave the capture submap, stop listening
         win.capturingBind = null
-        win.captureWarn = ""
         captureTimeout.stop()
         Hyprland.dispatch("submap reset")
     }
+    function endCapture() { win.warnBind = null; win.captureWarn = ""; warnTimer.stop(); win.stopMonitor() }
+    // conflict / bad key: stop capturing (so it must be re-clicked) and flash the
+    // message on the unchanged row for a few seconds.
+    function flashWarn(row, msg) { win.stopMonitor(); win.warnBind = row; win.captureWarn = msg; warnTimer.restart() }
     function isCapturing(row) {
         var c = win.capturingBind
         return c !== null && c.dispatcher === row.dispatcher && c.arg === row.arg
             && c.modmask === row.modmask && c.rawKey === row.rawKey
+    }
+    function isWarnRow(row) {
+        var w = win.warnBind
+        return w !== null && w.dispatcher === row.dispatcher && w.arg === row.arg
+            && w.modmask === row.modmask && w.rawKey === row.rawKey
     }
     function isModifierKey(k) {
         return k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt
@@ -449,10 +459,10 @@ FloatingWindow {
     function commitCapture(mods, key) {
         var row = win.capturingBind
         if (!row) return
-        if (key === "") { win.captureWarn = "Unsupported key — try another"; captureTimeout.restart(); return }
+        if (key === "") { win.flashWarn(row, "Unsupported key"); return }
         if (mods === row.modmask && key === row.rawKey) { win.endCapture(); return }   // unchanged
         var cl = win.conflictLabel(mods, key, row)
-        if (cl !== "") { win.captureWarn = win.comboText(mods, key) + " is already “" + cl + "”"; captureTimeout.restart(); return }
+        if (cl !== "") { win.flashWarn(row, win.comboText(mods, key) + " is already “" + cl + "”"); return }
         win.endCapture()
         win.applyRebind(row, mods, key)
     }
@@ -1643,6 +1653,7 @@ FloatingWindow {
                                                 id: hkRow
                                                 required property var modelData
                                                 property bool capturing: win.isCapturing(modelData)
+                                                property bool warning: win.isWarnRow(modelData)
                                                 width: catCol.width; height: 38; radius: 8
                                                 color: hkRow.capturing ? Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.12)
                                                                        : (hkRowM.containsMouse ? win.rowBg : "transparent")
@@ -1657,21 +1668,28 @@ FloatingWindow {
                                                     anchors.right: parent.right; anchors.rightMargin: 10
                                                     anchors.verticalCenter: parent.verticalCenter; spacing: 6
 
-                                                    // capture prompt / conflict warning
+                                                    // capture prompt
                                                     Rectangle {
                                                         visible: hkRow.capturing
                                                         height: 24; radius: 6
                                                         width: Math.min(pT.implicitWidth + 18, hkRow.width * 0.66)
                                                         color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.18)
-                                                        border.width: 1; border.color: win.captureWarn !== "" ? "#ff6b6b" : win.fg
+                                                        border.width: 1; border.color: win.fg
                                                         Text { id: pT; anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
                                                                verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
-                                                               text: win.captureWarn !== "" ? ("⚠ " + win.captureWarn) : "Press a combo…  (Esc cancels)"
+                                                               text: "Press a combo…  (Esc cancels)"
                                                                color: win.fg; font.pixelSize: 11; font.bold: true; font.family: win.ff }
+                                                    }
+                                                    // conflict message — shown beside the (unchanged) keys for a few seconds
+                                                    Text {
+                                                        visible: hkRow.warning
+                                                        height: 24; verticalAlignment: Text.AlignVCenter
+                                                        width: Math.min(implicitWidth, hkRow.width * 0.5); elide: Text.ElideRight
+                                                        text: "⚠ " + win.captureWarn; color: "#ff6b6b"; font.pixelSize: 11; font.bold: true; font.family: win.ff
                                                     }
                                                     // reset to the shipped default (only when overridden)
                                                     Rectangle {
-                                                        visible: !hkRow.capturing && modelData.overridden
+                                                        visible: !hkRow.capturing && !hkRow.warning && modelData.overridden
                                                         height: 24; width: 24; radius: 6
                                                         color: rstM.containsMouse ? win.rowHover : win.rowBg
                                                         Text { anchors.centerIn: parent; text: "↺"; color: win.fg; font.pixelSize: 14; font.family: win.ff }
