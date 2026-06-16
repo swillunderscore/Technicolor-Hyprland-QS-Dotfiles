@@ -773,44 +773,22 @@ FloatingWindow {
     // Reusable slider: track + fill + draggable knob. moved() fires live while
     // dragging, committed() on release.
     // Vertical Flickable with smooth, accelerated mouse-wheel scrolling. A bare
-    // Flickable jumps a fixed step per notch with no easing (feels janky); this
-    // animates contentY to an accumulating target so fast scrolls glide. Trackpad
-    // wheel (pixel deltas) is left to the Flickable's native smooth handling.
-    component SmoothList: Flickable {
+    // Built-in scrollable container. ScrollView handles the mouse wheel (both
+    // directions), touch and the scrollbar natively — no custom handler. contentWidth
+    // is pinned to availableWidth so it only scrolls vertically; each usage supplies
+    // contentHeight + a single Column child (whose width binds to parent.width).
+    component SmoothList: ScrollView {
         id: sfl
-        flickableDirection: Flickable.VerticalFlick
-        boundsBehavior: Flickable.StopAtBounds
-        property double _lastWheel: 0
-        property real _step: 110
-        NumberAnimation { id: sflAnim; target: sfl; property: "contentY"; duration: 260; easing.type: Easing.OutCubic }
-        WheelHandler {
-            acceptedDevices: PointerDevice.Mouse   // touchpads keep the Flickable's native momentum
-            onWheel: (ev) => {
-                var max = Math.max(0, sfl.contentHeight - sfl.height)
-                if (max <= 0) return
-                // acceleration: notches arriving quickly grow the step (capped); a
-                // pause resets it, so a slow nudge still moves a precise amount.
-                var now = Date.now()
-                sfl._step = (now - sfl._lastWheel < 110) ? Math.min(sfl._step * 1.3, 1000) : 110
-                sfl._lastWheel = now
-                // accumulate onto the in-flight target so rapid scrolls stack
-                var base = sflAnim.running ? sflAnim.to : sfl.contentY
-                var dir = ev.angleDelta.y > 0 ? -1 : 1
-                var t = Math.max(0, Math.min(max, base + dir * sfl._step))
-                sflAnim.to = t; sflAnim.restart()
-            }
-        }
-        ScrollBar.vertical: ScrollBar {
-            id: sflBar
-            policy: sfl.contentHeight > sfl.height + 1 ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
-            width: 9
-            contentItem: Rectangle {
-                implicitWidth: 5; radius: 3
-                color: win.fg
-                opacity: sflBar.pressed ? 0.6 : (sflBar.hovered ? 0.42 : 0.24)
-                Behavior on opacity { NumberAnimation { duration: 150 } }
-            }
-            background: null
+        clip: true
+        contentWidth: availableWidth
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+        ScrollBar.vertical.background: null      // remove the default track/groove
+        ScrollBar.vertical.contentItem: Rectangle {
+            implicitWidth: 5; radius: 3
+            color: win.fg
+            opacity: sfl.ScrollBar.vertical.pressed ? 0.6 : (sfl.ScrollBar.vertical.hovered ? 0.42 : 0.26)
+            Behavior on opacity { NumberAnimation { duration: 150 } }
         }
     }
 
@@ -1398,10 +1376,8 @@ FloatingWindow {
                 Item {
                     anchors.fill: parent
                     visible: win.shell && win.shell.settingsTab === 3
-                    Flickable {
-                        anchors.fill: parent; clip: true
-                        contentWidth: width; contentHeight: glassCol.height
-                        flickableDirection: Flickable.VerticalFlick; boundsBehavior: Flickable.StopAtBounds
+                    SmoothList {
+                        anchors.fill: parent; clip: true; contentHeight: glassCol.height
                         Column {
                             id: glassCol
                             width: parent.width; spacing: 10
