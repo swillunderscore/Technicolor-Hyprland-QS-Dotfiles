@@ -1,8 +1,11 @@
 /* Technicolor wofi theme (Super+R). Colors come from the active Technicolor GTK
  * theme (gen-gtk-theme.py defines @theme_bg_color / @theme_fg_color /
- * @theme_selected_bg_color / @theme_selected_fg_color from the wallpaper), so
- * this follows the palette automatically. The translucent window is glassed by
- * hyprglass (the "wofi" layer namespace is whitelisted in hyprland.conf). */
+ * @theme_selected_bg_color / @theme_selected_fg_color from the wallpaper), so it
+ * follows the palette automatically.
+ *
+ * Look: the WINDOW is a translucent panel that hyprglass frosts (the "wofi"
+ * layer namespace is whitelisted), and the search bar + app list sit on it as
+ * SOLID colored rounded boxes — "blocks on glass", like the Settings window. */
 
 * {
     font-family: "JetBrainsMono Nerd Font", "SF Pro", sans-serif;
@@ -10,45 +13,55 @@
 }
 
 window {
-    background-color: alpha(@theme_bg_color, 0.62);
-    border: 2px solid alpha(@theme_fg_color, 0.14);
+    background-color: alpha(@theme_bg_color, 0.40);
+    border: 2px solid alpha(@theme_fg_color, 0.12);
     border-radius: 20px;
     color: @theme_fg_color;
 }
 
-#outer-box { margin: 0; padding: 14px; }
+#outer-box { margin: 0; padding: 12px; }
 
+/* search bar = solid opaque box */
 #input {
-    margin-bottom: 12px;
-    padding: 11px 16px;
-    border: none;
+    margin: 0 0 12px 0;
+    padding: 12px 16px;
+    border: 1px solid alpha(@theme_fg_color, 0.10);
     outline: none;
     box-shadow: none;
     border-radius: 14px;
-    background-color: alpha(@theme_fg_color, 0.10);
+    background-color: @theme_bg_color;
     color: @theme_fg_color;
 }
-#input:focus { border: none; box-shadow: none; outline: none; }
+#input:focus { border: 1px solid alpha(@theme_fg_color, 0.10); box-shadow: none; outline: none; }
 #input image { color: @theme_fg_color; }
 
-#scroll { margin: 0; border: none; }
-#inner-box { margin: 0; }
+/* lower section (the app list) = solid opaque box */
+#scroll {
+    background-color: @theme_bg_color;
+    border: 1px solid alpha(@theme_fg_color, 0.10);
+    border-radius: 14px;
+    padding: 6px;
+    margin: 0;
+}
+#inner-box { background-color: transparent; margin: 0; }
 
 #entry {
-    padding: 10px 14px;
-    margin: 3px 2px;
+    padding: 10px 12px;
+    margin: 2px 2px;
     border: none;
-    border-radius: 14px;
+    border-radius: 10px;
+    background-color: transparent;
 }
+/* Highlight follows the MOUSE (:hover) as well as the arrow-key selection
+ * (:selected) — wofi 1.5.3 has no hover_select, so this is done in CSS. */
+#entry:hover,
 #entry:selected {
     background-color: @theme_selected_bg_color;
-    outline: none;
 }
-#entry image { margin-right: 14px; }
-#img { margin-right: 14px; }
+#entry:hover #text,
+#entry:selected #text {
+    color: @theme_selected_fg_color;
+}
 
+#img, #entry image { margin-right: 12px; }
 #text { color: @theme_fg_color; }
-#entry:selected #text,
-#entry:selected { color: @theme_selected_fg_color; }
-
-#unselected { color: @theme_fg_color; }

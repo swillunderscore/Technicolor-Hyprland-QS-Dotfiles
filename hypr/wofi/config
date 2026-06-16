@@ -8,6 +8,7 @@ insensitive=true
 matching=fuzzy
 no_actions=true
 hide_scroll=true
+single_click=true
 width=560
 height=520
 lines=9
