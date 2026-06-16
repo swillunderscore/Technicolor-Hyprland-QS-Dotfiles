@@ -114,6 +114,26 @@ Log out and back in for it to take effect.
 ### 6. Log into Hyprland
 Select Hyprland at your display manager (or start it from a TTY).
 
+## Updating
+
+Pull the latest and re-copy:
+```
+cd /path/to/this/repo && git pull
+cp -r hypr quickshell mako ~/.config/
+```
+**Your personal settings are NOT touched.** Everything you tune at runtime —
+the [Settings app](#settings-app)'s colors (`color-tuning.conf`), liquid-glass
+sliders (`hyprglass-tuning.conf`), wallpaper folder (`wallpaper-dir.conf`),
+pinned apps (`launcher-apps.json`) — plus your `monitors.conf` / `local.conf` —
+are **gitignored**, so they live only in `~/.config` and aren't in the repo. A
+`git pull` + copy overwrites the shipped code but leaves those files alone, so
+your glass/color/launcher tweaks survive updates. (New tunables added in an
+update just fall back to their defaults until you touch them.)
+
+The only files the copy overwrites are the tracked ones — if you hand-edited a
+tracked file (e.g. `hyprland.conf`), back it up first or keep your changes in
+`local.conf`, which is sourced last and never overwritten.
+
 ## Wallpapers
 
 The animated wallpapers I use are pixel-art scenes by **Anas Abdin**: <https://www.tumblr.com/anasabdin>. The color extraction, nearest-neighbor upscaling, and wallpaper transition are tuned for that pixel-art style, so photos and other kinds of images may not look as good.
