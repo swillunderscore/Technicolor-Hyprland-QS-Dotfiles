@@ -951,7 +951,14 @@ FloatingWindow {
                 Rectangle {   // close circle
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                     width: 44; height: 44; radius: 22
-                    color: closeM.containsMouse ? win.rowHover : win.blockColor
+                    // This block sits on the glass gap, so the usual translucent
+                    // rowHover would let the glass show through (button "vanishes").
+                    // Use an OPAQUE blockColor tinted toward fg for the hover.
+                    color: closeM.containsMouse
+                           ? Qt.rgba(win.blockColor.r * 0.82 + win.fg.r * 0.18,
+                                     win.blockColor.g * 0.82 + win.fg.g * 0.18,
+                                     win.blockColor.b * 0.82 + win.fg.b * 0.18, 1.0)
+                           : win.blockColor
                     Text { anchors.centerIn: parent; text: String.fromCodePoint(0xF00D); color: win.fg; font.pixelSize: 18; font.family: win.ff }
                     MouseArea { id: closeM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.close() }
                 }
