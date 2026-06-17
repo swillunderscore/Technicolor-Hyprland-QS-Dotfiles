@@ -94,14 +94,17 @@ FloatingWindow {
     }
     function pickImage(i) {
         win.imgPickIndex = i
-        // Use kdialog — the KDE file dialog (the same picker Dolphin's "open" uses).
-        // NOTE: an if/else, not `kdialog || zenity`: the `||` fired the GTK zenity
-        // dialog every time you closed/cancelled kdialog, popping a second, wrong-
-        // looking dialog with the awkward path box. zenity is only for systems
-        // without kdialog.
+        // Use kdialog — the KDE file dialog (the same Dolphin-style picker, with a
+        // Places sidebar + an editable/paste-able path bar). Two gotchas fixed:
+        //  • QT_QPA_PLATFORMTHEME=kde — the user's global theme is qt6ct, which makes
+        //    kdialog fall back to Qt's plain "Look in:" dialog (no breadcrumb, can't
+        //    paste); forcing kde gives the real KDE file dialog.
+        //  • if/else, not `kdialog || zenity` — the `||` fired the GTK zenity dialog
+        //    whenever kdialog was closed/cancelled (a second, wrong dialog). zenity is
+        //    only a fallback for systems without kdialog.
         imgPickProc.command = ["bash", "-c",
             "if command -v kdialog >/dev/null 2>&1; then " +
-            "kdialog --getopenfilename ~ 'Images (*.png *.jpg *.jpeg *.svg *.webp *.gif)' 2>/dev/null; " +
+            "QT_QPA_PLATFORMTHEME=kde kdialog --getopenfilename ~ 'Images (*.png *.jpg *.jpeg *.svg *.webp *.gif)' 2>/dev/null; " +
             "else zenity --file-selection --file-filter='Images | *.png *.jpg *.jpeg *.svg *.webp *.gif' 2>/dev/null; fi"]
         imgPickProc.running = true
     }
@@ -611,7 +614,7 @@ FloatingWindow {
         stdout: StdioCollector { onStreamFinished: { var p = this.text.trim(); if (p) win.setWallpaperDir(p) } }
     }
     function pickWallpaperDir() {
-        wpDirPickProc.command = ["bash", "-c", "kdialog --getexistingdirectory '" + win.wallpaperDir + "' 2>/dev/null || zenity --file-selection --directory 2>/dev/null"]
+        wpDirPickProc.command = ["bash", "-c", "if command -v kdialog >/dev/null 2>&1; then QT_QPA_PLATFORMTHEME=kde kdialog --getexistingdirectory '" + win.wallpaperDir + "' 2>/dev/null; else zenity --file-selection --directory 2>/dev/null; fi"]
         wpDirPickProc.running = true
     }
 
