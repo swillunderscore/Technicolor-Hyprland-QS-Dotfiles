@@ -1962,9 +1962,9 @@ PanelWindow {
                                     return "empty"
                     }
                     readonly property color dotColor: {
-                        if (dotState === "focused") return bar.colorFocused
-                            if (dotState === "visible") return bar.colorVisible
-                                if (dotState === "occupied") return bar.colorOccupied
+                        if (dotState === "focused") return bar.gradientStart   // the bar's left color
+                            if (dotState === "visible") return bar.gradientEnd     // the bar's right color
+                                if (dotState === "occupied") return bar.colorOccupied  // offscreen — the third color
                                     return bar.colorEmpty
                     }
                     Layout.preferredWidth: isPrimary ? 28 : 22
