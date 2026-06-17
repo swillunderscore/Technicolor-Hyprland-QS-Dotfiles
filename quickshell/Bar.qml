@@ -8,7 +8,6 @@ import Quickshell.Services.SystemTray
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
-import Qt5Compat.GraphicalEffects
 
 PanelWindow {
     id: bar
@@ -1852,28 +1851,14 @@ PanelWindow {
                             layer.enabled: true; layer.smooth: true
                             layer.textureSize: Qt.size(width * 2, height * 2)
                         }
-                        // Tinted icon, masked to a circle so square icons (e.g. OBS,
-                        // whose icon is a rounded-square tile) match the round ones.
-                        Item {
+                        ShaderEffect {
                             anchors.centerIn: parent; width: launcherIcon.width; height: launcherIcon.height
                             visible: modelData.nerdGlyph === "" && launcherIcon.status === Image.Ready
-                            layer.enabled: true
-                            layer.smooth: true
-                            layer.effect: OpacityMask { maskSource: pinCircleMask }
-                            ShaderEffect {
-                                anchors.fill: parent
-                                property var source: launcherIcon
-                                property real tintR: launcherItem.iconTint.r
-                                property real tintG: launcherItem.iconTint.g
-                                property real tintB: launcherItem.iconTint.b
-                                fragmentShader: "tint.frag.qsb"
-                            }
-                        }
-                        Item {
-                            id: pinCircleMask
-                            anchors.centerIn: parent; width: launcherIcon.width; height: launcherIcon.height
-                            visible: false; layer.enabled: true; layer.smooth: true
-                            Rectangle { anchors.fill: parent; radius: width / 2; antialiasing: true; color: "white" }
+                            property var source: launcherIcon
+                            property real tintR: launcherItem.iconTint.r
+                            property real tintG: launcherItem.iconTint.g
+                            property real tintB: launcherItem.iconTint.b
+                            fragmentShader: "tint.frag.qsb"
                         }
                         Text {
                             anchors.centerIn: parent; visible: modelData.nerdGlyph !== ""
