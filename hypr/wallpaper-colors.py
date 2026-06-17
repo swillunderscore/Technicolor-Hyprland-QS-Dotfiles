@@ -91,6 +91,16 @@ def apply_tuning(rgb, sat, bright, hue):
     l = max(0.0, min(1.0, l * bright))
     return hsl_to_rgb(h, s, l)
 
+def vivid_floor(rgb, min_s=0.50, min_l=0.42, max_l=0.85):
+    """Lift dull/dark colors to a minimum vibrancy (hue kept). Used for the
+    focused/visible/occupied dot + active-border colors so a dark-palette
+    wallpaper can't leave the most prominent UI muddy next to the vivid gradient.
+    Only ever RAISES — already-bright colors pass through unchanged. Applied
+    before the user's tuning, so the brightness/saturation sliders still adjust
+    from this punchier base."""
+    h, s, l = rgb_to_hsl(*rgb)
+    return hsl_to_rgb(h, max(s, min_s), min(max(l, min_l), max_l))
+
 def get_palette(img_path, n_colors=16):
     result = subprocess.run(
         ['magick', img_path, '-resize', '200x200!', '-colors', str(n_colors),
@@ -243,6 +253,14 @@ def main():
 
         focused, occupied, visible = pick_three_colors(palette)
         grad_start, grad_end = pick_gradient_pair(palette)
+
+        # The dot + active-border colors come from the wallpaper's real palette,
+        # which can be dark (the focused dot + border are the most prominent UI,
+        # so a dark primary looks muddy next to the deliberately-vivid gradient).
+        # Floor them to a minimum vibrancy; the gradient is already vivid.
+        focused  = vivid_floor(focused)
+        occupied = vivid_floor(occupied)
+        visible  = vivid_floor(visible)
 
         # User saturation/brightness/hue (Settings → Colors), applied at the
         # source so it flows to every app through colors.env.
