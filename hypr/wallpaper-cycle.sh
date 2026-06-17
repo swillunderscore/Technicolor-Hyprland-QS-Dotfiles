@@ -182,8 +182,10 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
         # transition.py runs the reveal AND does the final animated apply itself
         # (a seamless on-cadence handoff). Applying again here would restart the
         # gif from frame 0 right after — a visible hitch — so we don't.
+        # Reveal pattern from transition.conf (Settings → Wallpaper); default brightness.
+        TMODE=$(sed -n 's/^MODE=//p' "$HOME/.config/hypr/transition.conf" 2>/dev/null | tr -d '[:space:]')
         python3 "$HOME/.config/hypr/wallpaper-transition.py" \
-            "$PREV_PATH" "$CHOSEN" --at-start "$COLORS_CMD"
+            "$PREV_PATH" "$CHOSEN" --mode "${TMODE:-luminance}" --at-start "$COLORS_CMD"
     else
         eval "$COLORS_CMD"
         # No transition (first wallpaper / same image): apply directly here.

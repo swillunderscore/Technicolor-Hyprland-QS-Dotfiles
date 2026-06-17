@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-wallpaper-transition.py OLD NEW [--at-start CMD]
+wallpaper-transition.py OLD NEW [--at-start CMD] [--mode MODE]
 
-Pixel-by-pixel reveal transition from OLD to NEW, ordered by perceived
-brightness (Rec.709 luma) of NEW. Brightest pixels appear first.
+Pixel-by-pixel reveal transition from OLD to NEW. The reveal pattern is set by
+--mode (luminance|shadow|radial|wipe|dissolve|random); luminance (default)
+reveals the brightest pixels of NEW first, shadows last.
 
 Frames are paced so awww-daemon has time to render each one. The final
 "100% new" frame is skipped — caller is expected to invoke
@@ -112,6 +113,8 @@ def main() -> int:
     parser.add_argument("new")
     parser.add_argument("--at-start", default=None,
                         help="shell command to run just before the first frame")
+    parser.add_argument("--mode", default="luminance",
+                        help="reveal pattern: luminance|shadow|radial|wipe|dissolve|random")
     args = parser.parse_args()
 
     os.makedirs(TMPDIR, exist_ok=True)
@@ -182,14 +185,35 @@ def main() -> int:
             + 0.7152 * new[:, :, 1]
             + 0.0722 * new[:, :, 2])
 
-    # Break ties spatially so flat-luma regions (skies, walls) don't reveal
-    # in one burst at whatever value their pixels share.
-    # Noise < 1 luma unit, so it never reorders pixels across brightness levels.
+    # The reveal ORDER is a per-pixel sort key — pixels with the highest key fade
+    # in first. Each --mode is just a different key; the fade cadence + color
+    # cross-fade machinery below is identical for all of them. A little noise
+    # breaks ties so flat regions (skies, walls) don't pop in one hard burst.
     H, W = luma.shape
     total = H * W
     rng = np.random.default_rng()
-    sort_key = luma.flatten().astype(np.float32) + rng.random(total, dtype=np.float32) * 0.99
-    # Descending: brightest pixels of NEW pop in first, shadows fill last.
+    noise = rng.random(total, dtype=np.float32)
+    lflat = luma.flatten().astype(np.float32)
+
+    mode = args.mode
+    if mode == "random":
+        mode = str(rng.choice(["luminance", "shadow", "radial", "wipe", "dissolve"]))
+
+    if mode == "shadow":                          # darkest pixels first
+        sort_key = -lflat + noise * 0.99
+    elif mode == "radial":                        # center → outward
+        cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
+        yy, xx = np.mgrid[0:H, 0:W]
+        dist = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2).astype(np.float32).flatten()
+        sort_key = -dist + noise * (float(dist.max()) * 0.04 + 1e-3)
+    elif mode == "wipe":                          # left → right sweep
+        xcoord = np.tile(np.arange(W, dtype=np.float32), H)
+        sort_key = -xcoord + noise * (W * 0.04 + 1e-3)
+    elif mode == "dissolve":                      # pure random dissolve
+        sort_key = noise
+    else:                                         # "luminance" (default): bright → dark
+        sort_key = lflat + noise * 0.99
+    # Descending: highest key reveals first.
     reveal_order = np.argsort(-sort_key, kind="stable")
 
     # Each pixel gets its own fade window. fade_start = when this pixel begins

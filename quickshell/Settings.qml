@@ -229,6 +229,34 @@ FloatingWindow {
         timerSetProc.running = true
     }
 
+    // ── Wallpaper switch transition (Wallpaper tab) ── transition.conf, read by
+    // wallpaper-cycle.sh; the named reveal patterns live in wallpaper-transition.py.
+    property string transitionMode: "luminance"
+    readonly property var transitions: [
+        { id: "luminance", name: "Brightness", desc: "brightest areas appear first" },
+        { id: "shadow",    name: "Shadows",    desc: "darkest areas appear first" },
+        { id: "radial",    name: "Radial",     desc: "reveals from the center out" },
+        { id: "wipe",      name: "Wipe",       desc: "sweeps left to right" },
+        { id: "dissolve",  name: "Dissolve",   desc: "random pixel dissolve" },
+        { id: "random",    name: "Random",     desc: "a different one each switch" }
+    ]
+    FileView {
+        id: transitionFile
+        path: win.homeDir + "/.config/hypr/transition.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: { var m = this.text().match(/MODE\s*=\s*(\w+)/); win.transitionMode = m ? m[1] : "luminance" }
+        onLoadFailed: win.transitionMode = "luminance"
+    }
+    Process { id: transitionSetProc }
+    function setTransition(mode) {
+        win.transitionMode = mode
+        var b64 = Qt.btoa("MODE=" + mode + "\n")
+        transitionSetProc.command = ["bash", "-c",
+            "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/transition.conf'"]
+        transitionSetProc.running = true
+    }
+
     // ── Hotkeys (Hotkeys tab) ── a read-only cheat sheet built live from
     // `hyprctl binds`, so it always matches the real active binds (including
     // anything added via local.conf). This config uses plain `bind` (no bindd
@@ -1190,6 +1218,33 @@ FloatingWindow {
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
                             text: "Scroll to browse · click a cover to center it · click the centered one to set it." }
+
+                        // ── switch transition ──
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+                        Text { text: "Transition"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                        Flow {
+                            width: parent.width; spacing: 6
+                            Repeater {
+                                model: win.transitions
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    readonly property bool sel: win.transitionMode === modelData.id
+                                    height: 30; radius: 8; width: trLbl.implicitWidth + 24
+                                    color: sel ? win.rowHover : win.rowBg
+                                    border.width: sel ? 2 : 0; border.color: win.fg
+                                    Text { id: trLbl; anchors.centerIn: parent; text: modelData.name; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                    MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.setTransition(modelData.id) }
+                                }
+                            }
+                        }
+                        Text {
+                            width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                            text: {
+                                for (var i = 0; i < win.transitions.length; i++)
+                                    if (win.transitions[i].id === win.transitionMode) return "Applies on the next wallpaper change — " + win.transitions[i].desc + "."
+                                return ""
+                            }
+                        }
 
                         // ── auto-cycle timer ──
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }

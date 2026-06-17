@@ -1,0 +1,3 @@
+# Wallpaper-switch transition pattern (Settings → Wallpaper → Transition).
+# MODE = luminance | shadow | radial | wipe | dissolve | random
+MODE=luminance
