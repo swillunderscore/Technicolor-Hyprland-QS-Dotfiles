@@ -114,7 +114,8 @@ def main() -> int:
     parser.add_argument("--at-start", default=None,
                         help="shell command to run just before the first frame")
     parser.add_argument("--mode", default="luminance",
-                        help="reveal pattern: luminance|shadow|radial|wipe|dissolve|random")
+                        help="reveal pattern: luminance|shadow|radial|iris|wipe|"
+                             "curtain|diagonal|clock|blinds|dissolve|random")
     args = parser.parse_args()
 
     os.makedirs(TMPDIR, exist_ok=True)
@@ -197,18 +198,32 @@ def main() -> int:
 
     mode = args.mode
     if mode == "random":
-        mode = str(rng.choice(["luminance", "shadow", "radial", "wipe", "dissolve"]))
+        mode = str(rng.choice(["luminance", "shadow", "radial", "iris", "wipe",
+                               "curtain", "diagonal", "clock", "blinds", "dissolve"]))
+
+    yy, xx = np.mgrid[0:H, 0:W]
+    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
+    xf = xx.astype(np.float32).flatten()
+    yf = yy.astype(np.float32).flatten()
 
     if mode == "shadow":                          # darkest pixels first
         sort_key = -lflat + noise * 0.99
-    elif mode == "radial":                        # center → outward
-        cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
-        yy, xx = np.mgrid[0:H, 0:W]
+    elif mode in ("radial", "iris"):              # center→out  /  edges→center
         dist = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2).astype(np.float32).flatten()
-        sort_key = -dist + noise * (float(dist.max()) * 0.04 + 1e-3)
-    elif mode == "wipe":                          # left → right sweep
-        xcoord = np.tile(np.arange(W, dtype=np.float32), H)
-        sort_key = -xcoord + noise * (W * 0.04 + 1e-3)
+        sgn = -1.0 if mode == "radial" else 1.0
+        sort_key = sgn * dist + noise * (float(dist.max()) * 0.04 + 1e-3)
+    elif mode == "wipe":                          # left → right
+        sort_key = -xf + noise * (W * 0.04 + 1e-3)
+    elif mode == "curtain":                       # top → bottom
+        sort_key = -yf + noise * (H * 0.04 + 1e-3)
+    elif mode == "diagonal":                      # top-left → bottom-right
+        sort_key = -(xf + yf) + noise * ((W + H) * 0.04 + 1e-3)
+    elif mode == "clock":                         # angular sweep around center
+        ang = np.arctan2(yy - cy, xx - cx).astype(np.float32).flatten()   # [-pi, pi]
+        sort_key = -ang + noise * 0.05
+    elif mode == "blinds":                        # 8 vertical bands wipe in unison
+        bw = max(1.0, W / 8.0)
+        sort_key = -(xf % bw) + noise * (bw * 0.04 + 1e-3)
     elif mode == "dissolve":                      # pure random dissolve
         sort_key = noise
     else:                                         # "luminance" (default): bright → dark

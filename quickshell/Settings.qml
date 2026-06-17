@@ -236,7 +236,12 @@ FloatingWindow {
         { id: "luminance", name: "Brightness", desc: "brightest areas appear first" },
         { id: "shadow",    name: "Shadows",    desc: "darkest areas appear first" },
         { id: "radial",    name: "Radial",     desc: "reveals from the center out" },
+        { id: "iris",      name: "Iris",       desc: "closes in from the edges" },
         { id: "wipe",      name: "Wipe",       desc: "sweeps left to right" },
+        { id: "curtain",   name: "Curtain",    desc: "sweeps top to bottom" },
+        { id: "diagonal",  name: "Diagonal",   desc: "sweeps from the top-left corner" },
+        { id: "clock",     name: "Clock",      desc: "sweeps around like a clock hand" },
+        { id: "blinds",    name: "Blinds",     desc: "vertical bands open together" },
         { id: "dissolve",  name: "Dissolve",   desc: "random pixel dissolve" },
         { id: "random",    name: "Random",     desc: "a different one each switch" }
     ]
