@@ -280,10 +280,11 @@ def main():
             f.write(f'GRADIENT_START={to_hex(grad_start)}\n')
             f.write(f'GRADIENT_END={to_hex(grad_end)}\n')
 
-        # Drive Hyprland's focused-window border from the primary (FOCUSED)
-        # accent. Written to a sourced conf for persistence across reloads, and
-        # applied live so it changes the instant the wallpaper does.
-        border = "rgb({:02X}{:02X}{:02X})".format(*focused)
+        # Drive Hyprland's focused-window border from GRADIENT_START — the bar's
+        # left color, same as the focused workspace dot, so the active window and
+        # its workspace dot match. Written to a sourced conf for persistence across
+        # reloads, and applied live so it changes the instant the wallpaper does.
+        border = "rgb({:02X}{:02X}{:02X})".format(*grad_start)
         try:
             conf_path = os.path.expanduser('~/.config/hypr/colors.conf')
             with open(conf_path, 'w') as cf:
