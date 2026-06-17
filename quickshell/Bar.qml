@@ -1844,7 +1844,12 @@ PanelWindow {
                                         var p = Quickshell.iconPath(modelData.icon, true)
                                         return p !== "" ? p : Quickshell.iconPath(modelData.icon, false)
                             }
-                            visible: false; smooth: true; layer.enabled: true
+                            // layer feeds the tint shader; without smooth + a hi-res
+                            // texture it samples nearest-neighbor → blocky icon (worst
+                            // when hover-scaled / on the low-DPI monitor).
+                            visible: false; smooth: true
+                            layer.enabled: true; layer.smooth: true
+                            layer.textureSize: Qt.size(width * 2, height * 2)
                         }
                         ShaderEffect {
                             anchors.centerIn: parent; width: launcherIcon.width; height: launcherIcon.height
@@ -1977,15 +1982,18 @@ PanelWindow {
                                         return "\u25C6"                                              // filled diamond (occupied)
                         }
                         color: dotDelegate.dotColor
-                        font.pixelSize: {
-                            if (dotDelegate.dotState === "focused") return isPrimary ? 22 : 18
-                                return isPrimary ? 20 : 16
-                        }
+                        // Render the glyph LARGE and scale DOWN to the display size.
+                        // Scaling a Text up rasterizes then stretches it (blocky — worst
+                        // on the low-DPI second monitor where the base size is tiny);
+                        // downscaling a big glyph stays crisp. Display sizes preserved:
+                        // 44*0.45≈20, *0.65≈29 (focused), *0.75≈33 (focused hover).
+                        font.pixelSize: isPrimary ? 44 : 36
                         font.family: bar.fontFamily
                         scale: {
-                            if (bar.hoveredWsId === dotDelegate.wsId && bar.previewOpen) return 1.5
-                                if (dotDelegate.dotState === "focused") return 1.3
-                                    return 1.0
+                            var foc = dotDelegate.dotState === "focused"
+                            if (bar.hoveredWsId === dotDelegate.wsId && bar.previewOpen) return foc ? 0.75 : 0.68
+                                if (foc) return 0.65
+                                    return 0.45
                         }
                         opacity: 1.0
                         Behavior on color { ColorAnimation { duration: 150 } }
