@@ -94,9 +94,15 @@ FloatingWindow {
     }
     function pickImage(i) {
         win.imgPickIndex = i
+        // Use kdialog — the KDE file dialog (the same picker Dolphin's "open" uses).
+        // NOTE: an if/else, not `kdialog || zenity`: the `||` fired the GTK zenity
+        // dialog every time you closed/cancelled kdialog, popping a second, wrong-
+        // looking dialog with the awkward path box. zenity is only for systems
+        // without kdialog.
         imgPickProc.command = ["bash", "-c",
-            "kdialog --getopenfilename ~ 'Images (*.png *.jpg *.jpeg *.svg *.webp *.gif)' 2>/dev/null || " +
-            "zenity --file-selection --file-filter='*.png *.jpg *.jpeg *.svg *.webp *.gif' 2>/dev/null"]
+            "if command -v kdialog >/dev/null 2>&1; then " +
+            "kdialog --getopenfilename ~ 'Images (*.png *.jpg *.jpeg *.svg *.webp *.gif)' 2>/dev/null; " +
+            "else zenity --file-selection --file-filter='Images | *.png *.jpg *.jpeg *.svg *.webp *.gif' 2>/dev/null; fi"]
         imgPickProc.running = true
     }
 
