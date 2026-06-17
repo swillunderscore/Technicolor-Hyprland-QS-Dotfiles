@@ -621,6 +621,23 @@ FloatingWindow {
     }
     function runCheck() { win.checking = true; win.newCommits = []; win.commitCount = ""; checkProc.command = ["bash", "-c", "\"$HOME/.config/hypr/technicolor-check.sh\""]; checkProc.running = true }
 
+    // ── Liked-songs tools (System tab) ── scan for AI music + CSV backup, run
+    // through the live Spicetify session (spotify-liked.py). Read-only.
+    property string likedStatus: ""
+    property bool likedBusy: false
+    Process {
+        id: likedScanProc
+        onRunningChanged: if (running) { win.likedBusy = true; win.likedStatus = "Scanning your Liked Songs…" }
+        stdout: StdioCollector { onStreamFinished: { win.likedBusy = false; win.likedStatus = this.text.trim() || "(no output — is Spotify open with the theme applied?)" } }
+    }
+    Process {
+        id: likedExportProc
+        onRunningChanged: if (running) { win.likedBusy = true; win.likedStatus = "Backing up your Liked Songs…" }
+        stdout: StdioCollector { onStreamFinished: { win.likedBusy = false; win.likedStatus = this.text.trim() || "(no output — is Spotify open with the theme applied?)" } }
+    }
+    function scanLiked()   { if (win.likedBusy) return; likedScanProc.command   = ["bash", "-c", "\"$HOME/.config/hypr/scan-ai-music.sh\" 2>&1"]; likedScanProc.running = true }
+    function exportLiked() { if (win.likedBusy) return; likedExportProc.command = ["bash", "-c", "\"$HOME/.config/hypr/export-liked-songs.sh\" 2>&1"]; likedExportProc.running = true }
+
     // ── wallpapers folder (Wallpaper tab) — single source of truth in
     // ~/.config/hypr/wallpaper-dir.conf; every wallpaper script reads it. ──
     property string wallpaperDir: win.homeDir + "/Wallpapers/animated"
@@ -1630,6 +1647,31 @@ FloatingWindow {
                         }
 
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+                        // ── Liked Songs tools (Spotify, via your Spicetify session) ──
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+                        Text { text: "Spotify Liked Songs"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                            text: "Runs through your open Spotify (no login or dev app, read-only). Scan checks your likes against a known-AI-artist list; Back up writes them all to a CSV (~/spotify-liked-DATE.csv) so you never lose your library." }
+                        Row {
+                            width: parent.width; height: 36; spacing: 8
+                            Rectangle {
+                                width: (parent.width - 8) / 2; height: 36; radius: 9
+                                color: scanM.containsMouse ? win.rowHover : win.rowBg
+                                Text { anchors.centerIn: parent; color: win.fg; font.pixelSize: 13; font.family: win.ff
+                                    text: (win.likedBusy && likedScanProc.running) ? "Scanning…" : "Scan for AI music" }
+                                MouseArea { id: scanM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; enabled: !win.likedBusy; onClicked: win.scanLiked() }
+                            }
+                            Rectangle {
+                                width: (parent.width - 8) / 2; height: 36; radius: 9
+                                color: expM.containsMouse ? win.rowHover : win.rowBg
+                                Text { anchors.centerIn: parent; color: win.fg; font.pixelSize: 13; font.family: win.ff
+                                    text: (win.likedBusy && likedExportProc.running) ? "Backing up…" : "Back up to CSV" }
+                                MouseArea { id: expM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; enabled: !win.likedBusy; onClicked: win.exportLiked() }
+                            }
+                        }
+                        Text { width: parent.width; visible: win.likedStatus !== ""; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.75; font.pixelSize: 11; font.family: "monospace"
+                            text: win.likedStatus }
+
                         // ── Update (pull latest from GitHub) ──
                         Text { text: "Update"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
