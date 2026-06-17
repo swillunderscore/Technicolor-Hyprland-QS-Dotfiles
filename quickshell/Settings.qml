@@ -721,8 +721,8 @@ FloatingWindow {
     // via shell.qml; the other three transform the colors at the source
     // (wallpaper-colors.py) so they flow to every app via colors.env on regen.
     property real tuneContrast: 0.5      // 0 dark .. 0.5 default .. 1 light
-    property real tuneSaturation: 1.0    // 0 grayscale .. 1 as-is .. 1.5 vivid
-    property real tuneBrightness: 1.0    // 0 black .. 1 as-is .. 2 brighter
+    property real tuneSaturation: 1.0    // saturation ceiling: 0 grayscale .. 1 uncapped
+    property real tuneBrightness: 1.0    // brightness ceiling: 0 black .. 1 uncapped
     property real tuneHue: 0.0           // -180..180 degrees, 0 = unchanged
     FileView {
         id: tuneFile
@@ -768,10 +768,11 @@ FloatingWindow {
         return lum > thr ? "#000000" : "#FFFFFF"
     }
     function previewColor(c, sat, bright, hue) {
+        // sat/bright are CEILINGS (cap), matching apply_tuning in wallpaper-colors.py.
         var hh = c.hslHue; if (hh < 0) hh = 0
         hh = hh + hue / 360.0; hh = hh - Math.floor(hh)
-        return Qt.hsla(hh, Math.max(0, Math.min(1, c.hslSaturation * sat)),
-                       Math.max(0, Math.min(1, c.hslLightness * bright)), 1)
+        return Qt.hsla(hh, Math.min(c.hslSaturation, sat),
+                       Math.min(c.hslLightness, bright), 1)
     }
     function resetContrast()   { win.tuneContrast = 0.5; if (win.shell) win.shell.contrastBias = 0.5; win.commitTuning() }
     function resetSaturation() { win.tuneSaturation = 1.0; win.commitTuning() }
@@ -1399,12 +1400,12 @@ FloatingWindow {
                             }
                         }
                         TcSlider {
-                            id: satSlider; width: parent.width; from: 0; to: 1.5; value: win.tuneSaturation
+                            id: satSlider; width: parent.width; from: 0; to: 1; value: win.tuneSaturation
                             onMoved: (v) => win.tuneSaturation = v
                             onCommitted: (v) => win.commitTuning()
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
-                            text: "Mute (left, grayscale) or boost (right) the wallpaper colors everywhere — bar, Discord, Spotify, Brave, Dolphin, GTK, notifications." }
+                            text: "A ceiling on saturation. Full right = the wallpaper's own colors, untouched; lower it to rein in over-saturated wallpapers (already-muted ones aren't affected). Applies everywhere — bar, Discord, Spotify, Brave, Dolphin, GTK, notifications." }
 
                         // ── brightness ──
                         Item {
@@ -1420,12 +1421,12 @@ FloatingWindow {
                             }
                         }
                         TcSlider {
-                            width: parent.width; from: 0; to: 2; value: win.tuneBrightness
+                            width: parent.width; from: 0; to: 1; value: win.tuneBrightness
                             onMoved: (v) => win.tuneBrightness = v
                             onCommitted: (v) => win.commitTuning()
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
-                            text: "Darken (left) or lighten (right) every color. Affects readability, so pair it with Text contrast." }
+                            text: "A ceiling on brightness. Full right = the wallpaper's own colors; lower it to tone down very bright wallpapers (dark ones aren't affected). Pair with Text contrast for readability." }
 
                         // ── hue shift (the artsy / off-palette knob) ──
                         Item {

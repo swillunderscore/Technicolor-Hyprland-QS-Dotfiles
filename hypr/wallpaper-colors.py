@@ -83,23 +83,18 @@ def load_tuning():
 
 
 def apply_tuning(rgb, sat, bright, hue):
-    if abs(sat - 1.0) < 1e-3 and abs(bright - 1.0) < 1e-3 and abs(hue) < 1e-3:
+    # sat & bright are CEILINGS (0..1; 1.0 = uncapped). They clamp each color's
+    # saturation / lightness, so an over-saturated or over-bright wallpaper gets
+    # reined in while already-muted or dark ones (already under the ceiling) pass
+    # through untouched. hue rotates (degrees). Colors are otherwise taken
+    # straight from the wallpaper.
+    if sat >= 0.999 and bright >= 0.999 and abs(hue) < 1e-3:
         return rgb
     h, s, l = rgb_to_hsl(*rgb)
     h = (h + hue / 360.0) % 1.0
-    s = max(0.0, min(1.0, s * sat))
-    l = max(0.0, min(1.0, l * bright))
+    s = min(s, sat)
+    l = min(l, bright)
     return hsl_to_rgb(h, s, l)
-
-def vivid_floor(rgb, min_s=0.50, min_l=0.42, max_l=0.85):
-    """Lift dull/dark colors to a minimum vibrancy (hue kept). Used for the
-    focused/visible/occupied dot + active-border colors so a dark-palette
-    wallpaper can't leave the most prominent UI muddy next to the vivid gradient.
-    Only ever RAISES — already-bright colors pass through unchanged. Applied
-    before the user's tuning, so the brightness/saturation sliders still adjust
-    from this punchier base."""
-    h, s, l = rgb_to_hsl(*rgb)
-    return hsl_to_rgb(h, max(s, min_s), min(max(l, min_l), max_l))
 
 def get_palette(img_path, n_colors=16):
     result = subprocess.run(
@@ -254,16 +249,9 @@ def main():
         focused, occupied, visible = pick_three_colors(palette)
         grad_start, grad_end = pick_gradient_pair(palette)
 
-        # The dot + active-border colors come from the wallpaper's real palette,
-        # which can be dark (the focused dot + border are the most prominent UI,
-        # so a dark primary looks muddy next to the deliberately-vivid gradient).
-        # Floor them to a minimum vibrancy; the gradient is already vivid.
-        focused  = vivid_floor(focused)
-        occupied = vivid_floor(occupied)
-        visible  = vivid_floor(visible)
-
-        # User saturation/brightness/hue (Settings → Colors), applied at the
-        # source so it flows to every app through colors.env.
+        # User saturation/brightness CEILINGS + hue (Settings → Colors), applied
+        # at the source so it flows to every app through colors.env. At defaults
+        # (1.0/1.0/0) this is a no-op — the colors are the wallpaper's own.
         tn = load_tuning()
         sat, bright, hue = tn['SATURATION'], tn['BRIGHTNESS'], tn['HUE']
         focused    = apply_tuning(focused, sat, bright, hue)
