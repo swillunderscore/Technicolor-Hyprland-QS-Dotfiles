@@ -1201,7 +1201,16 @@ PanelWindow {
                     var pct = 100 * v / dtNs
                     return pct >= 0.5 ? ((pct < 10 ? pct.toFixed(1) : Math.round(pct)) + "%") : ""
                 })
-            bar.topVramApps = bar.topN(vramAgg, 4, function(v) { return v >= 16777216 ? bar.fmtRate(v) : "" })
+            var vapps = bar.topN(vramAgg, 4, function(v) { return v >= 16777216 ? bar.fmtRate(v) : "" })
+            // amdgpu keeps a lot of VRAM that NO client fdinfo reports — compositor
+            // framebuffers, screen-capture/encoder surfaces, shared dmabufs — so the
+            // per-process sum is far below the card's used total. Show the
+            // unattributed remainder as "system" so the list matches the ring.
+            var vsum = 0
+            for (var vk in vramAgg) vsum += vramAgg[vk]
+            var vother = bar.vramUsedGB * 1073741824 - vsum
+            if (bar.vramUsedGB > 0 && vother >= 67108864) vapps.push({ app: "system", label: bar.fmtRate(vother) })
+            bar.topVramApps = vapps
         } }
     }
     Timer {

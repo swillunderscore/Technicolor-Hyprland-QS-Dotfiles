@@ -6,7 +6,7 @@
 # the only reliable flush is a full plugin unload/load cycle, then a config
 # reload, then a Spotify relaunch (the windowrule applies at window open).
 set -e
-SO=/var/cache/hyprpm/will/Hypr-DarkWindow/Hypr-DarkWindow.so
+SO="$HOME/.config/hypr/Hypr-DarkWindow/out/hypr-darkwindow.so"
 
 hyprctl plugin unload "$SO" >/dev/null || true
 sleep 0.3

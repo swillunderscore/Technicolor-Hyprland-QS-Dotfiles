@@ -31,5 +31,6 @@ done
 hyprctl plugin unload "$SO" >/dev/null 2>&1   # idempotent on re-run
 hyprctl plugin load   "$SO" >/dev/null 2>&1
 
-# Didn't take? The binary is ABI-stale after a Hyprland update -> rebuild once.
-loaded || { build; hyprctl plugin load "$SO" >/dev/null 2>&1; }
+# Didn't take? The binary is ABI-stale after a Hyprland update -> FORCE a
+# rebuild (-B; plain `make` sees the .so newer than sources and skips it), reload.
+loaded || { make -s -B -C "$DIR"; hyprctl plugin load "$SO" >/dev/null 2>&1; }

@@ -57,8 +57,8 @@ Most share the same package name across distros. The newer ones to watch are `qu
     - `dolphin` + `qt6ct-kde` + `gcc` — the file manager, the Qt color theming, and
       the compiler for the rounded-blocks shim
     - `brave-bin` — the browser
-    - glass transparency: the `Hypr-DarkWindow` Hyprland plugin via `hyprpm`
-      (liquid-glass `hyprglass` ships vendored in `hypr/hyprglass/` and builds itself)
+    - glass transparency: `Hypr-DarkWindow` + `hyprglass` — both ship vendored
+      (`hypr/Hypr-DarkWindow/`, `hypr/hyprglass/`) and build themselves at startup
 
 **Arch** (my distro; a few are AUR, so use `paru`/`yay`):
 ```
@@ -71,7 +71,7 @@ Optional — the apps the wallpaper palette can theme, plus their helpers. Insta
 ```
 paru -S vesktop spotify spicetify-cli dolphin qt6ct-kde gcc brave-bin
 ```
-(The glass transparency also needs the `Hypr-DarkWindow` hyprpm plugin — that's a `hyprpm add`, not a package — plus `hyprglass`, which is vendored in this repo and compiles itself on first launch; see App theming.)
+(The glass transparency uses two Hyprland plugins — `Hypr-DarkWindow` and `hyprglass` — both vendored in this repo (`hypr/Hypr-DarkWindow/`, `hypr/hyprglass/`) and compiled by their own `load.sh` on first launch; no `hyprpm`, no extra packages. See App theming.)
 
 **Fedora:** most via `dnf` under the same names (Hyprland is packaged on F39+). quickshell is a COPR:
 ```
@@ -186,7 +186,7 @@ The first loads — and **re-reads** — the theme on every launch, which is wha
 
 **GTK apps:** `gen-gtk-theme.py` writes a Technicolor GTK theme and flips between two copies (`Technicolor-A`/`-B`) on each wallpaper change so GTK apps re-read and recolor immediately (GTK caches by theme *name*, so the rename is what forces the reload). This sets your global GTK theme, so GTK file dialogs etc. follow the wallpaper too; revert any time with `gsettings set org.gnome.desktop.interface gtk-theme Adwaita` (or your previous theme).
 
-**The glass (chromakey) layer:** the gaps between color blocks in Spotify/Dolphin — and Brave's tab-strip — can be made actually transparent (real windows/wallpaper visible behind) using [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) custom shaders (`hyprpm add micha4w/Hypr-DarkWindow`), plus [hyprglass](https://github.com/hyprnux/hyprglass) for a refraction/liquid-glass look on those areas. A one-line-patched copy of hyprglass (BSD-3) is vendored under `hypr/hyprglass/` and `hyprglass/load.sh` builds + loads it at startup over any hyprpm copy — so there's no `hyprpm add` for it. (The patch makes glass *layers* re-sample the backdrop every frame: upstream caches it, so the alt-tab pie's liquid glass froze the animated wallpaper it captured when it opened.) Uncomment the shader blocks in `local.conf` (they need absolute paths — replace `/home/YOU`) and use `hypr/tckey-reload.sh` after changing shader args (the plugin caches them across reloads). Browsers were long considered un-keyable — a whole-window key eats matching pixels inside pages (e.g. a teal Twitch stream) — so the Brave variant is **band-limited**: it only keys the top tab-strip band and refuses to touch anything below it, leaving web content alone. Two more gotchas already handled: `decoration:blur:size` doubles as Hyprland's re-render margin for these effects even with blur disabled (keep it at 40 or stacked glass glitters on focus changes), and Dolphin uses a fixed-key shader variant so its dialogs don't get keyed transparent.
+**The glass (chromakey) layer:** the gaps between color blocks in Spotify/Dolphin — and Brave's tab-strip — can be made actually transparent (real windows/wallpaper visible behind) using [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) custom shaders, plus [hyprglass](https://github.com/hyprnux/hyprglass) for a refraction/liquid-glass look on those areas. Both plugins are vendored in this repo — Hypr-DarkWindow (MIT) under `hypr/Hypr-DarkWindow/` and a one-line-patched hyprglass (BSD-3) under `hypr/hyprglass/` — and each one's `load.sh` builds + loads it against your system Hyprland headers at startup (force-rebuilding itself when a Hyprland update leaves the binary ABI-stale), so there's no `hyprpm add` for either. (The patch makes glass *layers* re-sample the backdrop every frame: upstream caches it, so the alt-tab pie's liquid glass froze the animated wallpaper it captured when it opened.) Uncomment the shader blocks in `local.conf` (they need absolute paths — replace `/home/YOU`) and use `hypr/tckey-reload.sh` after changing shader args (the plugin caches them across reloads). Browsers were long considered un-keyable — a whole-window key eats matching pixels inside pages (e.g. a teal Twitch stream) — so the Brave variant is **band-limited**: it only keys the top tab-strip band and refuses to touch anything below it, leaving web content alone. Two more gotchas already handled: `decoration:blur:size` doubles as Hyprland's re-render margin for these effects even with blur disabled (keep it at 40 or stacked glass glitters on focus changes), and Dolphin uses a fixed-key shader variant so its dialogs don't get keyed transparent.
 
 ## What's where
 
@@ -216,7 +216,7 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 
 ## Portability
 
-- **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and the plugins compile against your exact Hyprland version — `Hypr-DarkWindow` via hyprpm, the vendored `hyprglass` via its `load.sh` — so you just need base-devel/cmake plus the Hyprland headers (the `hyprland` package).
+- **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and both vendored plugins (`Hypr-DarkWindow`, `hyprglass`) compile against your exact Hyprland version via their own `load.sh` — so you just need base-devel/cmake plus the Hyprland headers (the `hyprland` package).
 - **Resolutions & scale:** nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on a 4K display you'll want a Hyprland monitor scale like any px-based UI; the Qt theming and chromakey shaders are scale-aware.
 - **Hardware:** GPU-agnostic. The bar's GPU usage/VRAM/temp auto-detect: amdgpu sysfs first, then `nvidia-smi` (proprietary/open Nvidia), with graceful zeros otherwise; CPU temp covers AMD/Intel/ARM hwmon names. Nvidia setup (env vars, cursor quirk, driver notes) is a ready-to-uncomment block in `local.conf.example`. The swap widget reads all swap devices and labels itself ZRAM or SWAP automatically. Monitor brightness needs `ddcutil`-compatible displays.
 - **Spotify:** the theming assumes the native client (spicetify paths + window class `Spotify`); flatpak Spotify needs spicetify's flatpak setup.

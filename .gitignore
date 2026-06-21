@@ -40,3 +40,7 @@ hypr/wallpaper-timer.conf
 hypr/keybinds.conf
 hypr/keybind-overrides.json
 hypr/transition.conf
+
+# Hypr-DarkWindow plugin build artifacts (MIT source vendored; its load.sh
+# compiles it locally on first run, like hyprglass)
+hypr/Hypr-DarkWindow/out/
