@@ -1226,6 +1226,7 @@ PanelWindow {
         interval: 1000; running: true; repeat: true; triggeredOnStart: true
         onTriggered: {
             var d = new Date()
+            bar.now = d
             var month = ("0" + (d.getMonth() + 1)).slice(-2)
             var day = ("0" + d.getDate()).slice(-2)
             var year = d.getFullYear()
@@ -1637,6 +1638,12 @@ PanelWindow {
     property bool clockMenuOpen: false
     property int calYear: new Date().getFullYear()
     property int calMonth: new Date().getMonth()
+    // Reactive "current date". The 1-second clock Timer (above) refreshes this
+    // every tick, so anything bound to it — e.g. the calendar's isToday — can't
+    // freeze across midnight even though the bar runs for days. (Inline
+    // `new Date()` in a binding is non-reactive: evaluated once and pinned, so
+    // the old isToday got stuck on the date the delegate was first created.)
+    property var now: new Date()
     function calStep(delta) {
         var m = bar.calMonth + delta
         var y = bar.calYear
@@ -4184,7 +4191,7 @@ PanelWindow {
                             readonly property var cellDate: new Date(bar.calYear, bar.calMonth, index - offset + 1)
                             readonly property bool inMonth: cellDate.getMonth() === bar.calMonth
                             readonly property bool isToday: {
-                                var n = new Date()
+                                var n = bar.now
                                 return cellDate.getFullYear() === n.getFullYear()
                                     && cellDate.getMonth() === n.getMonth()
                                     && cellDate.getDate() === n.getDate()

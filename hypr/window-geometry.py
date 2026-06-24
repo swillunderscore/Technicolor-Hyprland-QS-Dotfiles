@@ -28,7 +28,18 @@ STATE = os.path.expanduser("~/.local/state/hypr/window-geometry.json")
 CONF = os.path.expanduser("~/.config/hypr/window-geometry.conf")
 POLL = 2.5
 MIN_SIZE = 50  # ignore tiny/transient surfaces
-EXCLUDE = {"com.dec05eba.gpu_screen_recorder", "gsr-ui", "hyprland-run", "wofi"}
+# "Steam" (capital) is Steam's popup/dialog/toast class (the main client is the
+# lowercase "steam"); recording it let a 700x330 popup poison the geometry and
+# force real Steam windows tiny in the corner. Never record/reposition it.
+EXCLUDE = {"com.dec05eba.gpu_screen_recorder", "gsr-ui", "hyprland-run", "wofi",
+           "Steam"}
+
+# Some XWayland apps (e.g. Godot) give their popups/tooltips the SAME class as
+# the main window, so a class-only geometry rule force-sizes the popup to the
+# main window's saved geometry. They differ by initial_title: the real window
+# has a stable one, popups open with an empty title. For such classes, append an
+# extra matcher so geometry rules hit ONLY the real window. class -> extra match.
+MATCH_REFINE = {"Godot": "match:initial_title ^(Godot)$"}
 
 _max_mons = 0  # most monitors ever seen; used to pause recording when one is off
 
@@ -61,9 +72,17 @@ def hyprctl_json(what):
         return None
 
 
+def matcher(cls):
+    """Class matcher for window rules, plus any popup-excluding refinement."""
+    m = "match:class ^(" + re.escape(cls) + ")$"
+    if cls in MATCH_REFINE:
+        m += ", " + MATCH_REFINE[cls]
+    return m
+
+
 def rules_for(cls, v):
     """Window-rule bodies (without the leading 'windowrule = ') for this app."""
-    m = "match:class ^(" + re.escape(cls) + ")$"
+    m = matcher(cls)
     if not v.get("floating"):
         return ["tile on, " + m]
     out = ["float on, " + m]
@@ -105,7 +124,7 @@ def write_state():
 def apply_live(cls, v):
     """Update live rules so a reopen this session uses the latest state, no
     reload needed. unset first so rules never accumulate."""
-    m = "match:class ^(" + re.escape(cls) + ")$"
+    m = matcher(cls)
     for r in ["unset, " + m] + rules_for(cls, v):
         subprocess.run(["hyprctl", "keyword", "windowrule", r],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

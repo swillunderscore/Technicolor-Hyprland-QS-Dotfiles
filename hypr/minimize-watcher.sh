@@ -42,10 +42,22 @@ socat -U - "UNIX-CONNECT:$SOCK" | while read -r line; do
             # opening a link in an existing window, or Dolphin reusing a window. If
             # that window is minimized, un-minimize it; otherwise leave it alone
             # (just the normal urgency hint).
+            #
+            # EXCEPT chat apps: Telegram/Discord/Vesktop set the urgent flag on
+            # EVERY incoming message, so un-minimizing them on urgency pops the
+            # window (and fires a read receipt) on every single message — which
+            # is why Telegram kept opening itself from minimized on a new DM.
+            # Keep the un-minimize for genuine attention requests; skip these.
             addr="${line#urgent>>}"
             [ -z "$addr" ] && continue
             [[ "$addr" != 0x* ]] && addr="0x$addr"
-            ws_name=$(hyprctl clients -j | jq -r --arg a "$addr" '.[] | select(.address == $a) | .workspace.name')
+            info=$(hyprctl clients -j | jq -r --arg a "$addr" \
+                '.[] | select(.address == $a) | "\(.workspace.name // "")|\(.class // "")"' 2>/dev/null)
+            ws_name="${info%%|*}"
+            class="${info#*|}"
+            case "$(printf '%s' "$class" | tr '[:upper:]' '[:lower:]')" in
+                *telegram*|*vesktop*|*discord*) continue ;;
+            esac
             [ "$ws_name" = "special:minimized" ] && unminimize "$addr"
             ;;
     esac
