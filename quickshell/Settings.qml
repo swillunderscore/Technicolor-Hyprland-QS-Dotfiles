@@ -290,7 +290,7 @@ FloatingWindow {
     }
     function describeBind(b) {
         var d = b.dispatcher, a = (b.arg || "")
-        if (a.indexOf("alttabrelease") >= 0) return null   // implementation plumbing
+        if (a.indexOf("alttabrelease") >= 0 || a.indexOf("qs ipc call") >= 0) return null   // implementation plumbing (alt-tab release, rebind-cancel escape)
         var dir = { l:"left", r:"right", u:"up", d:"down" }
         if (d === "movefocus")   return { cat:"Focus & layout", label:"Focus window " + (dir[a.trim()] || a) }
         if (d === "movewindow") {
@@ -333,11 +333,14 @@ FloatingWindow {
                 if (a.indexOf(rules[i][0]) >= 0) return { cat: rules[i][1], label: rules[i][2] }
             if (a.indexOf("brightnessctl") >= 0) return { cat:"Media", label: a.indexOf("5%+") >= 0 ? "Brightness up" : "Brightness down" }
             if (a.indexOf("grim") >= 0) return { cat:"Screenshots", label: a.indexOf("slurp") >= 0 ? "Screenshot a region" : "Screenshot full screen" }
-            var prog = a.split(" ")[0].split("/").pop()
+            var parts = a.split(" "), prog = parts[0].split("/").pop(), rest = parts.slice(1).join(" ").trim()
             if (prog === win.currentTerminal || ["kitty","alacritty","konsole","foot","wezterm"].indexOf(prog) >= 0) return { cat:"Apps", label:"Open terminal" }
             if (a.indexOf("wofi") >= 0 || a.indexOf("--show drun") >= 0 || a.indexOf("rofi") >= 0) return { cat:"Apps", label:"App launcher" }
             if (/dolphin|nautilus|thunar|nemo|pcmanfm|caja|files/.test(prog)) return { cat:"Apps", label:"Open file manager" }   // also matches wrappers like dolphin-tc.sh
-            return { cat:"Other", label:"Run " + prog }
+            // Fallback for any other exec bind — custom scripts, private hotkeys,
+            // anything not in the table above. Include the args so variant binds
+            // to the same script (e.g. clean / raw / cancel) are distinguishable.
+            return { cat:"Other", label:"Run " + prog + (rest ? " " + rest : "") }
         }
         return { cat:"Other", label: d + (a ? " " + a : "") }
     }
