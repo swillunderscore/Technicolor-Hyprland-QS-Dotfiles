@@ -312,6 +312,16 @@ def main():
         except Exception:
             pass
 
+        # LibreOffice: VCL ignores kdeglobals, but UNO can poke its live color
+        # cache. lo-recolor.py applies the LIBREOFFICE-surface palette to a
+        # running LO (no-op if LO isn't running / has no acceptor). Needs
+        # python3.14 (where LO's uno.py lives).
+        try:
+            subprocess.run(['python3.14', os.path.expanduser('~/.config/hypr/lo-recolor.py')],
+                           capture_output=True, timeout=20)
+        except Exception:
+            pass
+
         # Brave: regenerate the unpacked theme files, then hot-apply them by
         # driving the brave://extensions reload over the DevTools protocol
         # (no-op unless Brave runs with --remote-debugging-port=9222; see
