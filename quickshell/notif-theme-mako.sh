@@ -19,7 +19,10 @@ mako_config="$HOME/.config/mako/config"
 
 GRADIENT_START="#89B4FA"
 GRADIENT_END="#F38BA8"
-[ -s "$colors_file" ] && . "$colors_file"
+# Source the NOTIFICATIONS-surface-tuned palette (Settings → Colors →
+# Per-surface) — surface-tune.py applies that surface's sat/bright/hue on top
+# of colors.env (identity if none set), emitting KEY=value lines to eval.
+[ -s "$colors_file" ] && eval "$(python3 "$HOME/.config/hypr/surface-tune.py" notifications 2>/dev/null)" || . "$colors_file"
 
 # strip leading #
 gs="${GRADIENT_START#\#}"

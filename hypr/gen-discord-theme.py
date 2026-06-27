@@ -22,6 +22,7 @@ namespace that doesn't fight midnight).
 Palette from ~/.config/quickshell/colors.env, via wallpaper-colors.py.
 """
 import os
+import sys
 import tempfile
 import colorsys
 
@@ -52,7 +53,8 @@ def _load_midnight():
 MIDNIGHT = _load_midnight()
 
 
-def load():
+def _raw_env():
+    """The untuned palette straight from colors.env (no per-surface tuning)."""
     d = {}
     try:
         for line in open(ENV):
@@ -62,6 +64,87 @@ def load():
     except Exception:
         pass
     return d
+
+
+def load():
+    return _surface_tune(_raw_env())
+
+
+# ── per-surface tuning (Settings → Colors → Per-surface). Every generator that
+# imports this module calls load(), so this is the single hook: detect WHICH
+# generator is running (sys.argv[0]) and apply that surface's sat/bright
+# MULTIPLIERS + hue on top of the global-tuned colors.env. Defaults = identity
+# (1.0 / 1.0 / 0). Layered on the global ceiling tuning already baked into
+# colors.env, so the global sliders still shape the whole palette and these
+# adjust each surface relative to that baseline (<1 tones down, >1 boosts).
+_SURFACE_OF = {
+    "gen-gtk-theme.py": "gtk",
+    "gen-discord-theme.py": "discord",
+    "gen-spotify-theme.py": "spotify",
+    "gen-brave-theme.py": "brave",
+    "gen-kde-colors.py": "kde",
+    "gen-telegram-theme.py": "telegram",
+}
+
+
+def _surface_tuning_for(name):
+    """(sat_mult, bright_mult, hue_deg) for `name` from color-tuning.conf."""
+    pre = name.upper() + "_"
+    sat, bright, hue = 1.0, 1.0, 0.0
+    try:
+        for line in open(TUNING_PATH):
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            try:
+                if k.strip() == pre + "SAT":
+                    sat = float(v.strip())
+                elif k.strip() == pre + "BRIGHT":
+                    bright = float(v.strip())
+                elif k.strip() == pre + "HUE":
+                    hue = float(v.strip())
+            except ValueError:
+                pass
+    except Exception:
+        pass
+    return sat, bright, hue
+
+
+def _surface_apply(c, sat_mult, bright_mult, hue_deg):
+    h, l, s = colorsys.rgb_to_hls(c[0] / 255.0, c[1] / 255.0, c[2] / 255.0)
+    h = (h + hue_deg / 360.0) % 1.0
+    s = max(0.0, min(1.0, s * sat_mult))
+    l = max(0.0, min(1.0, l * bright_mult))
+    r, g, b = colorsys.hls_to_rgb(h, l, s)
+    return (int(round(r * 255)), int(round(g * 255)), int(round(b * 255)))
+
+
+def _tune_palette(d, name):
+    """Return d with `name`'s per-surface sat/bright/hue applied to every #RRGGBB
+    value. Identity when that surface has no tuning set. Public so a generator
+    that produces output for MORE THAN ONE surface (gen-discord also writes the
+    Spotify JSON) can re-tune the palette for the other surface explicitly."""
+    sat, bright, hue = _surface_tuning_for(name)
+    if abs(sat - 1) < 1e-3 and abs(bright - 1) < 1e-3 and abs(hue) < 1e-3:
+        return d
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, str) and v.startswith("#") and len(v) == 7:
+            try:
+                out[k] = hexs(_surface_apply(rgb(v), sat, bright, hue))
+            except Exception:
+                out[k] = v
+        else:
+            out[k] = v
+    return out
+
+
+def _surface_tune(d):
+    name = _SURFACE_OF.get(os.path.basename(sys.argv[0] or ""))
+    if not name:
+        return d
+    return _tune_palette(d, name)
 
 
 def rgb(h):
@@ -487,18 +570,26 @@ def main():
 
     # Same palette as JSON for Spotify (served by technicolor-color-server.py,
     # polled by the technicolor-sync Spicetify extension). Tiny in-place write.
+    # NOTE: `p` above carries the DISCORD surface tuning (this script's name).
+    # Spotify is its own surface, so re-tune the raw env palette for spotify and
+    # recompute its vars — otherwise Spotify would wrongly track Discord's slider.
     try:
         import json
+        sp = _tune_palette(_raw_env(), "spotify")
+        Vsp = compute_vars(rgb(sp.get("GRADIENT_END", "#cd9b39")),
+                           rgb(sp.get("GRADIENT_START", "#3e71c0")),
+                           rgb(sp.get("OCCUPIED", "#546c8a")),
+                           rgb(sp.get("VISIBLE", "#758994")))
         # _wallv = wallpaper version (path+mtime) -> tells the Spotify extension
         # to refresh its wallpaper-background layer (served via /wall)
         try:
             wp = open("/tmp/wallpaper-current-path").read().strip()
-            V["_wallv"] = "{}-{}".format(abs(hash(wp)) % 10**8, int(os.path.getmtime(wp)))
+            Vsp["_wallv"] = "{}-{}".format(abs(hash(wp)) % 10**8, int(os.path.getmtime(wp)))
         except Exception:
             pass
         rt = os.environ.get("XDG_RUNTIME_DIR", "/run/user/{}".format(os.getuid()))
         with open(os.path.join(rt, "technicolor-colors.json"), "w") as f:
-            json.dump(V, f)
+            json.dump(Vsp, f)
     except Exception:
         pass
 

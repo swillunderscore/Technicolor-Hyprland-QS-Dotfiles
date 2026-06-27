@@ -12,6 +12,7 @@ hypr/font.conf
 hypr/terminal.conf
 hypr/wofi/font.css
 quickshell/colors.env
+quickshell/colors-bar.env
 quickshell/launcher-apps.json
 hypr/.technicolor-version
 mako/config

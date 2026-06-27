@@ -268,6 +268,18 @@ def main():
             f.write(f'GRADIENT_START={to_hex(grad_start)}\n')
             f.write(f'GRADIENT_END={to_hex(grad_end)}\n')
 
+        # Bar palette = colors.env with the BAR surface tuning applied (Settings
+        # → Colors → Per-surface). surface-tune.py reuses the same HSL math the
+        # theme generators use; identity when no BAR_ tuning is set.
+        try:
+            _st = subprocess.run(['python3', os.path.expanduser('~/.config/hypr/surface-tune.py'), 'bar'],
+                                 capture_output=True, text=True)
+            if _st.returncode == 0 and _st.stdout:
+                with open(os.path.expanduser('~/.config/quickshell/colors-bar.env'), 'w') as bf:
+                    bf.write(_st.stdout)
+        except Exception:
+            pass
+
         # Drive Hyprland's focused-window border from GRADIENT_START — the bar's
         # left color, same as the focused workspace dot, so the active window and
         # its workspace dot match. Written to a sourced conf for persistence across

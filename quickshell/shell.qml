@@ -47,7 +47,7 @@ ShellRoot {
 
     FileView {
         id: colorsFile
-        path: root.homeDir + "/.config/quickshell/colors.env"
+        path: root.homeDir + "/.config/quickshell/colors-bar.env"
         watchChanges: true
         onFileChanged: this.reload()
         onTextChanged: root.parseColors()

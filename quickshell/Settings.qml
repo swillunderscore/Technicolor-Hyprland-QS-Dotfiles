@@ -782,6 +782,98 @@ FloatingWindow {
     function resetBrightness() { win.tuneBrightness = 1.0; win.commitTuning() }
     function resetHue()        { win.tuneHue = 0.0; win.commitTuning() }
 
+    // ── Per-surface tuning ── each surface layers its OWN sat/bright(MULTIPLIERS,
+    // 1.0 = unchanged, <1 tones down, >1 boosts) + hue on top of the global knobs
+    // above. Keys live in the same color-tuning.conf as <KEY>_SAT / _BRIGHT / _HUE
+    // (e.g. DISCORD_SAT). Read by gen-discord-theme.py's _surface_tuning_for (the
+    // six generators) + surface-tune.py (bar/notifications). Note: "kde" drives
+    // Dolphin AND LibreOffice (both read kdeglobals); LibreOffice only repaints on
+    // relaunch (it caches at launch even on the kf6 VCL plugin).
+    readonly property var surfaceSpecs: [
+        { key: "bar",          label: "Quickshell bar" },
+        { key: "notifications", label: "Notifications" },
+        { key: "gtk",          label: "GTK apps" },
+        { key: "discord",      label: "Discord (Vesktop)" },
+        { key: "spotify",      label: "Spotify" },
+        { key: "brave",        label: "Brave" },
+        { key: "kde",          label: "Dolphin / KDE apps · LibreOffice (relaunch)" },
+        { key: "telegram",     label: "Telegram (re-import)" }
+    ]
+    // surfaceTune[key] = {sat,bright,hue}. Mutated via reassignment so bindings update.
+    property var surfaceTune: ({})
+    function surfaceVal(key, field, def) {
+        var s = win.surfaceTune[key]
+        return (s && s[field] !== undefined) ? s[field] : def
+    }
+    function setSurfaceVal(key, field, v) {
+        var t = win.surfaceTune
+        if (!t[key]) t[key] = { sat: 1.0, bright: 1.0, hue: 0.0 }
+        t[key][field] = v
+        win.surfaceTune = t        // reassign whole object so QML re-evaluates bindings
+        surfaceTuneRepeater.refresh++
+    }
+    property int _surfaceParseTick: 0
+    function parseSurfaceTune(text) {
+        var t = {}
+        var lines = text.split("\n")
+        for (var i = 0; i < lines.length; i++) {
+            var ln = lines[i].trim()
+            if (ln === "" || ln[0] === "#" || ln.indexOf("=") < 0) continue
+            var p = ln.split("="); var k = p[0].trim(); var f = parseFloat(p[1].trim())
+            if (isNaN(f)) continue
+            var m = k.match(/^([A-Z]+)_(SAT|BRIGHT|HUE)$/)
+            if (!m) continue
+            var key = m[1].toLowerCase()
+            // skip the GLOBAL SATURATION/BRIGHTNESS/HUE (no surface prefix matched those)
+            if (["contrast","saturation","brightness","hue"].indexOf(key) >= 0) continue
+            if (!t[key]) t[key] = { sat: 1.0, bright: 1.0, hue: 0.0 }
+            if (m[2] === "SAT") t[key].sat = f
+            else if (m[2] === "BRIGHT") t[key].bright = f
+            else t[key].hue = f
+        }
+        win.surfaceTune = t
+    }
+    // Append/replace the per-surface keys, then re-run the SAME pipeline as the
+    // global commit so every surface regenerates. Reads color-tuning.conf, strips
+    // any existing *_SAT/_BRIGHT/_HUE surface lines, re-emits the current set.
+    Process { id: surfaceCommitProc }
+    function commitSurfaceTune() {
+        var body = "\n# per-surface tuning (Settings → Colors → Per-surface)\n"
+        for (var i = 0; i < win.surfaceSpecs.length; i++) {
+            var key = win.surfaceSpecs[i].key
+            var s = win.surfaceTune[key]; if (!s) continue
+            var KEY = key.toUpperCase()
+            if (Math.abs((s.sat===undefined?1:s.sat) - 1) > 1e-3)    body += KEY + "_SAT=" + s.sat.toFixed(3) + "\n"
+            if (Math.abs((s.bright===undefined?1:s.bright) - 1) > 1e-3) body += KEY + "_BRIGHT=" + s.bright.toFixed(3) + "\n"
+            if (Math.abs((s.hue===undefined?0:s.hue)) > 1e-3)        body += KEY + "_HUE=" + s.hue.toFixed(1) + "\n"
+        }
+        var conf = win.homeDir + "/.config/hypr/color-tuning.conf"
+        // sed strips old surface lines (uppercase PREFIX_SAT/BRIGHT/HUE) but keeps
+        // the global CONTRAST_BIAS/SATURATION/BRIGHTNESS/HUE; then append the new set.
+        surfaceCommitProc.command = ["bash", "-c",
+            "conf='" + conf + "'; " +
+            "tmp=\"$(grep -vE '^(BAR|NOTIFICATIONS|GTK|DISCORD|SPOTIFY|BRAVE|KDE|TELEGRAM)_(SAT|BRIGHT|HUE)=' \"$conf\" 2>/dev/null)\"; " +
+            "printf '%s\\n' \"$tmp\" > \"$conf\"; " +
+            "printf %s '" + Qt.btoa(body) + "' | base64 -d >> \"$conf\"; " +
+            "wp=\"$(cat /tmp/wallpaper-current-path 2>/dev/null)\"; " +
+            "[ -n \"$wp\" ] && python3 \"$HOME/.config/hypr/wallpaper-colors.py\" \"$wp\"; " +
+            "\"$HOME/.config/quickshell/notif-theme-mako.sh\""]
+        surfaceCommitProc.running = true
+    }
+    function resetSurface(key) {
+        var t = win.surfaceTune; t[key] = { sat: 1.0, bright: 1.0, hue: 0.0 }
+        win.surfaceTune = t; surfaceTuneRepeater.refresh++
+        win.commitSurfaceTune()
+    }
+    FileView {
+        id: surfaceTuneFile
+        path: win.homeDir + "/.config/hypr/color-tuning.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: win.parseSurfaceTune(this.text())
+        onLoadFailed: win.surfaceTune = ({})
+    }
+
     // ── Glass tab (hyprglass) ── live via `hyprctl keyword`, persisted to
     // hyprglass-tuning.conf (sourced by hyprland.conf). Each spec: key/label/
     // range/default. Anything beyond a slider's range goes through the write-in.
@@ -942,28 +1034,15 @@ FloatingWindow {
             anchors.margins: 14      // outer glass margin
             spacing: 12              // glass gap between blocks
 
-            // ── header: title pill + close circle, each its own block on glass ──
+            // ── header: centered title pill. No close X — this is a keyboard-driven
+            // WM, so dismiss with Esc (Keys.onEscapePressed) or re-toggle the opener. ──
             Item {
                 width: parent.width; height: 48
                 Rectangle {   // title pill
-                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                    anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter
                     height: 44; radius: 22; color: win.blockColor
                     width: titleTxt.implicitWidth + 40
                     Text { id: titleTxt; anchors.centerIn: parent; text: "Settings"; color: win.fg; font.pixelSize: 18; font.bold: true; font.family: win.ff }
-                }
-                Rectangle {   // close circle
-                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                    width: 44; height: 44; radius: 22
-                    // This block sits on the glass gap, so the usual translucent
-                    // rowHover would let the glass show through (button "vanishes").
-                    // Use an OPAQUE blockColor tinted toward fg for the hover.
-                    color: closeM.containsMouse
-                           ? Qt.rgba(win.blockColor.r * 0.82 + win.fg.r * 0.18,
-                                     win.blockColor.g * 0.82 + win.fg.g * 0.18,
-                                     win.blockColor.b * 0.82 + win.fg.b * 0.18, 1.0)
-                           : win.blockColor
-                    Text { anchors.centerIn: parent; text: String.fromCodePoint(0xF00D); color: win.fg; font.pixelSize: 18; font.family: win.ff }
-                    MouseArea { id: closeM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.close() }
                 }
             }
 
@@ -1458,6 +1537,77 @@ FloatingWindow {
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
                             text: "Rotate every color around the wheel. 0 keeps the wallpaper's real colors; nudge it for a deliberately off-palette / artsy tint (yes, it changes the whole vibe)." }
+
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+
+                        // ── Per-surface tuning ──
+                        Text { text: "Per-surface tuning"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                            text: "Fine-tune one surface at a time, on top of the global knobs above. Saturation/Brightness are multipliers (100% = unchanged, lower tones down, higher boosts); Hue rotates. Click a surface to expand." }
+
+                        Repeater {
+                            id: surfaceTuneRepeater
+                            property int refresh: 0   // bump to force value re-read after mutation
+                            model: win.surfaceSpecs
+                            Rectangle {
+                                width: parent.width
+                                radius: 12; color: win.rowBg
+                                height: col.height + 20
+                                property bool expanded: false
+                                property string skey: modelData.key
+                                // touch refresh so the header summary updates after edits
+                                property int _r: surfaceTuneRepeater.refresh
+                                Column {
+                                    id: col
+                                    x: 12; y: 10; width: parent.width - 24; spacing: 8
+                                    // header row (click to expand)
+                                    Item {
+                                        width: parent.width; height: 26
+                                        Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                            text: (expanded ? "▾  " : "▸  ") + modelData.label
+                                            color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                            visible: !expanded
+                                            // compact summary, dim when at defaults
+                                            text: {
+                                                var s = win.surfaceVal(skey,"sat",1.0), b = win.surfaceVal(skey,"bright",1.0), h = win.surfaceVal(skey,"hue",0.0)
+                                                if (Math.abs(s-1)<0.005 && Math.abs(b-1)<0.005 && Math.abs(h)<0.5) return "default"
+                                                return Math.round(s*100)+"% · "+Math.round(b*100)+"% · "+(h>0?"+":"")+Math.round(h)+"°"
+                                            }
+                                            color: win.fg
+                                            opacity: (Math.abs(win.surfaceVal(skey,"sat",1.0)-1)<0.005 && Math.abs(win.surfaceVal(skey,"bright",1.0)-1)<0.005 && Math.abs(win.surfaceVal(skey,"hue",0.0))<0.5) ? 0.4 : 0.7
+                                            font.pixelSize: 11; font.family: win.ff }
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: expanded = !expanded }
+                                    }
+                                    // expanded body: 3 sliders + reset
+                                    Column {
+                                        width: parent.width; spacing: 6
+                                        visible: expanded
+                                        // Saturation
+                                        Item { width: parent.width; height: 18
+                                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Saturation"; color: win.fg; opacity: 0.85; font.pixelSize: 12; font.family: win.ff }
+                                            Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: Math.round(win.surfaceVal(skey,"sat",1.0)*100)+"%"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff } }
+                                        TcSlider { width: parent.width; from: 0; to: 2; value: win.surfaceVal(skey,"sat",1.0)
+                                            onMoved: (v) => win.setSurfaceVal(skey,"sat",v); onCommitted: (v) => win.commitSurfaceTune() }
+                                        // Brightness
+                                        Item { width: parent.width; height: 18
+                                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Brightness"; color: win.fg; opacity: 0.85; font.pixelSize: 12; font.family: win.ff }
+                                            Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: Math.round(win.surfaceVal(skey,"bright",1.0)*100)+"%"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff } }
+                                        TcSlider { width: parent.width; from: 0; to: 2; value: win.surfaceVal(skey,"bright",1.0)
+                                            onMoved: (v) => win.setSurfaceVal(skey,"bright",v); onCommitted: (v) => win.commitSurfaceTune() }
+                                        // Hue
+                                        Item { width: parent.width; height: 18
+                                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Hue shift"; color: win.fg; opacity: 0.85; font.pixelSize: 12; font.family: win.ff }
+                                            Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: (win.surfaceVal(skey,"hue",0.0)>0?"+":"")+Math.round(win.surfaceVal(skey,"hue",0.0))+"°"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff } }
+                                        TcSlider { width: parent.width; from: -180; to: 180; value: win.surfaceVal(skey,"hue",0.0)
+                                            onMoved: (v) => win.setSurfaceVal(skey,"hue",v); onCommitted: (v) => win.commitSurfaceTune() }
+                                        Rectangle { width: 60; height: 22; radius: 7; color: rsm.containsMouse ? win.rowHover : win.blockColor
+                                            Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 11; font.family: win.ff }
+                                            MouseArea { id: rsm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.resetSurface(skey) } }
+                                    }
+                                }
+                            }
+                        }
 
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
