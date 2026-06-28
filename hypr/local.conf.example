@@ -39,12 +39,14 @@
 # }
 # windowrule = darkwindow:shade tckeydolph, match:class ^(org.kde.dolphin)$
 #
-# LibreOffice: lo-recolor.py sets the document AppBackground (the blank gutter
-# around the white page) to the SAME fixed key rgb(1,186,188), so the shared
-# tckeydolph keyer makes just that gutter transparent = liquid glass around the
-# page. The page (DocColor=white) and all chrome/content have no key pixels, so
-# only the gutter is keyed. Reuses the tckeydolph shader above — no new shader
-# block needed; just add the windowrules:
+# LibreOffice (OPTIONAL glass): by default lo-recolor.py fills the gutter (the
+# blank area around the white page) with a SOLID color matching the chrome, so
+# the page sits in a cohesive colored frame. If you'd rather make that gutter
+# TRANSPARENT glass instead (the page floats over the desktop — looks striking
+# but isolated), run lo-recolor.py with "glass" (it sets AppBackground to the
+# fixed key rgb(1,186,188)) AND add the windowrules below so the shared
+# tckeydolph keyer makes just the gutter transparent (page/chrome/content have
+# no key pixels, so only the gutter keys):
 # windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-writer)$
 # windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-calc)$
 # windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-impress)$

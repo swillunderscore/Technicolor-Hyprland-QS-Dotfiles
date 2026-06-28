@@ -112,8 +112,21 @@ def apply_live(glass_gutter=True):
 
 
 def _palette_gutter():
-    """Fallback gutter = the libreoffice-surface-tuned palette accent (used if
-    glass is disabled)."""
+    """Solid gutter = the SAME color the kf6 chrome uses (kdeglobals
+    [Colors:Window] BackgroundNormal), so the blank area around the page blends
+    into the toolbars/sidebar as one cohesive surface — no floating page. Falls
+    back to the wallpaper accent, then a dark slate."""
+    try:
+        sec = None
+        for line in open(os.path.expanduser("~/.config/kdeglobals")):
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]"):
+                sec = s
+            elif sec == "[Colors:Window]" and s.startswith("BackgroundNormal="):
+                r, g, b = (int(x) for x in s.split("=", 1)[1].split(",")[:3])
+                return (r << 16) | (g << 8) | b
+    except Exception:
+        pass
     try:
         pal = gd._tune_palette(gd._raw_env(), "libreoffice")
         r, g, b = gd.rgb(pal.get("GRADIENT_START", "#3e71c0"))
@@ -123,11 +136,13 @@ def _palette_gutter():
 
 
 if __name__ == "__main__":
-    # glass on by default; pass "solid" to fill the gutter with the palette instead
-    glass = not (len(sys.argv) > 1 and sys.argv[1] == "solid")
+    # SOLID by default: the gutter takes the chrome color so the page sits in a
+    # cohesive colored frame (the floating-page glass look was disliked). Pass
+    # "glass" to make the gutter transparent via the chromakey shader instead.
+    glass = len(sys.argv) > 1 and sys.argv[1] == "glass"
     if apply_live(glass_gutter=glass):
         print("lo-recolor: document colors applied live via UNO "
-              f"({'glass gutter key' if glass else 'solid gutter'})")
+              f"({'glass gutter key' if glass else 'solid gutter = chrome color'})")
     else:
         print("lo-recolor: LO not reachable via UNO (chrome still themes from "
               "kdeglobals on next launch)")
