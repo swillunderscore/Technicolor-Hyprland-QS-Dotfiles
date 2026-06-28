@@ -12,6 +12,12 @@
 PORT=2002
 ACCEPT="socket,host=localhost,port=${PORT};urp;"
 
+# Force the kf6 VCL plugin: it paints LO's chrome (toolbars/menubar/sidebar/
+# statusbar) from the Qt palette = kdeglobals, which gen-kde-colors.py rewrites
+# from the wallpaper — so the whole UI follows the theme, with colored icons.
+# (gen ignores kdeglobals chrome; gtk3 would follow the GTK theme instead.)
+export SAL_USE_VCLPLUGIN=kf6
+
 # Launch LO (real binary), passing through whatever the .desktop asked for.
 setsid -f soffice --accept="$ACCEPT" "$@" >/dev/null 2>&1 < /dev/null
 

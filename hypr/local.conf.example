@@ -39,6 +39,18 @@
 # }
 # windowrule = darkwindow:shade tckeydolph, match:class ^(org.kde.dolphin)$
 #
+# LibreOffice: lo-recolor.py sets the document AppBackground (the blank gutter
+# around the white page) to the SAME fixed key rgb(1,186,188), so the shared
+# tckeydolph keyer makes just that gutter transparent = liquid glass around the
+# page. The page (DocColor=white) and all chrome/content have no key pixels, so
+# only the gutter is keyed. Reuses the tckeydolph shader above — no new shader
+# block needed; just add the windowrules:
+# windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-writer)$
+# windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-calc)$
+# windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-impress)$
+# windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-draw)$
+# windowrule = darkwindow:shade tckeydolph, match:class ^(libreoffice-startcenter)$
+#
 # Brave: BAND-LIMITED keyer — only the top `band` window pixels (the tab strip
 # the generated theme paints in the key) are keyable; web content below is
 # never touched. fullscreen 0 excludes fullscreen (chrome hidden there). Pair

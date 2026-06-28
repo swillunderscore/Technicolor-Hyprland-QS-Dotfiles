@@ -1,103 +1,49 @@
 #!/usr/bin/env python3.14
-"""lo-recolor.py — theme LibreOffice from the wallpaper palette, LIVE.
+"""lo-recolor.py — theme LibreOffice from the wallpaper palette.
 
-LibreOffice uses its own VCL toolkit and ignores kdeglobals / Qt palette changes
-at runtime (unlike Dolphin). The ONE lever that reaches its in-memory color cache
-is UNO, running inside the LO process. So:
+Empirically established (see the role-mapping tests):
+  * LibreOffice's CHROME (toolbars, menubar, sidebar, statusbar, ruler) is
+    painted by the kf6 VCL plugin from the Qt palette = ~/.config/kdeglobals,
+    which gen-kde-colors.py already rewrites on every wallpaper change. So with
+    LibreOfficeTheme=0 the chrome follows the wallpaper for free — including the
+    toolbars, with the colored (sukapura) icons intact. It updates on LO
+    relaunch (kf6 reads the palette at startup; lo-tc.sh re-launches/re-applies).
+  * The DOCUMENT colors — the page (DocColor) and the blank gutter around it
+    (AppBackground) — are read from LO's own ColorConfig, NOT the Qt palette, so
+    they ARE settable live via UNO regardless of plugin.
 
-  * If LO is running with a UNO acceptor, connect and rewrite its color scheme
-    LIVE — the chrome recolors with no restart.
-  * If LO is not running (or has no acceptor), fall back to writing the same
-    scheme into registrymodifications.xcu so it applies on next launch.
+So this script does the document half, live, via UNO:
+  * DocColor  -> WHITE  (the page stays white for writing; user's explicit wish)
+  * FontColor -> black
+  * AppBackground -> a fixed KEY color, so the chromakey shader (Hypr-DarkWindow)
+    can key JUST the gutter transparent and hyprglass refracts it = liquid glass
+    in the blank area around the page. The key is unique so nothing else is hit.
 
-Design (matches the user's wish — "page white, everything else matches like the
-rest, with its own sliders"):
-  * The page (DocColor) is forced WHITE and its text (FontColor) BLACK — writing
-    stays readable regardless of theme.
-  * Every UI/"chrome" role (gutter, toolbars, menus, buttons, sidebar) takes the
-    wallpaper palette, with text roles set to a contrasting ink so labels stay
-    legible. This is the LIBREOFFICE surface in the per-surface tuning system, so
-    its sat/bright/hue sliders in Settings → Colors apply just like the others.
-
-Must run under python3.14 (where LO's uno.py lives). Hooked into the pipeline by
-wallpaper-colors.py. Fully defensive: any failure falls back or no-ops, never
-breaks the wallpaper cycle.
+LibreOfficeTheme stays 0 (off) so the Qt/kdeglobals chrome shows through; we only
+touch document colors here. Runs under python3.14 (LO's uno.py). Fully defensive:
+if LO isn't reachable over UNO it no-ops (chrome still themes from kdeglobals on
+next launch).
 """
 import os
 import sys
 
-# Reuse the shared palette + per-surface tuning helpers (the same module every
-# theme generator imports). Gives us _raw_env(), _tune_palette(), rgb(), etc.
 sys.path.insert(0, os.path.expanduser("~/.config/hypr"))
 gd = __import__("gen-discord-theme")
 
-SCHEME = "Technicolor"            # our named LO color scheme
-PORT = 2002                      # UNO acceptor port (see lo-uno-acceptor setup)
+PORT = 2002
 
-# --- role classification (only roles that exist in the running build are set) ---
-# Fill roles take a palette background; text roles take a contrasting ink.
-FILL_ROLES = [
-    "AppBackground", "BaseColor", "FaceColor", "ButtonColor", "FieldColor",
-    "WindowColor", "MenuColor", "MenuBarColor", "ActiveColor", "SeparatorColor",
-    "ShadowColor", "MenuBorderColor", "ActiveBorderColor", "InactiveBorderColor",
-    "DocBoundaries",
-]
-TEXT_ROLES = [
-    "ButtonTextColor", "MenuTextColor", "MenuBarTextColor", "WindowTextColor",
-    "ActiveTextColor", "InactiveTextColor", "DisabledTextColor",
-]
-ACCENT_ROLES = ["AccentColor", "MenuHighlightColor", "MenuBarHighlightColor"]
-
+# The gutter key color. Picked to be visually distinct + unlikely to collide with
+# real content; the Hypr-DarkWindow windowrule keys exactly this to transparent.
+# Kept STATIC (not palette-derived) so the shader's fixed key never drifts — the
+# glass shows the real wallpaper/refraction behind it anyway, so the gutter's own
+# color doesn't need to match the palette.
+GUTTER_KEY = 0x01BABC            # rgb(1,186,188) — exactly the Dolphin fixed key,
+                                 # so we reuse the tckeydolph shader (it's a fixed
+                                 # uniform key, safe to share across window classes)
 WHITE = 0xFFFFFF
 BLACK = 0x1A1A1A
 
 
-def _int(rgb):
-    return (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]
-
-
-def _ink_int(rgb):
-    """Black or white, whichever contrasts the given fill (WCAG-ish luminance)."""
-    r, g, b = rgb
-    lum = 0.299 * r + 0.587 * g + 0.114 * b
-    return 0xF5F5F5 if lum < 140 else 0x1A1A1A
-
-
-def build_colors():
-    """Map the LIBREOFFICE-surface-tuned palette to {role: int_color}.
-    Page forced white; chrome from the palette; text roles contrast their fill."""
-    pal = gd._tune_palette(gd._raw_env(), "libreoffice")
-    def c(key, default):
-        try:
-            return gd.rgb(pal.get(key, default))
-        except Exception:
-            return gd.rgb(default)
-    chrome     = c("GRADIENT_START", "#3e71c0")   # main chrome fill
-    chrome_alt = c("OCCUPIED", "#2a3550")          # darker fill (menus/borders)
-    accent     = c("GRADIENT_END", "#cd9b39")      # accent / highlight
-
-    colors = {}
-    for r in FILL_ROLES:
-        # gutter + main surfaces use chrome; structural lines use the darker alt
-        fill = chrome_alt if r in ("MenuColor", "MenuBarColor", "SeparatorColor",
-                                   "ShadowColor", "MenuBorderColor",
-                                   "ActiveBorderColor", "InactiveBorderColor",
-                                   "DocBoundaries") else chrome
-        colors[r] = _int(fill)
-    for r in TEXT_ROLES:
-        # contrast against the matching fill (best-effort: against chrome)
-        colors[r] = _ink_int(chrome)
-    for r in ACCENT_ROLES:
-        colors[r] = _int(accent)
-    colors["MenuHighlightTextColor"] = _ink_int(accent)
-    colors["MenuBarHighlightTextColor"] = _ink_int(accent)
-    # the page itself: WHITE, black text, per the user's explicit preference
-    colors["DocColor"] = WHITE
-    colors["FontColor"] = BLACK
-    return colors
-
-
-# ---------------------------------------------------------------------------
 def _connect(port):
     import uno
     lc = uno.getComponentContext()
@@ -107,11 +53,6 @@ def _connect(port):
         f"uno:socket,host=localhost,port={port};urp;StarOffice.ComponentContext")
 
 
-def _provider(ctx):
-    return ctx.ServiceManager.createInstanceWithContext(
-        "com.sun.star.configuration.ConfigurationProvider", ctx)
-
-
 def _node(cp, path):
     from com.sun.star.beans import PropertyValue
     a = PropertyValue(); a.Name = "nodepath"; a.Value = path
@@ -119,34 +60,44 @@ def _node(cp, path):
         "com.sun.star.configuration.ConfigurationUpdateAccess", (a,))
 
 
-def apply_live(colors):
-    """Apply via UNO to a RUNNING LibreOffice. Returns True on success."""
+def apply_live(glass_gutter=True):
+    """Set document colors (white page + keyed/plain gutter) on a running LO via
+    UNO. Returns True on success, False if LO isn't reachable."""
     try:
         ctx = _connect(PORT)
     except Exception:
-        return False  # LO not running / no acceptor → caller falls back to file
+        return False
     try:
-        cp = _provider(ctx)
+        cp = ctx.ServiceManager.createInstanceWithContext(
+            "com.sun.star.configuration.ConfigurationProvider", ctx)
+        # Document colors live in the AUTOMATIC scheme's entries (ColorConfig).
+        # We write them into the current scheme so they take effect immediately.
+        cs = _node(cp, "/org.openoffice.Office.UI/ColorScheme")
+        scheme = cs.getPropertyValue("CurrentColorScheme")
         schemes = _node(cp, "/org.openoffice.Office.UI/ColorScheme/ColorSchemes")
-        if schemes.hasByName(SCHEME):
-            schemes.removeByName(SCHEME)
-        ns = schemes.createInstance()
-        schemes.insertByName(SCHEME, ns)
+        if not schemes.hasByName(scheme):
+            return False
+        ns = schemes.getByName(scheme)
         present = set(ns.ElementNames)
-        for role, val in colors.items():
+        gutter = GUTTER_KEY if glass_gutter else _palette_gutter()
+        wanted = {"DocColor": WHITE, "FontColor": BLACK, "AppBackground": gutter}
+        for role, val in wanted.items():
             if role in present:
                 try:
                     ns.getByName(role).setPropertyValue("Color", val)
                 except Exception:
                     pass
         schemes.commitChanges()
-
-        cs = _node(cp, "/org.openoffice.Office.UI/ColorScheme")
-        cs.setPropertyValue("CurrentColorScheme", SCHEME); cs.commitChanges()
-
         app = _node(cp, "/org.openoffice.Office.Common/Appearance")
-        app.setPropertyValue("LibreOfficeTheme", 1); app.commitChanges()
-        # nudge a repaint: toggle ApplicationAppearance (settings-changed path)
+        # Keep LibreOfficeTheme OFF: we want the CHROME (toolbars/menubar/sidebar)
+        # to come from the kf6 Qt palette = kdeglobals (so it follows the
+        # wallpaper, with colored icons). Only the DOCUMENT colors above are ours,
+        # and those read from ColorConfig regardless of this flag.
+        try:
+            app.setPropertyValue("LibreOfficeTheme", 0); app.commitChanges()
+        except Exception:
+            pass
+        # nudge a repaint (document area re-reads ColorConfig)
         try:
             cur = app.getPropertyValue("ApplicationAppearance")
             app.setPropertyValue("ApplicationAppearance", 2 if cur != 2 else 1)
@@ -160,10 +111,23 @@ def apply_live(colors):
         return False
 
 
+def _palette_gutter():
+    """Fallback gutter = the libreoffice-surface-tuned palette accent (used if
+    glass is disabled)."""
+    try:
+        pal = gd._tune_palette(gd._raw_env(), "libreoffice")
+        r, g, b = gd.rgb(pal.get("GRADIENT_START", "#3e71c0"))
+        return (r << 16) | (g << 8) | b
+    except Exception:
+        return 0x2A3550
+
+
 if __name__ == "__main__":
-    colors = build_colors()
-    if apply_live(colors):
-        print("lo-recolor: applied live via UNO")
+    # glass on by default; pass "solid" to fill the gutter with the palette instead
+    glass = not (len(sys.argv) > 1 and sys.argv[1] == "solid")
+    if apply_live(glass_gutter=glass):
+        print("lo-recolor: document colors applied live via UNO "
+              f"({'glass gutter key' if glass else 'solid gutter'})")
     else:
-        print("lo-recolor: LO not reachable via UNO (will theme on next launch "
-              "once the acceptor + registry fallback are wired)")
+        print("lo-recolor: LO not reachable via UNO (chrome still themes from "
+              "kdeglobals on next launch)")
