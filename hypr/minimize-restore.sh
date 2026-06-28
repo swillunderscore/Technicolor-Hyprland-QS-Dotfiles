@@ -8,4 +8,4 @@ addr="$1"
 cur_ws=$(hyprctl activeworkspace -j | jq -r '.id')
 # movetoworkspace = unminimize; focuswindow = focus; alterzorder top = raise it
 # above other floating windows (without this it restores but stays behind them).
-hyprctl --batch "dispatch movetoworkspace $cur_ws,address:$addr ; dispatch focuswindow address:$addr ; dispatch alterzorder top,address:$addr"
+hyprctl --batch "dispatch hl.dsp.window.move({workspace=\"$cur_ws\", window=\"address:$addr\"}) ; dispatch hl.dsp.focus({window=\"address:$addr\"}) ; dispatch hl.dsp.window.alter_zorder({mode=\"top\", window=\"address:$addr\"})"

@@ -52,7 +52,7 @@ if [ "$move_flag" = "--move" ]; then
         [ "$target" -lt 1 ] && exit 0
     fi
     log "Move active window ws$cur_ws -> ws$target"
-    hyprctl dispatch movetoworkspacesilent "$target"
+    hyprctl dispatch "hl.dsp.window.move({workspace=\"$target\", follow=false})"
     busy
     # workspace-watcher.sh handles preserving the now-empty source workspace
     # if it sits between occupied ones, so no extra dance needed here.
@@ -83,7 +83,7 @@ if [ "$direction" = "right" ]; then
     if [ "$focused_slot" -lt $((mon_count - 1)) ] && [ "$consistent" = true ]; then
         next_id=${slot_id[$((focused_slot + 1))]}
         log "Focus slot$focused_slot -> slot$((focused_slot + 1)) (mon$next_id)"
-        hyprctl dispatch focusmonitor "$next_id"
+        hyprctl dispatch "hl.dsp.focus({monitor=\"$next_id\"})"
         busy; exit 0
     fi
 
@@ -99,7 +99,7 @@ elif [ "$direction" = "left" ]; then
     if [ "$focused_slot" -gt 0 ] && [ "$consistent" = true ]; then
         prev_id=${slot_id[$((focused_slot - 1))]}
         log "Focus slot$focused_slot -> slot$((focused_slot - 1)) (mon$prev_id)"
-        hyprctl dispatch focusmonitor "$prev_id"
+        hyprctl dispatch "hl.dsp.focus({monitor=\"$prev_id\"})"
         busy; exit 0
     fi
 
@@ -177,9 +177,9 @@ batch=""
 for i in "${order[@]}"; do
     target_ws=$((new_base + i))
     target_mon=${slot_id[$i]}
-    batch+="dispatch focusmonitor $target_mon ; dispatch focusworkspaceoncurrentmonitor $target_ws ; "
+    batch+="dispatch hl.dsp.focus({monitor=\"$target_mon\"}) ; dispatch hl.dsp.focus({workspace=\"$target_ws\", on_current_monitor=true}) ; "
 done
-batch+="dispatch focusmonitor $focused_mon_id"
+batch+="dispatch hl.dsp.focus({monitor=\"$focused_mon_id\"})"
 
 log "Slide $direction ($mode, base=$new_base, new_slot=$new_slot): $batch"
 hyprctl --batch "$batch"

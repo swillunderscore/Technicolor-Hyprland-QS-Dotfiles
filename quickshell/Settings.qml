@@ -439,13 +439,13 @@ FloatingWindow {
         win.warnBind = null; win.captureWarn = ""; warnTimer.stop()
         win.capturingBind = row
         captureKey.forceActiveFocus()
-        Hyprland.dispatch("submap __tc_capture")
+        Hyprland.dispatch('hl.dsp.submap("__tc_capture")')
         captureTimeout.restart()
     }
     function stopMonitor() {            // leave the capture submap, stop listening
         win.capturingBind = null
         captureTimeout.stop()
-        Hyprland.dispatch("submap reset")
+        Hyprland.dispatch('hl.dsp.submap("reset")')
     }
     function endCapture() { win.warnBind = null; win.captureWarn = ""; warnTimer.stop(); win.stopMonitor() }
     // conflict / bad key: stop capturing (so it must be re-clicked) and flash the
@@ -703,7 +703,7 @@ FloatingWindow {
         if (!src) return
         win.currentWallpaper = src
         var safe = src.split("'").join("'\\''")   // single-quote-safe
-        Hyprland.dispatch("exec ~/.config/hypr/wallpaper-cycle.sh '" + safe + "'")
+        Quickshell.execDetached(["sh", "-c", "~/.config/hypr/wallpaper-cycle.sh '" + safe + "'"])
     }
 
     // Live folder watch: dropping/removing a wallpaper in the folder refreshes
@@ -872,8 +872,8 @@ FloatingWindow {
         onLoadFailed: win.surfaceTune = ({})
     }
 
-    // ── Glass tab (hyprglass) ── live via `hyprctl keyword`, persisted to
-    // hyprglass-tuning.conf (sourced by hyprland.conf). Each spec: key/label/
+    // ── Glass tab (hyprglass) ── live via hyprglass-set.sh (hyprctl eval under
+    // the Lua config), persisted to hyprglass-tuning.conf. Each spec: key/label/
     // range/default. Anything beyond a slider's range goes through the write-in.
     readonly property var glassSpecs: [
         { key: "refraction_strength",  label: "Refraction",          from: 0, to: 3,  def: 1.0,  step: 0 },
@@ -907,10 +907,16 @@ FloatingWindow {
     }
     function loadGlass() { glassGetProc.running = true }
     // Live (cheap, skip-if-busy throttle); persistence happens on release.
+    // Under the Lua config manager `hyprctl keyword` is rejected — apply live via
+    // `hyprctl eval hl.config({plugin={hyprglass={<nested>}}})`. Colon keys
+    // (dark:brightness) nest; tint_color takes a bare hex int (no quotes).
     Process { id: glassLiveProc }
     function glassLive(key, val) {
         if (glassLiveProc.running) return
-        glassLiveProc.command = ["hyprctl", "keyword", "plugin:hyprglass:" + key, String(val)]
+        var parts = key.split(":")
+        var inner = parts[parts.length - 1] + "=" + val
+        for (var i = parts.length - 2; i >= 0; i--) inner = parts[i] + "={" + inner + "}"
+        glassLiveProc.command = ["hyprctl", "eval", "hl.config({plugin={hyprglass={" + inner + "}}}) return 1"]
         glassLiveProc.running = true
     }
     Process { id: glassSetProc }
@@ -1032,12 +1038,12 @@ FloatingWindow {
             anchors.margins: 14      // outer glass margin
             spacing: 12              // glass gap between blocks
 
-            // ── header: centered title pill. No close X — this is a keyboard-driven
+            // ── header: top-left title pill. No close X — this is a keyboard-driven
             // WM, so dismiss with Esc (Keys.onEscapePressed) or re-toggle the opener. ──
             Item {
                 width: parent.width; height: 48
                 Rectangle {   // title pill
-                    anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
                     height: 44; radius: 22; color: win.blockColor
                     width: titleTxt.implicitWidth + 40
                     Text { id: titleTxt; anchors.centerIn: parent; text: "Settings"; color: win.fg; font.pixelSize: 18; font.bold: true; font.family: win.ff }
@@ -1316,14 +1322,14 @@ FloatingWindow {
                                 color: shufM.containsMouse ? win.rowHover : win.rowBg
                                 Text { anchors.centerIn: parent; text: String.fromCodePoint(0xF074) + "  Shuffle wallpaper"; color: win.fg; font.pixelSize: 13; font.family: win.ff }
                                 MouseArea { id: shufM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onClicked: Hyprland.dispatch("exec ~/.config/hypr/wallpaper-cycle.sh random") }
+                                    onClicked: Quickshell.execDetached(["sh", "-c", "~/.config/hypr/wallpaper-cycle.sh random"]) }
                             }
                             Rectangle {
                                 width: (parent.width - 8) / 2; height: 40; radius: 9
                                 color: openM.containsMouse ? win.rowHover : win.rowBg
                                 Text { anchors.centerIn: parent; text: String.fromCodePoint(0xF07C) + "  Open folder"; color: win.fg; font.pixelSize: 13; font.family: win.ff }
                                 MouseArea { id: openM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onClicked: Hyprland.dispatch("exec ~/.config/hypr/open-folder.sh '" + win.wallpaperDir + "'") }
+                                    onClicked: Quickshell.execDetached(["sh", "-c", "~/.config/hypr/open-folder.sh '" + win.wallpaperDir + "'"]) }
                             }
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
@@ -1541,7 +1547,7 @@ FloatingWindow {
                         // ── Per-surface tuning ──
                         Text { text: "Per-surface tuning"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
-                            text: "Fine-tune one surface at a time, on top of the global knobs above. Saturation/Brightness are multipliers (100% = unchanged, lower tones down, higher boosts); Hue rotates. Click a surface to expand." }
+                            text: "Fine-tune one surface at a time, on top of the global knobs above. Saturation/Brightness are ceilings, exactly like the global sliders — full right (100%) leaves that surface as-is; lowering reins it in, but a wallpaper that's already dark/muted barely moves. They only tame a surface below the global level, never boost it. Hue rotates. Click a surface to expand." }
 
                         Repeater {
                             id: surfaceTuneRepeater
@@ -1585,13 +1591,13 @@ FloatingWindow {
                                         Item { width: parent.width; height: 18
                                             Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Saturation"; color: win.fg; opacity: 0.85; font.pixelSize: 12; font.family: win.ff }
                                             Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: Math.round(win.surfaceVal(skey,"sat",1.0)*100)+"%"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff } }
-                                        TcSlider { width: parent.width; from: 0; to: 2; value: win.surfaceVal(skey,"sat",1.0)
+                                        TcSlider { width: parent.width; from: 0; to: 1; value: win.surfaceVal(skey,"sat",1.0)
                                             onMoved: (v) => win.setSurfaceVal(skey,"sat",v); onCommitted: (v) => win.commitSurfaceTune() }
                                         // Brightness
                                         Item { width: parent.width; height: 18
                                             Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Brightness"; color: win.fg; opacity: 0.85; font.pixelSize: 12; font.family: win.ff }
                                             Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: Math.round(win.surfaceVal(skey,"bright",1.0)*100)+"%"; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff } }
-                                        TcSlider { width: parent.width; from: 0; to: 2; value: win.surfaceVal(skey,"bright",1.0)
+                                        TcSlider { width: parent.width; from: 0; to: 1; value: win.surfaceVal(skey,"bright",1.0)
                                             onMoved: (v) => win.setSurfaceVal(skey,"bright",v); onCommitted: (v) => win.commitSurfaceTune() }
                                         // Hue
                                         Item { width: parent.width; height: 18
@@ -1802,7 +1808,7 @@ FloatingWindow {
                                 MouseArea { id: saveM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.saveConf() } }
                             Rectangle { width: (parent.width - 8) / 2; height: 34; radius: 8; color: applyM.containsMouse ? win.rowHover : win.rowBg
                                 Text { anchors.centerIn: parent; text: "Save & Apply (reload Hyprland)"; color: win.fg; font.pixelSize: 13; font.family: win.ff }
-                                MouseArea { id: applyM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { win.saveConf(); Hyprland.dispatch("exec hyprctl reload") } } }
+                                MouseArea { id: applyM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { win.saveConf(); Quickshell.execDetached(["hyprctl", "reload"]) } } }
                         }
 
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }

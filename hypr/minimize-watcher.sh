@@ -14,7 +14,7 @@ SOCK="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
 unminimize() {
     local addr="$1" cur_ws
     cur_ws=$(hyprctl activeworkspace -j | jq -r '.id')
-    hyprctl --batch "dispatch movetoworkspace $cur_ws,address:$addr ; dispatch focuswindow address:$addr ; dispatch alterzorder top,address:$addr"
+    hyprctl --batch "dispatch hl.dsp.window.move({workspace=\"$cur_ws\", window=\"address:$addr\"}) ; dispatch hl.dsp.focus({window=\"address:$addr\"}) ; dispatch hl.dsp.window.alter_zorder({mode=\"top\", window=\"address:$addr\"})"
 }
 
 socat -U - "UNIX-CONNECT:$SOCK" | while read -r line; do
@@ -31,7 +31,7 @@ socat -U - "UNIX-CONNECT:$SOCK" | while read -r line; do
                 # Skip if already on special:minimized (some apps spam the request)
                 ws_name=$(hyprctl clients -j | jq -r --arg a "$addr" '.[] | select(.address == $a) | .workspace.name')
                 [ "$ws_name" = "special:minimized" ] && continue
-                hyprctl dispatch movetoworkspacesilent "special:minimized,address:$addr"
+                hyprctl dispatch "hl.dsp.window.move({workspace=\"special:minimized\", window=\"address:$addr\", follow=false})"
             elif [ "$state" = "0" ]; then
                 unminimize "$addr"
             fi

@@ -73,10 +73,12 @@ def load():
 # ── per-surface tuning (Settings → Colors → Per-surface). Every generator that
 # imports this module calls load(), so this is the single hook: detect WHICH
 # generator is running (sys.argv[0]) and apply that surface's sat/bright
-# MULTIPLIERS + hue on top of the global-tuned colors.env. Defaults = identity
-# (1.0 / 1.0 / 0). Layered on the global ceiling tuning already baked into
-# colors.env, so the global sliders still shape the whole palette and these
-# adjust each surface relative to that baseline (<1 tones down, >1 boosts).
+# CEILINGS + hue on top of the global-tuned colors.env. Defaults = uncapped
+# (1.0 / 1.0 / 0). Layered on the global ceiling already baked into colors.env, so
+# the effective cap is min(global, surface): these only rein a surface DOWN below
+# the global baseline (<1 tames; 1.0 = leave as-is). Same semantics as the global
+# sliders — not multipliers, so a low slider on an already dark/muted wallpaper
+# barely moves it.
 _SURFACE_OF = {
     "gen-gtk-theme.py": "gtk",
     "gen-discord-theme.py": "discord",
@@ -88,7 +90,7 @@ _SURFACE_OF = {
 
 
 def _surface_tuning_for(name):
-    """(sat_mult, bright_mult, hue_deg) for `name` from color-tuning.conf."""
+    """(sat_cap, bright_cap, hue_deg) ceilings for `name` from color-tuning.conf."""
     pre = name.upper() + "_"
     sat, bright, hue = 1.0, 1.0, 0.0
     try:
@@ -111,11 +113,17 @@ def _surface_tuning_for(name):
     return sat, bright, hue
 
 
-def _surface_apply(c, sat_mult, bright_mult, hue_deg):
+def _surface_apply(c, sat_cap, bright_cap, hue_deg):
+    # sat_cap / bright_cap are CEILINGS (0..1; 1.0 = uncapped) — exactly like the
+    # GLOBAL sliders (wallpaper-colors.py apply_tuning), NOT multipliers. They only
+    # clamp a surface's colors DOWN, so a low slider on an already dark/unsaturated
+    # wallpaper does little (those colors are already under the ceiling) and only
+    # loud surfaces get reined in. Layered on the global ceiling already in
+    # colors.env, so the effective cap is min(global, surface). hue still rotates.
     h, l, s = colorsys.rgb_to_hls(c[0] / 255.0, c[1] / 255.0, c[2] / 255.0)
     h = (h + hue_deg / 360.0) % 1.0
-    s = max(0.0, min(1.0, s * sat_mult))
-    l = max(0.0, min(1.0, l * bright_mult))
+    s = min(s, sat_cap)
+    l = min(l, bright_cap)
     r, g, b = colorsys.hls_to_rgb(h, l, s)
     return (int(round(r * 255)), int(round(g * 255)), int(round(b * 255)))
 

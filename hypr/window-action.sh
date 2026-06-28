@@ -26,16 +26,16 @@ addr=$("$HOME/.config/hypr/window-under-cursor.sh")
 
 case "$action" in
     float)
-        hyprctl dispatch togglefloating "address:$addr"
+        hyprctl dispatch "hl.dsp.window.float({window=\"address:$addr\"})"
         ;;
     maximize)
         # `fullscreen` takes no window arg (acts on the active window), so focus
         # the hovered window first, then toggle maximize. cursor:no_warps=true
         # keeps focuswindow from jerking the pointer. --batch so it's atomic.
-        hyprctl --batch "dispatch focuswindow address:$addr ; dispatch fullscreen 1"
+        hyprctl --batch "dispatch hl.dsp.focus({window=\"address:$addr\"}) ; dispatch hl.dsp.window.fullscreen({mode=1})"
         ;;
     close)
-        hyprctl dispatch closewindow "address:$addr"
+        hyprctl dispatch "hl.dsp.window.close({window=\"address:$addr\"})"
         ;;
     *)
         exit 1

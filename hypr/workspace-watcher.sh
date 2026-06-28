@@ -90,10 +90,10 @@ realign_anchored() {
         [ "$target" -lt 1 ] && continue
         # Skip if already correct (cheap; saves a no-op dispatch)
         if [ "${slot_wss[$i]}" = "$target" ]; then continue; fi
-        batch+="dispatch focusmonitor ${slot_ids[$i]} ; "
-        batch+="dispatch focusworkspaceoncurrentmonitor $target ; "
+        batch+="dispatch hl.dsp.focus({monitor=\"${slot_ids[$i]}\"}) ; "
+        batch+="dispatch hl.dsp.focus({workspace=\"$target\", on_current_monitor=true}) ; "
     done
-    [ -n "$focused_id" ] && batch+="dispatch focusmonitor $focused_id"
+    [ -n "$focused_id" ] && batch+="dispatch hl.dsp.focus({monitor=\"$focused_id\"})"
 
     if [ -z "$batch" ]; then
         return
@@ -151,9 +151,9 @@ handle_destroy() {
         busy
         log "destroy>>ws$destroyed_id was carousel slot $target_slot — recreating on mon${slot_ids[$target_slot]}"
         hyprctl --batch \
-            "dispatch focusmonitor ${slot_ids[$target_slot]} ; \
-             dispatch workspace $destroyed_id ; \
-             dispatch focusmonitor $focused_id" > /dev/null 2>&1
+            "dispatch hl.dsp.focus({monitor=\"${slot_ids[$target_slot]}\"}) ; \
+             dispatch hl.dsp.focus({workspace=\"$destroyed_id\"}) ; \
+             dispatch hl.dsp.focus({monitor=\"$focused_id\"})" > /dev/null 2>&1
         busy
         return
     fi
@@ -167,7 +167,7 @@ handle_destroy() {
         local cur=${slot_wss[$focused_slot]}
         busy
         log "destroy>>ws$destroyed_id (out of view; max content=ws$max_ws) — gap-preserve on focused"
-        hyprctl --batch "dispatch workspace $destroyed_id ; dispatch workspace $cur" > /dev/null 2>&1
+        hyprctl --batch "dispatch hl.dsp.focus({workspace=\"$destroyed_id\"}) ; dispatch hl.dsp.focus({workspace=\"$cur\"})" > /dev/null 2>&1
         busy
     fi
 }

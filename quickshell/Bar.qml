@@ -1610,7 +1610,7 @@ PanelWindow {
         }
     }
 
-    Process { id: wlogoutLauncher; command: ["wlogout"] }
+    Process { id: wlogoutLauncher; command: [bar.homeDir + "/.config/hypr/wlogout-launch.sh"] }
     Process { id: pavucontrolLauncher; command: ["pavucontrol"] }
 
     // Launcher panel state
@@ -1890,7 +1890,7 @@ PanelWindow {
                         }
                         MouseArea {
                             anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                            onClicked: Hyprland.dispatch("exec " + modelData.cmd)
+                            onClicked: Quickshell.execDetached(["sh", "-c", modelData.cmd])
                             onEntered: launcherItem.scale = 1.2; onExited: launcherItem.scale = 1.0
                         }
                         Behavior on scale { NumberAnimation { duration: 100 } }
@@ -1908,7 +1908,7 @@ PanelWindow {
         interval: 1200; repeat: false
         onTriggered: {
             if (windowAddr !== "")
-                Hyprland.dispatch("focuswindow address:" + windowAddr)
+                Hyprland.dispatch('hl.dsp.focus({window="address:' + windowAddr + '"})')
                 windowAddr = ""
         }
     }
@@ -1986,31 +1986,64 @@ PanelWindow {
                     Layout.preferredWidth: isPrimary ? 28 : 22
                     Layout.preferredHeight: isPrimary ? 36 : 28
 
-                    Text {
-                        id: dotText
+                    // FILLED-CIRCLE states (focused/visible) \u2192 real antialiased vector
+                    // circle (glyph rasterization left jagged edges; a Rectangle with
+                    // antialiasing:true is perfectly smooth on a hi-DPI panel). The
+                    // DIAMOND states stay glyphs (a circle can't draw those shapes).
+                    readonly property bool isCircle: dotState === "focused" || dotState === "visible"
+                    readonly property real dotOffset: dotState === "focused" ? (isPrimary ? -6 : -4) : 0
+                    // hover highlight: null = use dotColor; set to a color to highlight.
+                    // Both the circle and the diamond glyph bind to this so the
+                    // pre-preview hover highlight works regardless of dot shape.
+                    property var dotHighlight: null
+                    readonly property color dotPaint: dotHighlight !== null ? dotHighlight : dotColor
+
+                    // Dot diameters are tied to the preview STEM so they line up exactly:
+                    //   big = the stem's end-circle diameter (dotSize, 22/16) so a hovered
+                    //     dot meets the stem seamlessly. The FOCUSED dot stays at this big
+                    //     size always (so hovering it doesn't resize it). Other dots rest
+                    //     slightly smaller and grow to big on hover.
+                    readonly property int dotHoverDiam: isPrimary ? 22 : 16   // == wsPreviewPopup.dotSize
+                    readonly property int dotRestDiam:  isPrimary ? 17 : 12   // slightly smaller
+                    readonly property bool dotHovered: bar.hoveredWsId === wsId && bar.previewOpen
+                    // focused dot is permanently big; others grow only while hovered+preview
+                    readonly property int dotDiam: (dotState === "focused" || dotHovered)
+                                                   ? dotHoverDiam : dotRestDiam
+
+                    Rectangle {
+                        id: dotCircle
+                        visible: dotDelegate.isCircle
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.verticalCenterOffset: dotDelegate.dotState === "focused" ? (isPrimary ? -6 : -4) : 0
-                        text: {
-                            if (dotDelegate.dotState === "empty") return "\u25C7"       // hollow diamond
-                                if (dotDelegate.dotState === "focused") return "\u25CF"     // filled circle
-                                    if (dotDelegate.dotState === "visible") return "\u25CF"     // filled circle
-                                        return "\u25C6"                                              // filled diamond (occupied)
-                        }
-                        color: dotDelegate.dotColor
-                        // Render the glyph LARGE and scale DOWN to the display size.
-                        // Scaling a Text up rasterizes then stretches it (blocky — worst
-                        // on the low-DPI second monitor where the base size is tiny);
-                        // downscaling a big glyph stays crisp. Display sizes preserved:
-                        // 44*0.45≈20, *0.65≈29 (focused), *0.75≈33 (focused hover).
+                        anchors.verticalCenterOffset: dotDelegate.dotOffset
+                        width: dotDelegate.dotDiam
+                        height: width
+                        radius: width / 2
+                        antialiasing: true                  // smooth circle edge
+                        color: dotDelegate.dotPaint
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        Behavior on anchors.verticalCenterOffset { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                    }
+
+                    Text {
+                        id: dotText
+                        visible: !dotDelegate.isCircle      // diamond states only now
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: dotDelegate.dotOffset
+                        text: dotDelegate.dotState === "empty" ? "\u25C7" : "\u25C6"   // hollow / filled diamond
+                        antialiasing: true
+                        color: dotDelegate.dotPaint
+                        // Render the glyph LARGE and scale DOWN to the display size
+                        // (downscaling a big glyph stays crisp vs upscaling a small one).
+                        // Diamond glyph (◆ at font 44) visually fills ~its font size, so
+                        // scale to the same rest/hover diameters as the circle dots: a
+                        // diamond reads slightly larger than a circle at equal width, so
+                        // nudge ~0.9× to balance them optically.
                         font.pixelSize: isPrimary ? 44 : 36
                         font.family: bar.fontFamily
-                        scale: {
-                            var foc = dotDelegate.dotState === "focused"
-                            if (bar.hoveredWsId === dotDelegate.wsId && bar.previewOpen) return foc ? 0.75 : 0.68
-                                if (foc) return 0.65
-                                    return 0.45
-                        }
+                        scale: dotDelegate.dotDiam / (isPrimary ? 44 : 36) * 0.9
                         opacity: 1.0
                         Behavior on color { ColorAnimation { duration: 150 } }
                         Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
@@ -2051,7 +2084,7 @@ PanelWindow {
                         onTriggered: {
                             // Restore dot color before opening preview — so when the dot
                             // becomes visible again later, it won't flash the highlight
-                            dotText.color = Qt.binding(function() { return dotDelegate.dotColor })
+                            dotDelegate.dotHighlight = null
                             var mapped = dotDelegate.mapToItem(null, dotDelegate.width / 2, 0)
                             bar.hoveredDotGlobalX = mapped.x
                             bar.hoveredDotColor = dotDelegate.dotColor
@@ -2084,12 +2117,12 @@ PanelWindow {
                                 bar.wsLayoutData = []
                                 layoutProc.running = true
                             } else {
-                                dotText.color = "#F8F8F2"
+                                dotDelegate.dotHighlight = "#F8F8F2"
                                 hoverDelay.start()
                             }
                         }
                         onExited: {
-                            dotText.color = Qt.binding(function() { return dotDelegate.dotColor })
+                            dotDelegate.dotHighlight = null
                             hoverDelay.stop()
                         }
                     }
@@ -2159,7 +2192,7 @@ PanelWindow {
             interval: 1200; repeat: false
             onTriggered: {
                 if (wsPreviewPopup.pendingFocusAddr !== "")
-                    Hyprland.dispatch("focuswindow address:" + wsPreviewPopup.pendingFocusAddr)
+                    Hyprland.dispatch('hl.dsp.focus({window="address:' + wsPreviewPopup.pendingFocusAddr + '"})')
                     wsPreviewPopup.pendingFocusAddr = ""
             }
         }
@@ -2372,7 +2405,7 @@ PanelWindow {
                                         var monTarget = wsPreviewPopup.hovMonId
                                         bar.lastHoveredWsId = -1
                                         wsPreviewPopup.closePreview()
-                                        Hyprland.dispatch("exec " + bar.homeDir + "/.config/hypr/workspace-goto.sh " + wsTarget + " " + monTarget)
+                                        Quickshell.execDetached(["sh", "-c", bar.homeDir + "/.config/hypr/workspace-goto.sh " + wsTarget + " " + monTarget])
                                         if (addr !== "") {
                                             wsPreviewPopup.pendingFocusAddr = addr
                                             wsPreviewPopup.focusTimer.start()
@@ -3355,7 +3388,7 @@ PanelWindow {
                     event.accepted = true
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                     if (launcherPanel.filteredApps.length > 0) {
-                        Hyprland.dispatch("exec " + launcherPanel.filteredApps[0].exec)
+                        Quickshell.execDetached(["sh", "-c", launcherPanel.filteredApps[0].exec])
                         bar.closeLauncher()
                     }
                     event.accepted = true
@@ -3534,7 +3567,7 @@ PanelWindow {
                                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                         onPressed: function(mouse) { brDelegate.liveBrightness = Math.max(5, Math.min(100, Math.round(mouse.x / parent.width * 100))) }
                                         onPositionChanged: function(mouse) { if (pressed) { brDelegate.liveBrightness = Math.max(5, Math.min(100, Math.round(mouse.x / parent.width * 100))) } }
-                                        onReleased: { Hyprland.dispatch("exec ddcutil setvcp 10 " + brDelegate.liveBrightness + " --bus " + brDelegate.monBus); if (bar.ddcMonitors[index]) bar.ddcMonitors[index].brightness = brDelegate.liveBrightness }
+                                        onReleased: { Quickshell.execDetached(["sh", "-c", "ddcutil setvcp 10 " + brDelegate.liveBrightness + " --bus " + brDelegate.monBus]); if (bar.ddcMonitors[index]) bar.ddcMonitors[index].brightness = brDelegate.liveBrightness }
                                     }
                                 }
                                 Text { text: brDelegate.liveBrightness + "%"; color: launcherShape.fg; font.pixelSize: isPrimary ? 10 : 8; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
@@ -3566,7 +3599,7 @@ PanelWindow {
                             // onPressed (not onClicked): the launcher can re-layer/close between
                             // press and release, which swallows the composed click. Press fires
                             // immediately — same as the brightness sliders, which work.
-                            onPressed: Hyprland.dispatch("exec ~/.config/hypr/wallpaper-cycle.sh next")
+                            onPressed: Quickshell.execDetached(["sh", "-c", "~/.config/hypr/wallpaper-cycle.sh next"])
                         }
                     }
 
@@ -3678,7 +3711,7 @@ PanelWindow {
                                 }
                                 MouseArea {
                                     id: appMouse; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                                    onClicked: { if (appItem.app) { Hyprland.dispatch("exec " + appItem.app.exec); bar.closeLauncher() } }
+                                    onClicked: { if (appItem.app) { Quickshell.execDetached(["sh", "-c", appItem.app.exec]); bar.closeLauncher() } }
                                 }
                             }
                         }
@@ -5001,7 +5034,7 @@ PanelWindow {
                             hoverEnabled: true
                             onClicked: {
                                 if (minDelegate.winData && minDelegate.winData.address) {
-                                    Hyprland.dispatch("exec " + bar.homeDir + "/.config/hypr/minimize-restore.sh " + minDelegate.winData.address)
+                                    Quickshell.execDetached(["sh", "-c", bar.homeDir + "/.config/hypr/minimize-restore.sh " + minDelegate.winData.address])
                                     // Refresh immediately rather than waiting for the next 800ms tick
                                     minimizedProc.running = true
                                 }

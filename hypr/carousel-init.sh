@@ -13,9 +13,9 @@ n=${#slot_ids[@]}
 # unoccupied (or about-to-be-vacated) when it claims it.
 batch=""
 for i in "${!slot_ids[@]}"; do
-    batch+="dispatch focusmonitor ${slot_ids[$i]} ; "
-    batch+="dispatch focusworkspaceoncurrentmonitor $((i + 1)) ; "
+    batch+="dispatch hl.dsp.focus({monitor=\"${slot_ids[$i]}\"}) ; "
+    batch+="dispatch hl.dsp.focus({workspace=\"$((i + 1))\", on_current_monitor=true}) ; "
 done
-batch+="dispatch focusmonitor ${slot_ids[0]}"
+batch+="dispatch hl.dsp.focus({monitor=\"${slot_ids[0]}\"})"
 
 hyprctl --batch "$batch"

@@ -34,7 +34,7 @@ handle() {
                 max_id=$(hyprctl workspaces -j | jq '[.[] | select(.id > 0)] | max_by(.id) | .id')
                 new_ws=$((max_id + 1))
                 while IFS= read -r win_addr; do
-                    hyprctl dispatch movetoworkspace "$new_ws,address:$win_addr"
+                    hyprctl dispatch "hl.dsp.window.move({workspace=\"$new_ws\", window=\"address:$win_addr\"})"
                 done <<< "$others"
             fi
         fi

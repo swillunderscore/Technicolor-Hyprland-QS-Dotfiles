@@ -110,8 +110,8 @@ Scope {
         var ws = tm ? tm.activeWorkspace.id
                     : (Hyprland.focusedMonitor ? Hyprland.focusedMonitor.activeWorkspace.id : 1)
 
-        Hyprland.dispatch("movetoworkspacesilent " + ws + ",address:" + win.address)
-        Hyprland.dispatch("focuswindow address:" + win.address)
+        Hyprland.dispatch('hl.dsp.window.move({workspace="' + ws + '", window="address:' + win.address + '", follow=false})')
+        Hyprland.dispatch('hl.dsp.focus({window="address:' + win.address + '"})')
 
         // Bring the window TO the pie — centered under the cursor where the pie
         // was — so a window stranded on another monitor/workspace is never lost.
@@ -125,15 +125,15 @@ Scope {
             var gy = Math.round(pieRoot.cursorY - win.size[1] / 2)
             gx = Math.max(tm.x, Math.min(gx, tm.x + tm.width - win.size[0]))
             gy = Math.max(tm.y, Math.min(gy, tm.y + tm.height - win.size[1]))
-            Hyprland.dispatch("movewindowpixel exact " + gx + " " + gy + ",address:" + win.address)
+            Hyprland.dispatch('hl.dsp.window.move({x=' + gx + ', y=' + gy + ', window="address:' + win.address + '"})')
         } else {
-            Hyprland.dispatch("togglefloating address:" + win.address)
-            Hyprland.dispatch("togglefloating address:" + win.address)
+            Hyprland.dispatch('hl.dsp.window.float({window="address:' + win.address + '"})')
+            Hyprland.dispatch('hl.dsp.window.float({window="address:' + win.address + '"})')
         }
         // Raise it above the other floating windows. Focusing alone doesn't
         // reliably do it from here (the pie holds exclusive keyboard focus and
         // the move above is "silent"), so bump the z-order explicitly.
-        Hyprland.dispatch("alterzorder top,address:" + win.address)
+        Hyprland.dispatch('hl.dsp.window.alter_zorder({mode="top", window="address:' + win.address + '"})')
     }
 
     function close() {

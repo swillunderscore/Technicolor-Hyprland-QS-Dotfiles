@@ -13,3 +13,8 @@ for k in refraction_strength fresnel_strength specular_strength lens_distortion 
     v=$(hyprctl getoption -j "plugin:hyprglass:$k" 2>/dev/null | jq -r ".$field // empty" 2>/dev/null)
     printf '%s=%s\n' "$k" "$v"
 done
+
+# tint_color is a hex ARGB int; expose it to the UI as tint_alpha (0..1 = the
+# alpha byte / 255) so the synthetic "Tint" slider reads back correctly.
+tc=$(hyprctl getoption -j "plugin:hyprglass:tint_color" 2>/dev/null | jq -r '.int // 0' 2>/dev/null)
+printf 'tint_alpha=%s\n' "$(python3 -c "print(round(((int('${tc:-0}') >> 24) & 0xFF)/255.0, 3))" 2>/dev/null || echo 0)"

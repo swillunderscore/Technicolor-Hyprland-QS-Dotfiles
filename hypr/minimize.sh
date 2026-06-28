@@ -21,4 +21,4 @@ addr=$("$HOME/.config/hypr/window-under-cursor.sh")
 ws_name=$(hyprctl clients -j | jq -r --arg a "$addr" '.[] | select(.address == $a) | .workspace.name')
 [ "$ws_name" = "special:minimized" ] && exit 0
 
-hyprctl dispatch movetoworkspacesilent "special:minimized,address:$addr"
+hyprctl dispatch "hl.dsp.window.move({workspace=\"special:minimized\", window=\"address:$addr\", follow=false})"

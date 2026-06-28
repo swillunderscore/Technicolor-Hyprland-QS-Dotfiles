@@ -84,12 +84,18 @@ def rules_for(cls, v):
     """Window-rule bodies (without the leading 'windowrule = ') for this app."""
     m = matcher(cls)
     if not v.get("floating"):
-        return ["tile on, " + m]
-    out = ["float on, " + m]
-    if all(v.get(k) is not None for k in ("mon", "x", "y", "w", "h")):
-        out += [f"monitor {v['mon']}, {m}",
-                f"size {v['w']} {v['h']}, {m}",
-                f"move {v['x']} {v['y']}, {m}"]
+        out = ["tile on, " + m]
+    else:
+        out = ["float on, " + m]
+        if all(v.get(k) is not None for k in ("mon", "x", "y", "w", "h")):
+            out += [f"monitor {v['mon']}, {m}",
+                    f"size {v['w']} {v['h']}, {m}",
+                    f"move {v['x']} {v['y']}, {m}"]
+    # Maximized (SUPER+V = fullscreen mode 1) layers ON TOP of the float/size/move
+    # above: the window opens maximized, and un-maximizing returns it to the saved
+    # geometry. (Real fullscreen, mode 2, is never recorded — see poll_loop.)
+    if v.get("maximized"):
+        out.append("maximize on, " + m)
     return out
 
 
@@ -121,12 +127,44 @@ def write_state():
         pass
 
 
+def _lua_str(s):
+    # escape a value for embedding in a lua double-quoted string literal: double
+    # backslashes (re.escape gives `^(brave\-browser)$`; a bare `\-` is an invalid
+    # lua escape), then escape quotes.
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _body_to_lua(body):
+    """Convert a windowrule body ('size 700 400, match:class ^(X)$') into a
+    STRUCTURED hl.window_rule(...) eval string. CRITICAL: under the Lua config the
+    raw-string form hl.window_rule({"size .., match:.."}) is silently accepted but
+    size/move/tile/monitor NEVER apply — only the table form works (verified). This
+    mirrors apply_windowrule() in hyprland.lua so live + startup behave identically."""
+    parts = [p.strip() for p in body.split(",")]
+    match_fields = []
+    for p in parts[1:]:
+        if p.startswith("match:"):
+            kv = p[len("match:"):].split(" ", 1)
+            if len(kv) == 2:
+                match_fields.append(f'{kv[0]} = "{_lua_str(kv[1])}"')
+    verb, _, rest = parts[0].partition(" ")
+    if verb in ("float", "tile", "fullscreen", "maximize"):
+        action = f'{verb} = {"true" if rest == "on" else "false"}'
+    elif verb in ("size", "move", "monitor"):
+        action = f'{verb} = "{_lua_str(rest)}"'
+    else:
+        return 'hl.window_rule({"' + _lua_str(body) + '"})'  # unknown verb: raw fallback
+    return f'hl.window_rule({{ match = {{ {", ".join(match_fields)} }}, {action} }})'
+
+
 def apply_live(cls, v):
-    """Update live rules so a reopen this session uses the latest state, no
-    reload needed. unset first so rules never accumulate."""
-    m = matcher(cls)
-    for r in ["unset, " + m] + rules_for(cls, v):
-        subprocess.run(["hyprctl", "keyword", "windowrule", r],
+    """Apply the current rules live so a reopen THIS session uses the latest state.
+    Under the Lua config `hyprctl keyword` is REJECTED, AND the raw-string
+    hl.window_rule form silently no-ops for size/move/tile — so emit the STRUCTURED
+    hl.window_rule table via `hyprctl eval`. No unset needed: rules accumulate and
+    the LATEST matching one wins (verified)."""
+    for r in rules_for(cls, v):
+        subprocess.run(["hyprctl", "eval", _body_to_lua(r) + " return 1"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -176,20 +214,34 @@ def poll_loop():
         changed = False
         for cls, lst in per_class.items():
             _, c = max(lst, key=lambda t: t[0])   # largest-area window of this class
-            if c.get("floating"):
+            fs = c.get("fullscreen") or 0   # 0=none 1=maximize(SUPER+V) 2=fullscreen
+            if fs == 2:
+                # Real fullscreen (games / video) is a transient mode, not a per-app
+                # preference — never record it (its bounds would also clobber the
+                # saved floating geometry). Leave the prior state untouched.
+                continue
+            if fs == 1:
+                # Maximized: its at/size are the maximized bounds, NOT the real
+                # floating geometry — keep the prior floating/tiled geometry and
+                # just flag maximized, so un-maximizing later restores correctly.
+                val = dict(geo.get(cls, {}))
+                val.setdefault("floating", True)
+                val["maximized"] = True
+            elif c.get("floating"):
                 at, sz, mid = c.get("at"), c.get("size"), c.get("monitor")
                 if not at or not sz or sz[0] < MIN_SIZE or sz[1] < MIN_SIZE:
                     continue
                 if mid not in moff:
                     continue
                 mon, mx, my = moff[mid]
-                val = {"floating": True, "mon": mon,
+                val = {"floating": True, "maximized": False, "mon": mon,
                        "x": at[0] - mx, "y": at[1] - my, "w": sz[0], "h": sz[1]}
             else:
                 # Tiled: flip the flag but keep any prior floating geometry, so
                 # un-tiling later returns the window to where it last floated.
                 val = dict(geo.get(cls, {}))
                 val["floating"] = False
+                val["maximized"] = False
             if geo.get(cls) != val:
                 geo[cls] = val
                 apply_live(cls, val)

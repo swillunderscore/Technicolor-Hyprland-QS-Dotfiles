@@ -21,7 +21,7 @@ for i in $(seq 1 $max_steps); do
     current=$(echo "$state" | jq --argjson m "$clicked_mon" '[.[] | select(.id == $m)][0].activeWorkspace.id')
 
     [ "$current" -eq "$target" ] 2>/dev/null && {
-        hyprctl dispatch focusmonitor "$clicked_mon"
+        hyprctl dispatch "hl.dsp.focus({monitor=\"$clicked_mon\"})"
         exit 0
     }
 
@@ -31,14 +31,14 @@ for i in $(seq 1 $max_steps); do
 
     if [ "$target" -gt "$current" ]; then
         # Slide right: pre-focus rightmost so move.sh actually slides instead of just shifting focus
-        hyprctl dispatch focusmonitor "$rightmost"
+        hyprctl dispatch "hl.dsp.focus({monitor=\"$rightmost\"})"
         "$MOVE_SCRIPT" right
     else
-        hyprctl dispatch focusmonitor "$leftmost"
+        hyprctl dispatch "hl.dsp.focus({monitor=\"$leftmost\"})"
         "$MOVE_SCRIPT" left
     fi
 
     sleep 0.05
 done
 
-hyprctl dispatch focusmonitor "$clicked_mon"
+hyprctl dispatch "hl.dsp.focus({monitor=\"$clicked_mon\"})"

@@ -22,7 +22,7 @@ addr=$(hyprctl clients -j | python3 -c "
 import json,sys
 [print(c['address']) for c in json.load(sys.stdin) if c['class']=='Spotify']" | head -1)
 if [ -n "$addr" ]; then
-    hyprctl dispatch closewindow "address:$addr" >/dev/null
+    hyprctl dispatch "hl.dsp.window.close({window=\"address:$addr\"})" >/dev/null
     sleep 2
 fi
 setsid -f spotify >/dev/null 2>&1 9>&-
