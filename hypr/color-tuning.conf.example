@@ -15,7 +15,7 @@ HUE=0.0
 # MULTIPLIERS (1.0 = unchanged, <1 tones that surface down, >1 boosts); HUE
 # rotates (degrees). Keys: <SURFACE>_SAT / _BRIGHT / _HUE. Absent = unchanged.
 # Surfaces: BAR NOTIFICATIONS GTK DISCORD SPOTIFY BRAVE KDE TELEGRAM.
-# Note: KDE drives Dolphin AND LibreOffice (both read kdeglobals); LibreOffice
-# only repaints on relaunch. Example — tame Discord, brighten the bar:
+# (KDE = Dolphin + other KF6/Qt apps via kdeglobals.) Example — tame Discord,
+# brighten the bar:
 #   DISCORD_SAT=0.7
 #   BAR_BRIGHT=1.15

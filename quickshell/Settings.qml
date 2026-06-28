@@ -786,9 +786,7 @@ FloatingWindow {
     // 1.0 = unchanged, <1 tones down, >1 boosts) + hue on top of the global knobs
     // above. Keys live in the same color-tuning.conf as <KEY>_SAT / _BRIGHT / _HUE
     // (e.g. DISCORD_SAT). Read by gen-discord-theme.py's _surface_tuning_for (the
-    // six generators) + surface-tune.py (bar/notifications). Note: "kde" drives
-    // Dolphin AND LibreOffice (both read kdeglobals); LibreOffice only repaints on
-    // relaunch (it caches at launch even on the kf6 VCL plugin).
+    // six generators) + surface-tune.py (bar/notifications).
     readonly property var surfaceSpecs: [
         { key: "bar",          label: "Quickshell bar" },
         { key: "notifications", label: "Notifications" },
@@ -797,7 +795,6 @@ FloatingWindow {
         { key: "spotify",      label: "Spotify" },
         { key: "brave",        label: "Brave" },
         { key: "kde",          label: "Dolphin / KDE apps" },
-        { key: "libreoffice",  label: "LibreOffice" },
         { key: "telegram",     label: "Telegram (re-import)" }
     ]
     // surfaceTune[key] = {sat,bright,hue}. Mutated via reassignment so bindings update.
@@ -853,7 +850,7 @@ FloatingWindow {
         // the global CONTRAST_BIAS/SATURATION/BRIGHTNESS/HUE; then append the new set.
         surfaceCommitProc.command = ["bash", "-c",
             "conf='" + conf + "'; " +
-            "tmp=\"$(grep -vE '^(BAR|NOTIFICATIONS|GTK|DISCORD|SPOTIFY|BRAVE|KDE|LIBREOFFICE|TELEGRAM)_(SAT|BRIGHT|HUE)=' \"$conf\" 2>/dev/null)\"; " +
+            "tmp=\"$(grep -vE '^(BAR|NOTIFICATIONS|GTK|DISCORD|SPOTIFY|BRAVE|KDE|TELEGRAM)_(SAT|BRIGHT|HUE)=' \"$conf\" 2>/dev/null)\"; " +
             "printf '%s\\n' \"$tmp\" > \"$conf\"; " +
             "printf %s '" + Qt.btoa(body) + "' | base64 -d >> \"$conf\"; " +
             "wp=\"$(cat /tmp/wallpaper-current-path 2>/dev/null)\"; " +
