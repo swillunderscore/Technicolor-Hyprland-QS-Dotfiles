@@ -79,8 +79,9 @@ ShellRoot {
     }
 
     // UI font (Settings → System → Font). Bar + Settings window read this live;
-    // wofi follows via gen-wofi-font.sh. Default = QS_FONT env, else SF Pro.
-    readonly property string fontFallback: Quickshell.env("QS_FONT") || "SF Pro"
+    // wofi follows via gen-wofi-font.sh. Default = QS_FONT env, else the system
+    // default sans — so a fresh install renders instantly without a specific font.
+    readonly property string fontFallback: Quickshell.env("QS_FONT") || "sans-serif"
     property string uiFont: root.fontFallback
     FileView {
         id: fontFile

@@ -60,16 +60,17 @@ Most share the same package name across distros. The newer ones to watch are `qu
     - glass transparency: `Hypr-DarkWindow` + `hyprglass` — both ship vendored
       (`hypr/Hypr-DarkWindow/`, `hypr/hyprglass/`) and build themselves at startup
 
-**Arch** (my distro; a few are AUR, so use `paru`/`yay`):
+**Arch** — the entire core install is in the official repos, so plain `pacman`, no AUR helper needed:
 ```
-paru -S hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
+sudo pacman -S hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
   ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
   grim slurp satty wl-clipboard playerctl brightnessctl ttf-jetbrains-mono-nerd
 ```
 
-Optional — the apps the wallpaper palette can theme, plus their helpers. Install only the ones you use (each still needs the one-time hook-up in [App theming](#app-theming-discord--spotify--dolphin--brave--gtk); the generators no-op for anything missing):
+Optional — the apps the wallpaper palette can theme, plus their helpers. Install only the ones you use (each still needs the one-time hook-up in [App theming](#app-theming-discord--spotify--dolphin--brave--gtk); the generators no-op for anything missing). **These are the only AUR packages in the whole setup** — vet the PKGBUILDs / use a helper you trust; nothing in the core above touches the AUR:
 ```
-paru -S vesktop spotify spicetify-cli dolphin qt6ct-kde gcc brave-bin
+sudo pacman -S dolphin gcc                                 # official repos
+paru -S vesktop spotify spicetify-cli qt6ct-kde brave-bin  # AUR — the only part that needs a helper
 ```
 (The glass transparency uses two Hyprland plugins — `Hypr-DarkWindow` and `hyprglass` — both vendored in this repo (`hypr/Hypr-DarkWindow/`, `hypr/hyprglass/`) and compiled by their own `load.sh` on first launch; no `hyprpm`, no extra packages. See App theming.)
 
@@ -143,10 +144,11 @@ The animated wallpapers I use are pixel-art scenes by **Anas Abdin**: <https://w
 
 ## Fonts
 
-A Nerd Font is required or the icons render as boxes; I use JetBrainsMono Nerd Font (installed in step 1). The UI text is SF Pro, which is Apple's font, so I can't include it. Without it, set `QS_FONT` to a font you have (before Hyprland starts, e.g. in your shell profile):
+A Nerd Font is required or the icons render as boxes (JetBrainsMono Nerd Font, installed in step 1). The UI text needs **nothing extra** — it defaults to your system's sans-serif, so it renders instantly on any machine. Prefer a specific font? Pick any installed family in **Settings → System → Font** (applies live), or set `QS_FONT` before Hyprland starts:
 ```
 export QS_FONT="Inter"
 ```
+(I use SF Pro on my own machine — Apple's font, not redistributable — but the shipped default no longer depends on it.)
 
 ## Settings app
 
@@ -167,7 +169,8 @@ All optional — everything below is driven by `hypr/gen-*.py`, which `wallpaper
 
 The themed apps aren't part of the core install — install whichever you use (this is the same optional line as in [step 1](#1-dependencies); the generators just no-op for anything you don't have):
 ```
-paru -S vesktop spotify spicetify-cli dolphin qt6ct-kde gcc brave-bin
+sudo pacman -S dolphin gcc                                 # official repos
+paru -S vesktop spotify spicetify-cli qt6ct-kde brave-bin  # AUR — the only part that needs a helper
 ```
 Each app still needs its one-time hook-up described below (Vencord QuickCSS, `spicetify` apply, the qt6ct `color_scheme_path`, the Brave flags).
 
@@ -219,6 +222,7 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 - **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and both vendored plugins (`Hypr-DarkWindow`, `hyprglass`) compile against your exact Hyprland version via their own `load.sh` — so you just need base-devel/cmake plus the Hyprland headers (the `hyprland` package).
 - **Resolutions & scale:** nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on a 4K display you'll want a Hyprland monitor scale like any px-based UI; the Qt theming and chromakey shaders are scale-aware.
 - **Hardware:** GPU-agnostic. The bar's GPU usage/VRAM/temp auto-detect: amdgpu sysfs first, then `nvidia-smi` (proprietary/open Nvidia), with graceful zeros otherwise; CPU temp covers AMD/Intel/ARM hwmon names. Nvidia setup (env vars, cursor quirk, driver notes) is a ready-to-uncomment block in `local.conf.example`. The swap widget reads all swap devices and labels itself ZRAM or SWAP automatically. Monitor brightness needs `ddcutil`-compatible displays.
+- **Laptops:** works out of the box — the touchpad drives the 3-finger workspace swipe, and the brightness/volume/media **function keys are bound** (`brightnessctl` for the built-in backlight, `wpctl`/`playerctl` for the rest). Two caveats: the bar's brightness *sliders* drive external DDC/CI monitors via `ddcutil`, not the built-in panel (use the brightness keys for that), and there's **no battery indicator on the bar yet**. GPU auto-detect covers Intel/AMD/Nvidia laptops (for Nvidia, uncomment the block in `local.conf`).
 - **Spotify:** the theming assumes the native client (spicetify paths + window class `Spotify`); flatpak Spotify needs spicetify's flatpak setup.
 
 ## One-block install (for the impatient and/or stupid)
@@ -232,24 +236,29 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 > Therefore nothing here was affected
 > ⚠️
 
-The Install section above, as one paste. Arch-family only (uses `paru`) — on other distros do step 1 by hand, then run everything below the `paru` line. Existing configs get moved to `*.bak.<time>`, not deleted.
+The Install section above, as one script — **save it to `install.sh` and run `bash install.sh`** (don't paste it line-by-line: it uses `set -e`, which would close an interactive shell on the first hiccup and look like "nothing happened"). It prints each step as it runs, and existing configs are moved to `*.bak.<time>`, never deleted. Arch-family; the core uses plain `pacman`, so on other distros just swap the package line for your package manager's equivalent.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
 # 1. packages
-paru -S --needed hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
+sudo pacman -S --needed hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
   ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
   grim slurp satty wl-clipboard playerctl brightnessctl ttf-jetbrains-mono-nerd
 
 # 2. configs (backs up anything already there)
+echo "==> Cloning Technicolor to /tmp/technicolor ..."
+rm -rf /tmp/technicolor
 git clone --depth 1 https://github.com/swillunderscore/Technicolor-Hyprland-QS-Dotfiles /tmp/technicolor
+echo "==> Backing up any existing configs to *.bak.<timestamp> ..."
 for d in hypr quickshell mako spicetify; do
-  [ -e ~/.config/$d ] && mv ~/.config/$d ~/.config/$d.bak.$(date +%s)
+  [ -e ~/.config/$d ] && mv ~/.config/$d ~/.config/$d.bak.$(date +%s) && echo "    moved ~/.config/$d aside"
 done
+echo "==> Copying configs into ~/.config ..."
 cp -r /tmp/technicolor/hypr /tmp/technicolor/quickshell /tmp/technicolor/mako /tmp/technicolor/spicetify ~/.config/
 mkdir -p ~/.local/share/applications && cp /tmp/technicolor/applications/*.desktop ~/.local/share/applications/
+echo "==> Configs installed."
 
 # 3. per-machine files + wallpaper dir
 cp ~/.config/hypr/local.conf.example            ~/.config/hypr/local.conf
@@ -265,7 +274,7 @@ cat <<'DONE'
 Done. Before logging into Hyprland:
   1. put animated wallpapers in ~/Wallpapers/animated/   (see Wallpapers section)
   2. multi-monitor? add 'monitor =' lines to ~/.config/hypr/local.conf  (one screen auto-detects; hyprctl monitors for names)
-  3. no SF Pro font? export QS_FONT="SomeFontYouHave" in your shell profile
+  3. want a specific UI font? pick one in Settings → System → Font (it defaults to your system sans)
 App theming (Discord/Spotify/Dolphin/Brave/GTK) is NOT installed above — those
 apps and their one-time hook-up live in the App theming section of the README.
 DONE

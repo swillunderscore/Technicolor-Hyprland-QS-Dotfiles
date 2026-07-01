@@ -556,7 +556,7 @@ FloatingWindow {
     property string fontSearch: ""
     property real fontListH: 220     // resizable via the drag-divider below the list
     property real confEditH: 240     // resizable local.conf editor
-    readonly property string effFont: win.currentFont !== "" ? win.currentFont : (win.bar ? win.bar.fontFamily : "SF Pro")
+    readonly property string effFont: win.currentFont !== "" ? win.currentFont : (win.bar ? win.bar.fontFamily : "sans-serif")
     Process {
         id: fontListProc
         running: win.visible
