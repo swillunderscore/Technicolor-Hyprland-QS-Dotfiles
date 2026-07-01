@@ -93,6 +93,9 @@ aur_install() { "$AUR" -S --needed "$@"; }
 say "Optional app theming — press Enter to skip any of these."
 info "Nothing below is installed unless you say yes. Each app recolors on every wallpaper change."
 
+warn "Discord theming installs Vesktop — a THIRD-PARTY, unofficial Discord client (open-source)."
+info "It's popular and FOSS, but it's a modded client: technically against Discord's ToS, and it"
+info "handles your account through third-party code. Only opt in if you're comfortable with that."
 if ask "Theme Discord?  (installs Vesktop)"; then
   if ensure_aur && aur_install vesktop; then
     ok "Vesktop installed"
@@ -100,6 +103,9 @@ if ask "Theme Discord?  (installs Vesktop)"; then
   else warn "skipped Discord theming"; fi
 fi
 
+warn "Spotify theming installs Spicetify — it PATCHES the official Spotify client with third-party code."
+info "Widely used and FOSS, but it's a client mod: against Spotify's ToS, and it injects into the app."
+info "Only opt in if you're comfortable with that."
 if ask "Theme Spotify?  (installs spotify + spicetify-cli)"; then
   if ensure_aur && aur_install spotify spicetify-cli; then
     ok "Spotify + Spicetify installed"
