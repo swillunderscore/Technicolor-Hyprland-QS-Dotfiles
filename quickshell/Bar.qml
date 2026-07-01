@@ -22,12 +22,15 @@ PanelWindow {
     required property color gradientEnd
 
     // Text-contrast slider (Settings → Colors), fed from shell.qml. 0.5 = the
-    // original 0.55 crossover; 0 = always dark text, 1 = always light. cthr is
-    // the perceived-brightness threshold all contrast* helpers compare against.
+    // WCAG crossover (0.17912, where black/white text are equally readable);
+    // 0 = always dark text, 1 = always light. cthr is the relative-luminance
+    // threshold all contrast* helpers compare against — the SAME piecewise
+    // mapping gen-discord-theme.py uses, so the slider moves the bar and the
+    // themed apps in lockstep.
     property real contrastBias: 0.5
     readonly property real cthr: contrastBias <= 0.5
-        ? (contrastBias / 0.5) * 0.55
-        : 0.55 + ((contrastBias - 0.5) / 0.5) * 0.45
+        ? (contrastBias / 0.5) * 0.17912
+        : 0.17912 + ((contrastBias - 0.5) / 0.5) * (1.06 - 0.17912)
 
     // Fed from shell.qml's nethogs streamer. Used to annotate net history
     // buckets with the top sender/receiver app for that 1-second window.
@@ -143,19 +146,25 @@ PanelWindow {
     }
 
     function pad3(n) { return ("  " + n).slice(-3) }
+    // Perceptual (WCAG relative) luminance — gamma-linearized sRGB with BT.709
+    // weights (blue ≈ 0.07). Matches gen-discord-theme.py's rel_lum so the bar
+    // and the themed apps agree on light-vs-dark for every colour, deep blue
+    // included (a non-linearized metric over-reads saturated mid-tones).
+    function _lin(v)   { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+    function relLum(c) { return 0.2126 * _lin(c.r) + 0.7152 * _lin(c.g) + 0.0722 * _lin(c.b) }
     function contrastText(c) {
-        var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+        var lum = relLum(c)
         return lum > cthr ? "#000000" : "#FFFFFF"
     }
     // Same polarity as contrastText but pulled toward the middle — a gray
     // that stays clearly visible yet reads as the "secondary" of the pair.
     // Used for the second I/O series (upload / write) and its labels.
     function contrastAlt(c) {
-        var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+        var lum = relLum(c)
         return lum > cthr ? Qt.rgba(0.27, 0.28, 0.33, 1.0) : Qt.rgba(0.78, 0.79, 0.84, 1.0)
     }
     function contrastDim(c) {
-        var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+        var lum = relLum(c)
         return lum > cthr ? Qt.rgba(0, 0, 0, 0.35) : Qt.rgba(1, 1, 1, 0.35)
     }
     function solidify(c) { return Qt.rgba(c.r, c.g, c.b, 1.0) }
@@ -202,11 +211,11 @@ PanelWindow {
         return path
     }
     function contrastHover(c) {
-        var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+        var lum = relLum(c)
         return lum > cthr ? Qt.rgba(0, 0, 0, 0.12) : Qt.rgba(1, 1, 1, 0.14)
     }
     function contrastRow(c) {
-        var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+        var lum = relLum(c)
         return lum > cthr ? Qt.rgba(0, 0, 0, 0.06) : Qt.rgba(1, 1, 1, 0.07)
     }
 
