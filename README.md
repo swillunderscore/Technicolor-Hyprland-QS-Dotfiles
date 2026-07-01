@@ -146,7 +146,8 @@ The animated wallpapers I use are pixel-art scenes by **Anas Abdin**: <https://w
 
 A Nerd Font is required or the icons render as boxes (JetBrainsMono Nerd Font, installed in step 1). The UI text needs **nothing extra** — it defaults to your system's sans-serif, so it renders instantly on any machine. Prefer a specific font? Pick any installed family in **Settings → System → Font** (applies live), or set `QS_FONT` before Hyprland starts:
 ```
-export QS_FONT="Inter"
+export QS_FONT="Inter"          # bash / zsh
+# fish:  set -Ux QS_FONT Inter
 ```
 (I use SF Pro on my own machine — Apple's font, not redistributable — but the shipped default no longer depends on it.)
 
@@ -236,7 +237,7 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 > Therefore nothing here was affected
 > ⚠️
 
-The Install section above, as one script — **save it to `install.sh` and run `bash install.sh`** (don't paste it line-by-line: it uses `set -e`, which would close an interactive shell on the first hiccup and look like "nothing happened"). It prints each step as it runs, and existing configs are moved to `*.bak.<time>`, never deleted. Arch-family; the core uses plain `pacman`, so on other distros just swap the package line for your package manager's equivalent.
+The Install section above, as one script — **save it to `install.sh` and run `bash install.sh`** (this runs in bash no matter your login shell, so **fish/zsh users included**). Do NOT paste it line-by-line into your shell: the `for … do … done` loop isn't valid in fish, and the `set -e` would close the shell on the first hiccup — either way it looks like "nothing happened." It prints each step as it runs, and existing configs are moved to `*.bak.<time>`, never deleted. Arch-family; the core uses plain `pacman`, so on other distros just swap the package line for your package manager's equivalent.
 
 ```bash
 #!/usr/bin/env bash
