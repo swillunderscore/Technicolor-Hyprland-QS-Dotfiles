@@ -227,7 +227,7 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 - **Laptops:** works out of the box — the touchpad drives the 3-finger workspace swipe, and the brightness/volume/media **function keys are bound** (`brightnessctl` for the built-in backlight, `wpctl`/`playerctl` for the rest). Two caveats: the bar's brightness *sliders* drive external DDC/CI monitors via `ddcutil`, not the built-in panel (use the brightness keys for that), and there's **no battery indicator on the bar yet**. GPU auto-detect covers Intel/AMD/Nvidia laptops (for Nvidia, uncomment the block in `local.conf`).
 - **Spotify:** the theming assumes the native client (spicetify paths + window class `Spotify`); flatpak Spotify needs spicetify's flatpak setup.
 
-## One-block install (for the impatient and/or stupid)
+## One-command install (for the impatient and/or stupid)
 
 > ⚠️
 > Hello it is me swillunderscore again
@@ -238,46 +238,13 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 > Therefore nothing here was affected
 > ⚠️
 
-The Install section above, as one script — **save it to `install.sh` and run `bash install.sh`** (this runs in bash no matter your login shell, so **fish/zsh users included**). Do NOT paste it line-by-line into your shell: the `for … do … done` loop isn't valid in fish, and the `set -e` would close the shell on the first hiccup — either way it looks like "nothing happened." It prints each step as it runs, and existing configs are moved to `*.bak.<time>`, never deleted. Arch-family; the core uses plain `pacman`, so on other distros just swap the package line for your package manager's equivalent.
+Skip the manual steps above and just run the **interactive installer**: one command that installs the lean core from the official repos, copies the configs, then asks — one app at a time — which things you want themed and installs *only* those. **Nothing proprietary is installed unless you say yes**, and existing configs are backed up to `*.bak.<time>`.
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# 1. packages
-sudo pacman -S --needed hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
-  ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
-  grim slurp satty wl-clipboard playerctl brightnessctl base-devel ttf-jetbrains-mono-nerd
-
-# 2. configs (backs up anything already there)
-echo "==> Cloning Technicolor to /tmp/technicolor ..."
-rm -rf /tmp/technicolor
-git clone --depth 1 https://github.com/swillunderscore/Technicolor-Hyprland-QS-Dotfiles /tmp/technicolor
-echo "==> Backing up any existing configs to *.bak.<timestamp> ..."
-for d in hypr quickshell mako spicetify; do
-  [ -e ~/.config/$d ] && mv ~/.config/$d ~/.config/$d.bak.$(date +%s) && echo "    moved ~/.config/$d aside"
-done
-echo "==> Copying configs into ~/.config ..."
-cp -r /tmp/technicolor/hypr /tmp/technicolor/quickshell /tmp/technicolor/mako /tmp/technicolor/spicetify ~/.config/
-mkdir -p ~/.local/share/applications && cp /tmp/technicolor/applications/*.desktop ~/.local/share/applications/
-echo "==> Configs installed."
-
-# 3. per-machine files + wallpaper dir
-cp ~/.config/hypr/local.conf.example            ~/.config/hypr/local.conf
-cp ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf
-cp ~/.config/hypr/terminal.conf.example         ~/.config/hypr/terminal.conf
-cp ~/.config/mako/config.example                ~/.config/mako/config
-mkdir -p ~/Wallpapers/animated
-
-# 4. monitor brightness (takes effect after re-login)
-sudo usermod -aG i2c "$USER"
-
-cat <<'DONE'
-Done. Before logging into Hyprland:
-  1. put animated wallpapers in ~/Wallpapers/animated/   (see Wallpapers section)
-  2. multi-monitor? add 'monitor =' lines to ~/.config/hypr/local.conf  (one screen auto-detects; hyprctl monitors for names)
-  3. want a specific UI font? pick one in Settings → System → Font (it defaults to your system sans)
-App theming (Discord/Spotify/Dolphin/Brave/GTK) is NOT installed above — those
-apps and their one-time hook-up live in the App theming section of the README.
-DONE
+curl -fsSL https://raw.githubusercontent.com/swillunderscore/Technicolor-Hyprland-QS-Dotfiles/main/install.sh -o /tmp/technicolor-install.sh
+bash /tmp/technicolor-install.sh
 ```
+
+Both lines work in **any shell** (bash / zsh / fish) — it runs itself in bash regardless of your login shell. It prints every step as it goes; when it finishes, log out and pick Hyprland. Want to read it before running it? It's [`install.sh`](install.sh) in this repo — eyeball it, then run it.
+
+What it does: installs the core (official `pacman`, no AUR), copies the configs, sets up the per-machine files, adds you to the `i2c` group for external-monitor brightness, and offers Discord / Spotify / Brave / Dolphin+Qt / GTK theming — installing each only if you opt in (and only reaching for an AUR helper when a chosen app needs one).
