@@ -23,7 +23,7 @@ Follow these top to bottom and you'll have a working setup.
 
 ### 1. Dependencies
 
-Everything needed: `hyprland`, `quickshell`, `mako`, `xdg-desktop-portal-hyprland`, `pipewire` + `wireplumber`, `ddcutil`, `nethogs`, `jq`, `gawk`, `kitty`, `wofi`, `awww`, `imagemagick`, `python-pillow`, `grim`, `slurp`, `satty`, `wl-clipboard`, `playerctl`, `brightnessctl`, plus a Nerd Font (JetBrainsMono Nerd Font). Optional: `nwg-look`, `nwg-displays`, `dex`, `wlogout`, `gnome-keyring`.
+Everything needed: `hyprland`, `quickshell`, `mako`, `xdg-desktop-portal-hyprland`, `pipewire` + `wireplumber`, `ddcutil`, `nethogs`, `jq`, `gawk`, `kitty`, `wofi`, `awww`, `imagemagick`, `python-pillow`, `grim`, `slurp`, `satty`, `wl-clipboard`, `playerctl`, `brightnessctl`, `base-devel` (compiles the two bundled glass plugins — skip it and you get ~15 harmless `hyprglass:` config errors and no glass), plus a Nerd Font (JetBrainsMono Nerd Font). Optional: `nwg-look`, `nwg-displays`, `dex`, `wlogout`, `gnome-keyring`.
 
 Most share the same package name across distros. The newer ones to watch are `quickshell`, `awww` (the wallpaper daemon — it's the current name of the project formerly called `swww`, so don't also install `swww`), and `satty`, plus Hyprland itself on older distros. Quickshell's per-distro install page: <https://quickshell.org/docs/master/guide/install-setup/>
 
@@ -46,6 +46,7 @@ Most share the same package name across distros. The newer ones to watch are `qu
   - `grim` + `slurp` + `satty` + `wl-clipboard` — screenshots: capture, region-select, annotate, copy
   - `playerctl` — media keys (play/pause/next)
   - `brightnessctl` — laptop backlight keys
+  - `base-devel` — `make`/`g++`/`pkg-config` to compile the two bundled glass plugins (`hyprglass`, `Hypr-DarkWindow`) on first launch. Without it they can't build, so Hyprland throws ~15 `hyprglass:` config errors on login and you get no glass (everything else still works).
   - a Nerd Font (I use JetBrainsMono Nerd Font) — every icon and glyph in the UI
   - optional: `nwg-look` (GTK theme GUI), `nwg-displays` (monitor-layout GUI — it
   produces `monitor =` lines you can paste into `local.conf`), `dex` (runs XDG autostart entries), `wlogout` (power menu), `gnome-keyring`
@@ -64,7 +65,7 @@ Most share the same package name across distros. The newer ones to watch are `qu
 ```
 sudo pacman -S hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
   ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
-  grim slurp satty wl-clipboard playerctl brightnessctl ttf-jetbrains-mono-nerd
+  grim slurp satty wl-clipboard playerctl brightnessctl base-devel ttf-jetbrains-mono-nerd
 ```
 
 Optional — the apps the wallpaper palette can theme, plus their helpers. Install only the ones you use (each still needs the one-time hook-up in [App theming](#app-theming-discord--spotify--dolphin--brave--gtk); the generators no-op for anything missing). **These are the only AUR packages in the whole setup** — vet the PKGBUILDs / use a helper you trust; nothing in the core above touches the AUR:
@@ -220,7 +221,7 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 
 ## Portability
 
-- **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and both vendored plugins (`Hypr-DarkWindow`, `hyprglass`) compile against your exact Hyprland version via their own `load.sh` — so you just need base-devel/cmake plus the Hyprland headers (the `hyprland` package).
+- **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and both vendored plugins (`Hypr-DarkWindow`, `hyprglass`) compile against your exact Hyprland version via their own `load.sh` — so you just need `base-devel` (make/g++/pkg-config) plus the Hyprland headers that ship in the `hyprland` package — no cmake. (Miss `base-devel` and the plugins can't build, which shows up as ~15 `hyprglass:` config errors on login.)
 - **Resolutions & scale:** nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on a 4K display you'll want a Hyprland monitor scale like any px-based UI; the Qt theming and chromakey shaders are scale-aware.
 - **Hardware:** GPU-agnostic. The bar's GPU usage/VRAM/temp auto-detect: amdgpu sysfs first, then `nvidia-smi` (proprietary/open Nvidia), with graceful zeros otherwise; CPU temp covers AMD/Intel/ARM hwmon names. Nvidia setup (env vars, cursor quirk, driver notes) is a ready-to-uncomment block in `local.conf.example`. The swap widget reads all swap devices and labels itself ZRAM or SWAP automatically. Monitor brightness needs `ddcutil`-compatible displays.
 - **Laptops:** works out of the box — the touchpad drives the 3-finger workspace swipe, and the brightness/volume/media **function keys are bound** (`brightnessctl` for the built-in backlight, `wpctl`/`playerctl` for the rest). Two caveats: the bar's brightness *sliders* drive external DDC/CI monitors via `ddcutil`, not the built-in panel (use the brightness keys for that), and there's **no battery indicator on the bar yet**. GPU auto-detect covers Intel/AMD/Nvidia laptops (for Nvidia, uncomment the block in `local.conf`).
@@ -246,7 +247,7 @@ set -euo pipefail
 # 1. packages
 sudo pacman -S --needed hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
   ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
-  grim slurp satty wl-clipboard playerctl brightnessctl ttf-jetbrains-mono-nerd
+  grim slurp satty wl-clipboard playerctl brightnessctl base-devel ttf-jetbrains-mono-nerd
 
 # 2. configs (backs up anything already there)
 echo "==> Cloning Technicolor to /tmp/technicolor ..."
