@@ -186,6 +186,104 @@ ShellRoot {
         }
     }
 
+    // ── GPU wallpaper transition ─────────────────────────────────────────────
+    // wallpaper-cycle.sh calls `qs ipc call wallfade start <new> <map> <frames>
+    // <avgMs>`; per-screen WallpaperFade overlays reveal NEW (animating) over
+    // awww's still-animating OLD, then awww swaps underneath. See
+    // WallpaperFade.qml for the full why.
+    property bool wfActive: false
+    property string wfNew: ""
+    property string wfMap: ""
+    property int wfFrames: 1
+    property real wfAvgMs: 100
+    property real wfProgress: 0
+    property double wfApplyTime: 0   // Date.now() when awww confirmed NEW; 0 = pending
+    property int wfOverlayFrame: -1  // driver overlay's live animation frame
+
+    NumberAnimation {
+        id: wfAnim
+        target: root; property: "wfProgress"
+        from: 0; to: 1
+        duration: 1540                // matches the old reveal (22 × 70ms)
+        // Linear on purpose: the smoothstep frontier ease lives in the shader,
+        // exactly like wallpaper-transition.py eased its frame times.
+        onFinished: wfApplyProc.running = true
+    }
+
+    function wfStart(path, map, frames, avgMs) {
+        wfApplyProc.running = false   // cancel a pending handoff from a prior run
+        wfSafety.stop()
+        wfApplyTime = 0
+        wfNew = ""; wfNew = path      // cycle to force a reload/frame-0 restart
+        wfMap = ""; wfMap = map
+        wfFrames = Math.max(1, frames)
+        wfAvgMs = Math.max(1, avgMs)
+        wfProgress = 0
+        wfActive = true
+        wfAnim.restart()
+        // Hard cap: reveal + one full animation loop to find the aligned frame
+        // + slack. If anything goes sideways the overlay always comes down.
+        wfSafety.interval = 1540 + Math.max(3000, wfFrames * wfAvgMs + 2500)
+        wfSafety.restart()
+    }
+    function wfFinish() {
+        wfAnim.stop()
+        wfSafety.stop()
+        wfActive = false
+        wfProgress = 0
+    }
+    function wfImageError() {         // NEW failed to decode: plain instant swap
+        wfAnim.stop()
+        wfApplyProc.running = true
+    }
+
+    // The single authoritative awww apply — fired once per transition, at
+    // reveal end, invisible under the fully-opaque overlay (so a cache-cold
+    // decode no longer freezes the visible wallpaper like the old handoff).
+    Process {
+        id: wfApplyProc
+        command: ["awww", "img", root.wfNew, "--fill-color", "000000",
+                  "--resize", "crop", "--filter", "Nearest",
+                  "--transition-type", "none", "--transition-fps", "255"]
+        onExited: {
+            root.wfApplyTime = Date.now()
+            // Stills (or failed decodes) have no frame clock to align — the
+            // overlay content is already pixel-identical to awww; drop now.
+            if (root.wfFrames <= 1) root.wfFinish()
+        }
+    }
+    Timer { id: wfSafety; onTriggered: { if (root.wfApplyTime <= 0) wfApplyProc.running = true; root.wfFinish() } }
+
+    // Seamless drop: once awww is running NEW underneath, model its frame
+    // clock (started at frame 0 at wfApplyTime) and hide the overlay at an
+    // instant both surfaces show the SAME frame. Polled between frame
+    // boundaries — two same-rate clocks with a constant offset are only ever
+    // equal mid-frame, never at the edges, so a frame-change check can't work.
+    Timer {
+        id: wfAlign
+        interval: 20; repeat: true
+        running: root.wfActive && root.wfApplyTime > 0 && root.wfFrames > 1
+        onTriggered: {
+            var fa = Math.floor((Date.now() - root.wfApplyTime) / root.wfAvgMs) % root.wfFrames
+            if (fa === root.wfOverlayFrame) root.wfFinish()
+        }
+    }
+
+    Variants {
+        model: Quickshell.screens
+        WallpaperFade {
+            shell: root
+            isDriver: modelData === Quickshell.screens[0]
+        }
+    }
+
+    IpcHandler {
+        target: "wallfade"
+        function start(path: string, map: string, frames: int, avgMs: real): void {
+            root.wfStart(path, map, frames, avgMs)
+        }
+    }
+
     AltTabPie { barRef: root.primaryBar }
 
     // One settings window for the whole shell — a normal toplevel app window
