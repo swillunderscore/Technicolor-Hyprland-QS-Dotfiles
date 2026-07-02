@@ -126,6 +126,9 @@ ShellRoot {
     property int netTopDownBytes: 0
     property int netTopTick: 0      // bumps on every nethogs refresh — bars use
                                     // this as the cue to push a fresh bucket
+    // Scrolling per-process rate history ({comm: [downBps, upBps]} per nethogs
+    // refresh, newest last) — the net popup draws one graph line per app.
+    property var netProcHist: []
 
     Process {
         id: nethogsProc
@@ -135,6 +138,24 @@ ShellRoot {
             splitMarker: "\n"
             onRead: function(data) {
                 var p = data.trim().split(/\s+/)
+                if (p[0] === "netprocs") {
+                    var tick = {}
+                    for (var i = 1; i < p.length; i++) {
+                        // comm:down:up — comm may itself contain ':'; rates
+                        // are the last two fields.
+                        var f = p[i].split(":")
+                        if (f.length < 3) continue
+                        var up = parseInt(f[f.length - 1]) || 0
+                        var dn = parseInt(f[f.length - 2]) || 0
+                        var comm = f.slice(0, f.length - 2).join(":")
+                        if (comm) tick[comm] = [dn, up]
+                    }
+                    var h = root.netProcHist.slice()
+                    h.push(tick)
+                    while (h.length > 48) h.shift()   // == Bar.qml ioHistLen
+                    root.netProcHist = h
+                    return
+                }
                 if (p[0] !== "nettop" || p.length < 7) return
                 root.netTopUpComm = p[2] || "-"
                 root.netTopUpBytes = parseInt(p[3]) || 0
@@ -180,6 +201,7 @@ ShellRoot {
             fontFamily: root.uiFont
             sharedNetTopUpComm: root.netTopUpComm
             sharedNetTopDownComm: root.netTopDownComm
+            sharedNetProcHist: root.netProcHist
 
             Component.onCompleted: root.primaryBar = this
             Component.onDestruction: if (root.primaryBar === this) root.primaryBar = null

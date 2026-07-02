@@ -36,6 +36,13 @@ PanelWindow {
     // buckets with the top sender/receiver app for that 1-second window.
     property string sharedNetTopUpComm: "-"
     property string sharedNetTopDownComm: "-"
+    // Per-process rate history from the same streamer ({comm: [downBps,
+    // upBps]} per refresh, newest last) — the net popup's per-app lines.
+    property var sharedNetProcHist: []
+    // Same shape for disk, built from the pio diffs each tick ({comm:
+    // [readBps, writeBps]}). Caveat: /proc/PID/io is owner-readable only, so
+    // other users' processes (system services) can't be attributed here.
+    property var diskProcHist: []
 
     readonly property var hyprMon: Hyprland.monitorFor(barScreen)
     readonly property bool isPrimary: hyprMon ? hyprMon.id === 0 : true
@@ -512,6 +519,30 @@ PanelWindow {
             if (v > m) m = v
         }
         return m
+    }
+    // Top apps across a per-process rate history window ({comm: [a, b]} per
+    // tick, newest last). Returns [{app, cur, peak}] by peak descending,
+    // capped at k — feeds both the per-app graph lines and their legend, so
+    // the line set and the key always agree.
+    function procTopApps(hist, field, k) {
+        if (!hist || !hist.length) return []
+        var peak = {}, cur = {}
+        for (var i = 0; i < hist.length; i++) {
+            var t = hist[i]
+            for (var comm in t) {
+                var v = t[comm][field] || 0
+                if (!(comm in peak) || v > peak[comm]) peak[comm] = v
+                if (i === hist.length - 1) cur[comm] = v
+            }
+        }
+        var keys = Object.keys(peak)
+        keys.sort(function(x, y) { return peak[y] - peak[x] })
+        var out = []
+        for (var j = 0; j < keys.length && out.length < k; j++) {
+            if (peak[keys[j]] <= 0) break
+            out.push({ app: keys[j], cur: cur[keys[j]] || 0, peak: peak[keys[j]] })
+        }
+        return out
     }
 
     function closeLauncher() {
@@ -1064,8 +1095,10 @@ PanelWindow {
                 }
             }
 
-            // ── Disk: diff per-process counters to find top reader/writer ──
+            // ── Disk: diff per-process counters — top reader/writer for the
+            //    small chart, per-comm rates for the popup's per-app lines ──
             var topR = 0, topW = 0, topRComm = "-", topWComm = "-"
+            var pioTick = {}
             for (var pid in currPio) {
                 var cur = currPio[pid]
                 var prev = bar.prevPio[pid]
@@ -1074,8 +1107,16 @@ PanelWindow {
                 var dw = cur[2] - prev[2]
                 if (dr > topR) { topR = dr; topRComm = cur[0] }
                 if (dw > topW) { topW = dw; topWComm = cur[0] }
+                if (dr > 0 || dw > 0) {
+                    var pa = pioTick[cur[0]] || [0, 0]
+                    pioTick[cur[0]] = [pa[0] + dr, pa[1] + dw]
+                }
             }
             bar.prevPio = currPio
+            var dph = bar.diskProcHist.slice()
+            dph.push(pioTick)
+            while (dph.length > bar.ioHistLen) dph.shift()
+            bar.diskProcHist = dph
 
             // ── Per-core usage: diff cumulative busy/total per core ──
             var cores = []
@@ -1205,11 +1246,28 @@ PanelWindow {
             }
             bar.prevPgpu = curr
             bar.lastGpuTopTime = now
-            if (dtNs > 0 && dtNs < 30e9)
-                bar.topGpuApps = bar.topN(engAgg, 4, function(v) {
+            if (dtNs > 0 && dtNs < 30e9) {
+                var gapps = bar.topN(engAgg, 4, function(v) {
                     var pct = 100 * v / dtNs
                     return pct >= 0.5 ? ((pct < 10 ? pct.toFixed(1) : Math.round(pct)) + "%") : ""
                 })
+                // Whatever the card reports busy beyond the per-process sum —
+                // kernel work, and (without the root fdinfo helper) every
+                // other user's processes — gets an explicit row instead of
+                // silently missing, so the list always explains the ring.
+                // Global busy is averaged over the same window from gpuHist.
+                var esum = 0
+                for (var ek in engAgg) esum += engAgg[ek]
+                var nAvg = Math.max(1, Math.min(bar.gpuHist.length, Math.round(dtNs / 1e9)))
+                var busyAvg = 0
+                for (var bi = bar.gpuHist.length - nAvg; bi < bar.gpuHist.length; bi++)
+                    busyAvg += bar.gpuHist[bi].v || 0
+                busyAvg = nAvg > 0 ? busyAvg / nAvg : 0
+                var otherPct = busyAvg - 100 * esum / dtNs
+                if (otherPct >= 2)
+                    gapps.push({ app: "system", label: (otherPct < 10 ? otherPct.toFixed(1) : Math.round(otherPct)) + "%" })
+                bar.topGpuApps = gapps
+            }
             var vapps = bar.topN(vramAgg, 4, function(v) { return v >= 16777216 ? bar.fmtRate(v) : "" })
             // amdgpu keeps a lot of VRAM that NO client fdinfo reports — compositor
             // framebuffers, screen-capture/encoder surfaces, shared dmabufs — so the
@@ -1564,6 +1622,15 @@ PanelWindow {
         property color stroke: "#000000"
         property color stroke2: "#D4D4DC"
         property real fixedMax: 0
+        // Per-process overlay: procData is a per-tick {comm: [a, b]} history,
+        // procApps the [{app,...}] list to draw (from procTopApps — shared
+        // with the legend so lines and key agree), procField picks a (0) or
+        // b (1). Each app gets its own commColor line under the total.
+        property var procData: []
+        property var procApps: []
+        property int procField: 0
+        onProcDataChanged: requestPaint()
+        onProcAppsChanged: requestPaint()
         onDataChanged: requestPaint()
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
@@ -1616,6 +1683,70 @@ PanelWindow {
                 }
                 ctx.stroke()
             }
+            // Per-app lines, one polyline per legend entry, sharing the main
+            // series' scale so they nest under the total. Values are clamped
+            // to mx — attribution can skew a hair above the counter total.
+            var pd = mg.procData, pn = pd ? pd.length : 0
+            var apps = mg.procApps
+            if (pn >= 2 && apps && apps.length) {
+                var px0 = width - (pn - 1) * stepX
+                ctx.lineWidth = 1.3
+                for (var pi = 0; pi < apps.length; pi++) {
+                    var comm = apps[pi].app
+                    ctx.strokeStyle = bar.commColor(comm)
+                    ctx.beginPath()
+                    for (var ti = 0; ti < pn; ti++) {
+                        var e = pd[ti][comm]
+                        var pv = e ? Math.min(e[mg.procField] || 0, mx) : 0
+                        var py = height - (pv / mx) * span - 1
+                        if (ti) ctx.lineTo(px0 + ti * stepX, py); else ctx.moveTo(px0 + ti * stepX, py)
+                    }
+                    ctx.stroke()
+                }
+            }
+        }
+    }
+
+    // Legend chip for the IO popups' per-app lines: color dot (== that app's
+    // line color), the app's icon when one exists, name, current rate.
+    // modelData comes from procTopApps: {app, cur, peak}.
+    component MonProcChip: Row {
+        id: mpc
+        required property var modelData
+        readonly property string legendIcon: bar.strictIconPath(modelData.app)
+        readonly property int chipSize: isPrimary ? 14 : 11
+        spacing: isPrimary ? 4 : 3
+        Rectangle {
+            width: isPrimary ? 8 : 6; height: width; radius: width / 2
+            color: bar.commColor(mpc.modelData.app)
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Image {
+            width: mpc.chipSize; height: mpc.chipSize
+            anchors.verticalCenter: parent.verticalCenter
+            source: mpc.legendIcon
+            visible: mpc.legendIcon !== "" && status === Image.Ready
+            sourceSize.width: mpc.chipSize * 2
+            sourceSize.height: mpc.chipSize * 2
+            mipmap: true; smooth: true; asynchronous: true
+            fillMode: Image.PreserveAspectFit
+        }
+        Text {
+            text: mpc.modelData.app
+            color: monPopup.fg
+            font.pixelSize: isPrimary ? 11 : 9
+            font.family: bar.fontFamily
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Text {
+            visible: mpc.modelData.cur > 0
+            text: bar.fmtRate(mpc.modelData.cur) + "/s"
+            color: monPopup.fg
+            opacity: 0.75
+            font.pixelSize: isPrimary ? 11 : 9
+            font.family: bar.fontFamily
+            font.bold: true
+            anchors.verticalCenter: parent.verticalCenter
         }
     }
 
@@ -2593,41 +2724,15 @@ PanelWindow {
             : mk === "zram" ? bar.topSwapApps : mk === "gpu" ? bar.topGpuApps
             : mk === "vram" ? bar.topVramApps : []
 
-        // Unique apps that appeared in this series within the visible window.
-        // Persists for ~48s after the app stops appearing (matches scroll
-        // speed) so the legend doesn't flicker on intermittent activity.
-        // Each entry renders as a real icon when one exists, otherwise as
-        // a colored dot — the legend doubles as a key for both kinds.
-        readonly property var allAppsA: {
-            if (!monPopup.graphDual) return []
-            var d = monPopup.graphData
-            if (!d) return []
-            var seen = {}, list = []
-            for (var i = 0; i < d.length; i++) {
-                var s = d[i]
-                if (!s) continue
-                var app = s.aApp
-                if (!app || app === "-" || seen[app]) continue
-                seen[app] = true
-                list.push(app)
-            }
-            return list
-        }
-        readonly property var allAppsB: {
-            if (!monPopup.graphDual) return []
-            var d = monPopup.graphData
-            if (!d) return []
-            var seen = {}, list = []
-            for (var i = 0; i < d.length; i++) {
-                var s = d[i]
-                if (!s) continue
-                var app = s.bApp
-                if (!app || app === "-" || seen[app]) continue
-                seen[app] = true
-                list.push(app)
-            }
-            return list
-        }
+        // Per-process rate history behind the IO popups' per-app graph lines:
+        // net from the nethogs streamer (root — sees every process), disk from
+        // the pio diffs (owner-only; other users' I/O can't be attributed).
+        // procApps* = the apps drawn as lines AND listed in the legend (same
+        // list, so color key and graph always agree), by window peak.
+        readonly property var procHistData: mk === "net" ? bar.sharedNetProcHist
+            : mk === "disk" ? bar.diskProcHist : []
+        readonly property var procAppsA: monPopup.graphDual ? bar.procTopApps(procHistData, 0, 6) : []
+        readonly property var procAppsB: monPopup.graphDual ? bar.procTopApps(procHistData, 1, 6) : []
 
         // Paint-up body — opaque Shape with an animated drippy top edge.
         // Sized to the animated bodyW/bodyH, not the popup window size, and
@@ -2971,15 +3076,14 @@ PanelWindow {
                         font.family: bar.fontFamily
                         font.bold: true
                     }
-                    // B graph block — the legend below is part of this block
-                    // (per-graph rather than popup-wide) and only takes the
-                    // space it needs; persists across the scroll window so
-                    // it doesn't flicker as buckets roll.
+                    // B graph block — one colored line per app (color = the
+                    // legend chip's dot) under the fg2 total, instead of the
+                    // old per-bucket top-app icons (which could only ever show
+                    // whoever happened to be #1 each second).
                     Item {
                         visible: monPopup.graphDual
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        readonly property real iconPx: isPrimary ? 20 : 16
                         MonGraph {
                             id: popupGraphB
                             anchors.fill: parent
@@ -2989,92 +3093,20 @@ PanelWindow {
                             fixedMax: 0
                             // Match the bar's small chart: series B uses fg2.
                             stroke: monPopup.fg2
-                        }
-                        Repeater {
-                            model: monPopup.graphDual && popupGraphB.data ? popupGraphB.data.length : 0
-                            delegate: Item {
-                                id: bIcon
-                                required property int index
-                                readonly property var sample: popupGraphB.data && index < popupGraphB.data.length ? popupGraphB.data[index] : null
-                                readonly property real val: sample ? (sample.b || 0) : 0
-                                readonly property string app: sample ? (sample.bApp || "") : ""
-                                readonly property int n: popupGraphB.data ? popupGraphB.data.length : 0
-                                readonly property real stepX: popupGraphB.width / (bar.ioHistLen - 1)
-                                readonly property real x0: popupGraphB.width - (n - 1) * stepX
-                                readonly property real span: popupGraphB.height - 2
-                                readonly property real iconPx: parent.iconPx
-                                readonly property string resolvedIcon: bar.strictIconPath(app)
-                                width: iconPx; height: iconPx
-                                x: x0 + index * stepX - iconPx / 2
-                                y: Math.max(0, popupGraphB.height - (val / Math.max(1, bar.monGraphAutoMax(popupGraphB.data, true, 0, "b"))) * span - 1 - iconPx)
-                                visible: val > 0 && app !== "" && app !== "-"
-                                Image {
-                                    id: bImg
-                                    anchors.fill: parent
-                                    sourceSize.width: bIcon.iconPx * 2
-                                    sourceSize.height: bIcon.iconPx * 2
-                                    mipmap: true; smooth: true; asynchronous: true
-                                    fillMode: Image.PreserveAspectFit
-                                    source: bIcon.resolvedIcon
-                                    visible: status === Image.Ready
-                                }
-                                Rectangle {
-                                    // No-icon fallback: small filled circle
-                                    // colored by comm; the legend below maps
-                                    // dot colors to app names.
-                                    anchors.centerIn: parent
-                                    width: parent.width * 0.7
-                                    height: width
-                                    radius: width / 2
-                                    color: bar.commColor(bIcon.app)
-                                    visible: !bImg.visible
-                                }
-                            }
+                            procData: monPopup.procHistData
+                            procApps: monPopup.procAppsB
+                            procField: 1
                         }
                     }
-                    // Legend for the B series — one chip per app that's
-                    // appeared in the visible window. Renders the real icon
-                    // when one exists, otherwise a colored dot matching the
-                    // graph overlay.
+                    // Legend for the B series — dot color = that app's line,
+                    // plus its icon when one exists and the current rate.
                     Flow {
-                        visible: monPopup.graphDual && monPopup.allAppsB.length > 0
+                        visible: monPopup.graphDual && monPopup.procAppsB.length > 0
                         Layout.fillWidth: true
                         spacing: isPrimary ? 10 : 7
                         Repeater {
-                            model: monPopup.allAppsB
-                            delegate: Row {
-                                required property string modelData
-                                readonly property string legendIcon: bar.strictIconPath(modelData)
-                                readonly property int chipSize: isPrimary ? 14 : 11
-                                spacing: isPrimary ? 4 : 3
-                                Item {
-                                    width: parent.chipSize; height: parent.chipSize
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    Image {
-                                        anchors.fill: parent
-                                        source: parent.parent.legendIcon
-                                        visible: status === Image.Ready
-                                        sourceSize.width: parent.width * 2
-                                        sourceSize.height: parent.height * 2
-                                        mipmap: true; smooth: true; asynchronous: true
-                                        fillMode: Image.PreserveAspectFit
-                                    }
-                                    Rectangle {
-                                        anchors.centerIn: parent
-                                        width: parent.width * 0.7; height: width
-                                        radius: width / 2
-                                        color: bar.commColor(modelData)
-                                        visible: parent.parent.legendIcon === ""
-                                    }
-                                }
-                                Text {
-                                    text: modelData
-                                    color: monPopup.fg
-                                    font.pixelSize: isPrimary ? 11 : 9
-                                    font.family: bar.fontFamily
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
+                            model: monPopup.procAppsB
+                            delegate: MonProcChip { }
                         }
                     }
                     Text {
@@ -3089,7 +3121,6 @@ PanelWindow {
                         visible: monPopup.graphDual
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        readonly property real iconPx: isPrimary ? 20 : 16
                         MonGraph {
                             id: popupGraphA
                             anchors.fill: parent
@@ -3098,87 +3129,20 @@ PanelWindow {
                             seriesPick: "a"
                             fixedMax: 0
                             stroke: monPopup.fg
-                        }
-                        Repeater {
-                            model: monPopup.graphDual && popupGraphA.data ? popupGraphA.data.length : 0
-                            delegate: Item {
-                                id: aIcon
-                                required property int index
-                                readonly property var sample: popupGraphA.data && index < popupGraphA.data.length ? popupGraphA.data[index] : null
-                                readonly property real val: sample ? (sample.a || 0) : 0
-                                readonly property string app: sample ? (sample.aApp || "") : ""
-                                readonly property int n: popupGraphA.data ? popupGraphA.data.length : 0
-                                readonly property real stepX: popupGraphA.width / (bar.ioHistLen - 1)
-                                readonly property real x0: popupGraphA.width - (n - 1) * stepX
-                                readonly property real span: popupGraphA.height - 2
-                                readonly property real iconPx: parent.iconPx
-                                readonly property string resolvedIcon: bar.strictIconPath(app)
-                                width: iconPx; height: iconPx
-                                x: x0 + index * stepX - iconPx / 2
-                                y: Math.max(0, popupGraphA.height - (val / Math.max(1, bar.monGraphAutoMax(popupGraphA.data, true, 0, "a"))) * span - 1 - iconPx)
-                                visible: val > 0 && app !== "" && app !== "-"
-                                Image {
-                                    id: aImg
-                                    anchors.fill: parent
-                                    sourceSize.width: aIcon.iconPx * 2
-                                    sourceSize.height: aIcon.iconPx * 2
-                                    mipmap: true; smooth: true; asynchronous: true
-                                    fillMode: Image.PreserveAspectFit
-                                    source: aIcon.resolvedIcon
-                                    visible: status === Image.Ready
-                                }
-                                Rectangle {
-                                    anchors.centerIn: parent
-                                    width: parent.width * 0.7
-                                    height: width
-                                    radius: width / 2
-                                    color: bar.commColor(aIcon.app)
-                                    visible: !aImg.visible
-                                }
-                            }
+                            procData: monPopup.procHistData
+                            procApps: monPopup.procAppsA
+                            procField: 0
                         }
                     }
 
                     // Legend for the A series.
                     Flow {
-                        visible: monPopup.graphDual && monPopup.allAppsA.length > 0
+                        visible: monPopup.graphDual && monPopup.procAppsA.length > 0
                         Layout.fillWidth: true
                         spacing: isPrimary ? 10 : 7
                         Repeater {
-                            model: monPopup.allAppsA
-                            delegate: Row {
-                                required property string modelData
-                                readonly property string legendIcon: bar.strictIconPath(modelData)
-                                readonly property int chipSize: isPrimary ? 14 : 11
-                                spacing: isPrimary ? 4 : 3
-                                Item {
-                                    width: parent.chipSize; height: parent.chipSize
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    Image {
-                                        anchors.fill: parent
-                                        source: parent.parent.legendIcon
-                                        visible: status === Image.Ready
-                                        sourceSize.width: parent.width * 2
-                                        sourceSize.height: parent.height * 2
-                                        mipmap: true; smooth: true; asynchronous: true
-                                        fillMode: Image.PreserveAspectFit
-                                    }
-                                    Rectangle {
-                                        anchors.centerIn: parent
-                                        width: parent.width * 0.7; height: width
-                                        radius: width / 2
-                                        color: bar.commColor(modelData)
-                                        visible: parent.parent.legendIcon === ""
-                                    }
-                                }
-                                Text {
-                                    text: modelData
-                                    color: monPopup.fg
-                                    font.pixelSize: isPrimary ? 11 : 9
-                                    font.family: bar.fontFamily
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
+                            model: monPopup.procAppsA
+                            delegate: MonProcChip { }
                         }
                     }
                 }

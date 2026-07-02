@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # Persistent helper: spawns `sudo nethogs -t -d 1` and converts each refresh
-# into one line on stdout for Bar.qml to consume.
+# into two lines on stdout for the shell to consume.
 #
 # Output: "nettop <up_pid> <up_comm> <up_bps> <down_pid> <down_comm> <down_bps>"
-#         pid="-" and comm="-" when nothing was active.
+#         pid="-" and comm="-" when nothing was active (bar's small chart);
+#         "netprocs <comm>:<down_bps>:<up_bps> ..." — every process with
+#         traffic this refresh, aggregated by comm, busiest first (the
+#         popup's per-process graph lines).
 #
 # nethogs outputs *cumulative* KB/refresh per PID; we diff between refreshes
 # to recover the per-second byte rate for that interval.
@@ -41,6 +44,7 @@ def emit():
     top_u_pid = top_d_pid = "-"
     top_u_name = top_d_name = "-"
     top_u = top_d = 0.0
+    by_comm: dict[str, list[float]] = {}
     for pid, (sent, recv, name) in curr.items():
         ps, pr = prev.get(pid, (sent, recv))
         ds = max(0.0, sent - ps)
@@ -49,9 +53,22 @@ def emit():
             top_u, top_u_pid, top_u_name = ds, pid, name
         if dr > top_d:
             top_d, top_d_pid, top_d_name = dr, pid, name
+        if ds > 0 or dr > 0:
+            agg = by_comm.setdefault(name, [0.0, 0.0])
+            agg[0] += dr
+            agg[1] += ds
     print(
         f"nettop {top_u_pid} {top_u_name} {int(top_u * 1024)} "
         f"{top_d_pid} {top_d_name} {int(top_d * 1024)}",
+        flush=True,
+    )
+    # Per-process rates for the popup's per-app graph lines. Busiest first,
+    # capped so a torrent with hundreds of peers can't bloat the line.
+    procs = sorted(by_comm.items(), key=lambda kv: -(kv[1][0] + kv[1][1]))[:12]
+    print(
+        "netprocs " + " ".join(
+            f"{name}:{int(d * 1024)}:{int(u * 1024)}" for name, (d, u) in procs
+        ),
         flush=True,
     )
 
