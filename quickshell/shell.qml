@@ -196,6 +196,11 @@ ShellRoot {
     property string wfMap: ""
     property int wfFrames: 1
     property real wfAvgMs: 100
+    // Overlay lifetime target: reveal (1540ms) + awww warm-decode buffer. The
+    // overlay plans NEW's entry frame so its first frame-0 wrap — the awww
+    // handoff — lands here, capping the double-render linger at ~3s instead
+    // of up to a full animation loop (see WallpaperFade.syncStart).
+    readonly property int wfWrapTargetMs: 4500
     property real wfProgress: 0
     property double wfWarmDone: 0    // Date.now() when the warm awww apply exited; 0 = pending
     property int wfOverlayFrame: -1  // driver overlay's live animation frame
@@ -234,9 +239,11 @@ ShellRoot {
         wfPrevFrame = -1
         wfActive = true
         wfAnim.restart()
-        // Hard cap: reveal + warm + up to ~two animation loops for the frame-0
-        // wrap + slack. If anything goes sideways the overlay always comes down.
-        wfSafety.interval = 1540 + Math.max(4000, 2 * wfFrames * wfAvgMs + 3000)
+        // Hard cap: the wrap is planned for ~wfWrapTargetMs, but if the entry
+        // seek mis-lands (variable frame delays) the next wrap is up to one
+        // loop later — cover reveal + one loop + slack. The overlay always
+        // comes down.
+        wfSafety.interval = 1540 + Math.max(6000, wfFrames * wfAvgMs + 4000)
         wfSafety.restart()
     }
     function wfFinish() {

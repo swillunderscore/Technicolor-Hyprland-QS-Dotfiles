@@ -179,8 +179,11 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
     COLORS_CMD="python3 $HOME/.config/hypr/wallpaper-colors.py '$CHOSEN' && ~/.config/quickshell/notif-theme-mako.sh 2>/dev/null"
 
     if [ -n "$PREV_PATH" ] && [ -f "$PREV_PATH" ] && [ "$PREV_PATH" != "$CHOSEN" ]; then
-        # Reveal pattern from transition.conf (Settings → Wallpaper); default brightness.
+        # Reveal pattern + renderer from transition.conf (Settings → Wallpaper).
+        # RENDER=cpu forces the classic frame-compositor path (keeps the GPU
+        # free — e.g. while playing GPU-bound games); default/gpu = overlay.
         TMODE=$(sed -n 's/^MODE=//p' "$HOME/.config/hypr/transition.conf" 2>/dev/null | tr -d '[:space:]')
+        TRENDER=$(sed -n 's/^RENDER=//p' "$HOME/.config/hypr/transition.conf" 2>/dev/null | tr -d '[:space:]')
 
         # GPU transition (preferred): wallpaper-fade-map.py ranks the reveal
         # once, then quickshell's WallpaperFade overlay does the whole thing on
@@ -190,7 +193,7 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
         # stretching, and there's no per-frame CPU compositing.
         WF_OK=""
         EXT="${CHOSEN##*.}"; EXT="${EXT,,}"
-        if [[ "$EXT" != "mp4" && "$EXT" != "webm" ]]; then
+        if [[ "$EXT" != "mp4" && "$EXT" != "webm" && "$TRENDER" != "cpu" ]]; then
             ASPECT=$(hyprctl monitors -j 2>/dev/null | jq -r '.[0] | "\(.width):\(.height)"' 2>/dev/null)
             case "$ASPECT" in *[0-9]:[0-9]*) : ;; *) ASPECT="16:9" ;; esac
             META=$(nice -n 10 python3 "$HOME/.config/hypr/wallpaper-fade-map.py" \
@@ -214,7 +217,7 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
         fi
 
         if [ -z "$WF_OK" ]; then
-            # CPU fallback (video wallpapers, or quickshell not running).
+            # CPU path (RENDER=cpu, video wallpapers, or quickshell not running).
             # transition.py runs the reveal AND the final animated apply itself.
             if [ -n "${COLORS_RAN:-}" ]; then
                 python3 "$HOME/.config/hypr/wallpaper-transition.py" \
@@ -233,10 +236,6 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
     fi
     echo "$CHOSEN" > "$CURRENT_PATH_FILE"
 
-    # Live-sync the phone-remote deck to the same wallpaper (no-op if not running).
-    # 9>&- releases the stacking flock — the script exits fast now (GPU reveal is
-    # async), so any leaked fd would make rapid re-fires silently no-op.
-    setsid -f "$HOME/.config/hypr/phone-wallpaper-sync.sh" "$CHOSEN" >/dev/null 2>&1 9>&-
 
     # Keep awww's cache small — its per-apply latency grows with the file count,
     # which would make the reveal laggy. Run detached (so it never contends with

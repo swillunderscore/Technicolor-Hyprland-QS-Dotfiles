@@ -50,18 +50,28 @@ PanelWindow {
         smooth: false
         mipmap: false
         cache: true
-        // Enter NEW mid-loop at a wall-clock-derived phase — as if it had been
-        // playing in the background all along — instead of opening every
-        // transition on the loop's "beginning moment". The handoff doesn't
-        // care: the restart apply fires on whichever frame-0 wrap comes next.
+        // Enter NEW mid-loop — never on frame 0 (a frame-0 entry reads as "the
+        // wallpaper restarts at its beginning") — at a PLANNED phase: k frames
+        // before the wrap, so the first frame-0 wrap (which is the awww
+        // handoff moment) lands right after the reveal + decode buffer. That
+        // caps the post-reveal linger — where BOTH awww and this overlay
+        // decode + render full-screen — at ~3s regardless of loop length,
+        // instead of waiting up to a whole loop for an arbitrary-phase wrap.
+        // Loops shorter than the target window wrap fast anyway; those keep
+        // the wall-clock phase ("as if it had been playing all along").
         // Seek + play are imperative because a currentFrame write is ignored
         // once playing; called from BOTH hooks below since Ready-vs-wfActive
         // order is race-prone (a Qt-cached image is Ready DURING the source
         // assignment, before wfStart sets wfActive — gating on one order left
         // the overlay frozen on frame 0).
         function syncStart() {
-            if (frameCount > 1 && shell.wfAvgMs > 0)
-                currentFrame = Math.floor(Date.now() / shell.wfAvgMs) % frameCount
+            if (frameCount > 1 && shell.wfAvgMs > 0) {
+                var k = Math.round(shell.wfWrapTargetMs / shell.wfAvgMs)
+                if (k >= frameCount)
+                    currentFrame = Math.floor(Date.now() / shell.wfAvgMs) % frameCount
+                else
+                    currentFrame = frameCount - Math.max(1, k)
+            }
             playing = true
         }
         onStatusChanged: {

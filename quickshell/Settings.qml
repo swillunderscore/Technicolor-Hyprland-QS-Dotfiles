@@ -232,6 +232,9 @@ FloatingWindow {
     // ── Wallpaper switch transition (Wallpaper tab) ── transition.conf, read by
     // wallpaper-cycle.sh; the named reveal patterns live in wallpaper-transition.py.
     property string transitionMode: "luminance"
+    // gpu = quickshell overlay reveal (both wallpapers keep animating);
+    // cpu = classic frame compositor (keeps the GPU free for GPU-bound games).
+    property string transitionRender: "gpu"
     readonly property var transitions: [
         { id: "luminance", name: "Brightness", desc: "brightest areas appear first" },
         { id: "shadow",    name: "Shadows",    desc: "darkest areas appear first" },
@@ -250,17 +253,22 @@ FloatingWindow {
         path: win.homeDir + "/.config/hypr/transition.conf"
         watchChanges: true
         onFileChanged: this.reload()
-        onLoaded: { var m = this.text().match(/MODE\s*=\s*(\w+)/); win.transitionMode = m ? m[1] : "luminance" }
-        onLoadFailed: win.transitionMode = "luminance"
+        onLoaded: {
+            var t = this.text()
+            var m = t.match(/MODE\s*=\s*(\w+)/);   win.transitionMode   = m ? m[1] : "luminance"
+            var r = t.match(/RENDER\s*=\s*(\w+)/); win.transitionRender = r ? r[1] : "gpu"
+        }
+        onLoadFailed: { win.transitionMode = "luminance"; win.transitionRender = "gpu" }
     }
     Process { id: transitionSetProc }
-    function setTransition(mode) {
-        win.transitionMode = mode
-        var b64 = Qt.btoa("MODE=" + mode + "\n")
+    function writeTransitionConf() {
+        var b64 = Qt.btoa("MODE=" + win.transitionMode + "\nRENDER=" + win.transitionRender + "\n")
         transitionSetProc.command = ["bash", "-c",
             "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/transition.conf'"]
         transitionSetProc.running = true
     }
+    function setTransition(mode) { win.transitionMode = mode; writeTransitionConf() }
+    function setTransitionRender(r) { win.transitionRender = r; writeTransitionConf() }
 
     // ── Hotkeys (Hotkeys tab) ── a read-only cheat sheet built live from
     // `hyprctl binds`, so it always matches the real active binds (including
@@ -1360,6 +1368,30 @@ FloatingWindow {
                                     if (win.transitions[i].id === win.transitionMode) return "Applies on the next wallpaper change — " + win.transitions[i].desc + "."
                                 return ""
                             }
+                        }
+
+                        // ── transition renderer (GPU overlay vs CPU compositor) ──
+                        Row {
+                            spacing: 6
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: "Renders on"; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                            Repeater {
+                                model: [ { id: "gpu", name: "GPU" }, { id: "cpu", name: "CPU" } ]
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    readonly property bool sel: win.transitionRender === modelData.id
+                                    height: 30; radius: 8; width: rdLbl.implicitWidth + 24
+                                    color: sel ? win.rowHover : win.rowBg
+                                    border.width: sel ? 2 : 0; border.color: win.fg
+                                    Text { id: rdLbl; anchors.centerIn: parent; text: modelData.name; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                    MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.setTransitionRender(modelData.id) }
+                                }
+                            }
+                        }
+                        Text {
+                            width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                            text: win.transitionRender === "cpu"
+                                ? "Classic frame compositor — keeps the graphics card free (pick this if your games are GPU-bound)."
+                                : "Overlay reveal — both wallpapers keep animating, work happens on the graphics card (pick this if your games are CPU-bound). Video wallpapers always use the CPU path."
                         }
 
                         // ── auto-cycle timer ──

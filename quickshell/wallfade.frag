@@ -29,6 +29,13 @@ void main() {
         : vec2(1.0, imgAspect / scrAspect);
     vec2 uv = (qt_TexCoord0 - 0.5) * s + 0.5;
 
+    // Post-reveal linger (fully opaque, waiting for the awww handoff): skip
+    // the fadeMap sample — uniform branch, whole draw takes the cheap path.
+    if (progress >= 1.0) {
+        fragColor = texture(source, uv) * qt_Opacity;
+        return;
+    }
+
     float p = clamp(progress, 0.0, 1.0);
     p = p * p * (3.0 - 2.0 * p);                       // frontier ease
     float start = texture(fadeMap, qt_TexCoord0).r * (1.0 - fadeFrac);

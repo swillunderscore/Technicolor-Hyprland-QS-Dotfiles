@@ -23,7 +23,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 NFRAMES = 22
 FRAME_INTERVAL = 0.070       # seconds; total ~1.54s
@@ -129,30 +129,57 @@ def main() -> int:
         old_durations = [0.1]
     old = old_frames[0]
 
-    if old.shape != new.shape:
-        target = (new.shape[1], new.shape[0])
-        old_frames = [
-            np.array(Image.fromarray(f).resize(target, Image.NEAREST))
-            for f in old_frames
-        ]
-        old = old_frames[0]
+    # Composite on a SCREEN-aspect canvas, cover-cropping BOTH animations onto
+    # it — the same centered crop awww's `--resize crop` shows of each. (This
+    # used to stretch OLD onto NEW's canvas, which visibly warped a 16:9 OLD
+    # for the whole reveal whenever NEW was vertical.) With the canvas at
+    # screen aspect, awww's crop of each composited frame is the identity, so
+    # each wallpaper appears exactly as its own full-screen crop does.
+    #
+    # The canvas is also capped: computing the reveal at full wallpaper res
+    # (upscaled stills are 5120x3200 ≈ 410ms/frame) blows the ~70ms frame
+    # budget ~6x and the transition stutters. The caller applies the crisp
+    # full-res image at the end.
+    def screen_aspect() -> float:
+        try:
+            import json
+            out = subprocess.run(["hyprctl", "monitors", "-j"],
+                                 capture_output=True, text=True, timeout=2)
+            m = json.loads(out.stdout)[0]
+            w, h = float(m["width"]), float(m["height"])
+            if int(m.get("transform", 0)) in (1, 3, 5, 7):  # rotated 90/270
+                w, h = h, w
+            return w / h if h > 0 else 16 / 9
+        except Exception:
+            return 16 / 9
 
-    # Cap the working resolution. The reveal is a brief dissolve, but computing
-    # it at full wallpaper res (upscaled stills are 5120x3200 ≈ 410ms/frame)
-    # blows the ~70ms frame budget ~6x and the transition stutters. Downscale
-    # the working copies; the caller applies the crisp full-res image at the
-    # end, and awww rescales each frame to the screen so the reveal still
-    # covers the whole monitor.
     MAX_DIM = 1920
+    ar = screen_aspect()
     h0, w0 = new.shape[:2]
-    if max(h0, w0) > MAX_DIM:
-        scale = MAX_DIM / max(h0, w0)
-        size = (max(1, round(w0 * scale)), max(1, round(h0 * scale)))
-        new_frames = [np.array(Image.fromarray(f).resize(size, Image.LANCZOS))
-                      for f in new_frames]
-        old_frames = [np.array(Image.fromarray(f).resize(size, Image.LANCZOS))
-                      for f in old_frames]
+    # Canvas = NEW's own cover-crop region, capped to MAX_DIM on the long side.
+    if w0 / h0 > ar:
+        ch, cw = h0, max(1, round(h0 * ar))
+    else:
+        cw, ch = w0, max(1, round(w0 / ar))
+    if max(cw, ch) > MAX_DIM:
+        s = MAX_DIM / max(cw, ch)
+        cw, ch = max(1, round(cw * s)), max(1, round(ch * s))
+
+    def cover(frames):
+        out = []
+        for f in frames:
+            im = Image.fromarray(f)
+            # NEAREST for upscales keeps pixel art crisp; LANCZOS downscales.
+            method = Image.NEAREST if (im.width < cw or im.height < ch) \
+                else Image.LANCZOS
+            out.append(np.array(ImageOps.fit(im, (cw, ch), method)))
+        return out
+
+    if (new.shape[1], new.shape[0]) != (cw, ch):
+        new_frames = cover(new_frames)
         new = new_frames[0]
+    if (old.shape[1], old.shape[0]) != (cw, ch):
+        old_frames = cover(old_frames)
         old = old_frames[0]
 
     # Cumulative animation times for sampling each animation at wall-clock t.

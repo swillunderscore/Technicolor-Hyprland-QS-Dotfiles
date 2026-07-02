@@ -1,3 +1,10 @@
-# Wallpaper-switch transition pattern (Settings → Wallpaper → Transition).
-# MODE = luminance | shadow | radial | wipe | dissolve | random
+# Wallpaper-switch transition (Settings → Wallpaper → Transition).
+# MODE   = luminance | shadow | radial | iris | wipe | curtain | diagonal |
+#          clock | blinds | dissolve | random   (the reveal pattern)
+# RENDER = gpu | cpu
+#   gpu: quickshell overlay — both wallpapers keep animating, work happens on
+#        the graphics card.
+#   cpu: classic frame compositor — keeps the GPU free (for GPU-bound games);
+#        video wallpapers always use this path.
 MODE=luminance
+RENDER=gpu
