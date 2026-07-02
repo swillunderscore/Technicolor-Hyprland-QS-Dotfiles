@@ -231,6 +231,7 @@ ShellRoot {
         wfFrames = Math.max(1, frames)
         wfAvgMs = Math.max(1, avgMs)
         wfProgress = 0
+        wfPrevFrame = -1
         wfActive = true
         wfAnim.restart()
         // Hard cap: reveal + warm + up to ~two animation loops for the frame-0
@@ -284,11 +285,18 @@ ShellRoot {
                   "--transition-type", "none", "--transition-fps", "255"]
         onExited: if (root.wfActive) root.wfFinish()
     }
+    property int wfPrevFrame: -1
     onWfOverlayFrameChanged: {
+        var f = wfOverlayFrame
+        var p = wfPrevFrame
+        wfPrevFrame = f
         if (!wfActive || wfWarmDone <= 0 || wfFrames <= 1 || wfErrored) return
         if (wfRestartProc.running) return
-        // Fire on the frame-0 wrap, once the warm apply has settled.
-        if (wfOverlayFrame === 0 && Date.now() - wfWarmDone > 150)
+        if (Date.now() - wfWarmDone <= 150) return
+        // Fire ONE frame before the wrap (the apply's ~one-frame latency then
+        // lands awww's frame 0 right as the overlay wraps), or on any detected
+        // wrap — an exact ===0 check misses when Qt skips frames under load.
+        if (f === wfFrames - 1 || f === 0 || (p >= 0 && f < p))
             wfRestartProc.running = true
     }
     Timer { id: wfSafety; onTriggered: { if (root.wfWarmDone <= 0) wfApplyProc.running = true; root.wfFinish() } }

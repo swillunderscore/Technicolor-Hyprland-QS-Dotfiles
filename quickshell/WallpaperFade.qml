@@ -43,18 +43,40 @@ PanelWindow {
         id: img
         visible: false
         source: (shell && shell.wfNew) ? "file://" + shell.wfNew : ""
-        playing: shell ? shell.wfActive : false
+        // Starts false so the entry frame can be seeked before playback — a
+        // currentFrame write is IGNORED once playing (and pause-set-resume
+        // freezes outright); the binding is attached after the seek.
+        playing: false
         smooth: false
         mipmap: false
         cache: true
+        // Enter NEW mid-loop at a wall-clock-derived phase — as if it had been
+        // playing in the background all along — instead of opening every
+        // transition on the loop's "beginning moment". The handoff doesn't
+        // care: the restart apply fires on whichever frame-0 wrap comes next.
+        // Seek + play are imperative because a currentFrame write is ignored
+        // once playing; called from BOTH hooks below since Ready-vs-wfActive
+        // order is race-prone (a Qt-cached image is Ready DURING the source
+        // assignment, before wfStart sets wfActive — gating on one order left
+        // the overlay frozen on frame 0).
+        function syncStart() {
+            if (frameCount > 1 && shell.wfAvgMs > 0)
+                currentFrame = Math.floor(Date.now() / shell.wfAvgMs) % frameCount
+            playing = true
+        }
         onStatusChanged: {
             if (status === Image.Error && win.isDriver && shell) shell.wfImageError()
-            // No start-phasing: AnimatedImage ignores currentFrame writes while
-            // playing (verified), and pause-set-resume froze playback outright.
-            // The animation simply starts at frame 0 and the synchronizing
-            // restart (shell.qml wfRestartProc) fires on the natural frame-0
-            // wrap — at most one loop after the reveal, invisibly, with NEW
-            // animating in the overlay the whole time.
+            if (status === Image.Ready && shell && shell.wfActive) syncStart()
+        }
+        Connections {
+            target: win.shell
+            function onWfActiveChanged() {
+                if (win.shell.wfActive) {
+                    if (img.status === Image.Ready) img.syncStart()
+                } else {
+                    img.playing = false   // idle: stop decode entirely
+                }
+            }
         }
         // The root's 20ms alignment poll (wfAlign) reads this to find the
         // moment our frame == awww's modeled frame, then drops the overlay.
