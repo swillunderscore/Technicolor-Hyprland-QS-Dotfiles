@@ -193,7 +193,7 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
         if [[ "$EXT" != "mp4" && "$EXT" != "webm" ]]; then
             ASPECT=$(hyprctl monitors -j 2>/dev/null | jq -r '.[0] | "\(.width):\(.height)"' 2>/dev/null)
             case "$ASPECT" in *[0-9]:[0-9]*) : ;; *) ASPECT="16:9" ;; esac
-            META=$(python3 "$HOME/.config/hypr/wallpaper-fade-map.py" \
+            META=$(nice -n 10 python3 "$HOME/.config/hypr/wallpaper-fade-map.py" \
                 "$CHOSEN" "${TMODE:-luminance}" /tmp/wallfade-map.png --aspect "$ASPECT" 2>/dev/null)
             if [ -n "$META" ]; then
                 WF_FRAMES=$(jq -r '.frames' <<<"$META" 2>/dev/null)
@@ -202,7 +202,9 @@ elif [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
                 # --at-start); fire before the overlay starts. 9>&- closes the
                 # inherited flock fd — without it this multi-second job keeps
                 # the stacking lock held and rapid re-fires get swallowed.
-                eval "$COLORS_CMD" >/dev/null 2>&1 9>&- &
+                # nice'd: the theme generators are the transition's only real
+                # CPU load now — keep them off the compositor's back.
+                nice -n 10 bash -c "$COLORS_CMD" >/dev/null 2>&1 9>&- &
                 COLORS_RAN=1
                 if qs ipc call wallfade start "$CHOSEN" /tmp/wallfade-map.png \
                     "${WF_FRAMES:-1}" "${WF_AVGMS:-100}" >/dev/null 2>&1; then

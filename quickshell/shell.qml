@@ -197,8 +197,10 @@ ShellRoot {
     property int wfFrames: 1
     property real wfAvgMs: 100
     property real wfProgress: 0
-    property double wfApplyTime: 0   // Date.now() when awww confirmed NEW; 0 = pending
+    property double wfWarmDone: 0    // Date.now() when the warm awww apply exited; 0 = pending
     property int wfOverlayFrame: -1  // driver overlay's live animation frame
+    property bool wfErrored: false
+    property var wfPending: null     // latest queued start() while a reveal runs (spam-W)
 
     NumberAnimation {
         id: wfAnim
@@ -211,9 +213,19 @@ ShellRoot {
     }
 
     function wfStart(path, map, frames, avgMs) {
-        wfApplyProc.running = false   // cancel a pending handoff from a prior run
+        if (wfActive && wfWarmDone <= 0 && !wfErrored) {
+            // A reveal is still running: queue the newest request instead of
+            // restarting from the pre-spam base — the current reveal finishes,
+            // then we transition onward to the LATEST target (spam-W friendly).
+            wfPending = { path: path, map: map, frames: frames, avgMs: avgMs }
+            return
+        }
+        if (wfActive) wfFinish()      // lingering post-reveal: drop and move on
+        wfApplyProc.running = false
+        wfRestartProc.running = false
         wfSafety.stop()
-        wfApplyTime = 0
+        wfWarmDone = 0
+        wfErrored = false
         wfNew = ""; wfNew = path      // cycle to force a reload/frame-0 restart
         wfMap = ""; wfMap = map
         wfFrames = Math.max(1, frames)
@@ -221,9 +233,9 @@ ShellRoot {
         wfProgress = 0
         wfActive = true
         wfAnim.restart()
-        // Hard cap: reveal + one full animation loop to find the aligned frame
-        // + slack. If anything goes sideways the overlay always comes down.
-        wfSafety.interval = 1540 + Math.max(3000, wfFrames * wfAvgMs + 2500)
+        // Hard cap: reveal + warm + up to ~two animation loops for the frame-0
+        // wrap + slack. If anything goes sideways the overlay always comes down.
+        wfSafety.interval = 1540 + Math.max(4000, 2 * wfFrames * wfAvgMs + 3000)
         wfSafety.restart()
     }
     function wfFinish() {
@@ -231,43 +243,55 @@ ShellRoot {
         wfSafety.stop()
         wfActive = false
         wfProgress = 0
+        wfWarmDone = 0
+        if (wfPending) {              // chain to the newest queued request
+            var p = wfPending; wfPending = null
+            wfStart(p.path, p.map, p.frames, p.avgMs)
+        }
     }
     function wfImageError() {         // NEW failed to decode: plain instant swap
+        wfErrored = true
         wfAnim.stop()
         wfApplyProc.running = true
     }
 
-    // The single authoritative awww apply — fired once per transition, at
-    // reveal end, invisible under the fully-opaque overlay (so a cache-cold
-    // decode no longer freezes the visible wallpaper like the old handoff).
+    // Warm apply — fired at reveal end, invisible under the fully-opaque
+    // overlay, so a cache-cold decode never freezes the visible wallpaper.
+    // It leaves awww playing NEW at some unknowable phase; the RESTART apply
+    // below is what synchronizes the clocks.
     Process {
         id: wfApplyProc
         command: ["awww", "img", root.wfNew, "--fill-color", "000000",
                   "--resize", "crop", "--filter", "Nearest",
                   "--transition-type", "none", "--transition-fps", "255"]
         onExited: {
-            root.wfApplyTime = Date.now()
-            // Stills (or failed decodes) have no frame clock to align — the
-            // overlay content is already pixel-identical to awww; drop now.
-            if (root.wfFrames <= 1) root.wfFinish()
+            root.wfWarmDone = Date.now()
+            // Stills (or failed decodes) have no frame clock — the overlay is
+            // already pixel-identical to awww; drop now.
+            if (root.wfFrames <= 1 || root.wfErrored) root.wfFinish()
         }
     }
-    Timer { id: wfSafety; onTriggered: { if (root.wfApplyTime <= 0) wfApplyProc.running = true; root.wfFinish() } }
-
-    // Seamless drop: once awww is running NEW underneath, model its frame
-    // clock (started at frame 0 at wfApplyTime) and hide the overlay at an
-    // instant both surfaces show the SAME frame. Polled between frame
-    // boundaries — two same-rate clocks with a constant offset are only ever
-    // equal mid-frame, never at the edges, so a frame-change check can't work.
-    Timer {
-        id: wfAlign
-        interval: 20; repeat: true
-        running: root.wfActive && root.wfApplyTime > 0 && root.wfFrames > 1
-        onTriggered: {
-            var fa = Math.floor((Date.now() - root.wfApplyTime) / root.wfAvgMs) % root.wfFrames
-            if (fa === root.wfOverlayFrame) root.wfFinish()
-        }
+    // Deterministic handoff: awww ALWAYS starts an animation at frame 0, so
+    // re-applying the (now cache-warm, ~40ms) image the moment the overlay
+    // wraps to frame 0 puts both surfaces at frame ~0 together — no modeling
+    // of awww's hidden animation clock (which starts after an unobservable
+    // decode delay; guessing it made the drop snap the wallpaper back to its
+    // loop start).
+    Process {
+        id: wfRestartProc
+        command: ["awww", "img", root.wfNew, "--fill-color", "000000",
+                  "--resize", "crop", "--filter", "Nearest",
+                  "--transition-type", "none", "--transition-fps", "255"]
+        onExited: if (root.wfActive) root.wfFinish()
     }
+    onWfOverlayFrameChanged: {
+        if (!wfActive || wfWarmDone <= 0 || wfFrames <= 1 || wfErrored) return
+        if (wfRestartProc.running) return
+        // Fire on the frame-0 wrap, once the warm apply has settled.
+        if (wfOverlayFrame === 0 && Date.now() - wfWarmDone > 150)
+            wfRestartProc.running = true
+    }
+    Timer { id: wfSafety; onTriggered: { if (root.wfWarmDone <= 0) wfApplyProc.running = true; root.wfFinish() } }
 
     Variants {
         model: Quickshell.screens

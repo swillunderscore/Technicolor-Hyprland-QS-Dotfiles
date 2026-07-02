@@ -49,15 +49,12 @@ PanelWindow {
         cache: true
         onStatusChanged: {
             if (status === Image.Error && win.isDriver && shell) shell.wfImageError()
-            // Phase the animation so it wraps to frame 0 right when the reveal
-            // ends — awww's apply then also starts at frame 0, leaving only the
-            // apply latency (<1 frame) between the two clocks. Same trick the
-            // old wallpaper-transition.py used, but with Qt's exact cadence.
-            if (status === Image.Ready && shell && shell.wfActive
-                    && frameCount > 1 && shell.wfAvgMs > 0) {
-                var revealFrames = Math.round(1540 / shell.wfAvgMs)
-                currentFrame = (frameCount - (revealFrames % frameCount)) % frameCount
-            }
+            // No start-phasing: AnimatedImage ignores currentFrame writes while
+            // playing (verified), and pause-set-resume froze playback outright.
+            // The animation simply starts at frame 0 and the synchronizing
+            // restart (shell.qml wfRestartProc) fires on the natural frame-0
+            // wrap — at most one loop after the reveal, invisibly, with NEW
+            // animating in the overlay the whole time.
         }
         // The root's 20ms alignment poll (wfAlign) reads this to find the
         // moment our frame == awww's modeled frame, then drops the overlay.
