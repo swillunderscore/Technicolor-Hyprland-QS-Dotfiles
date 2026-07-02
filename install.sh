@@ -56,6 +56,9 @@ done
 cp -r "$SRC/hypr" "$SRC/quickshell" "$SRC/mako" "$HOME/.config/"
 mkdir -p "$HOME/.local/share/applications"
 cp "$SRC"/applications/*.desktop "$HOME/.local/share/applications/"
+# Record the installed commit so Settings → System → "Check for updates" lists
+# only commits newer than this install.
+git -C "$SRC" rev-parse HEAD > "$HOME/.config/hypr/.technicolor-version" 2>/dev/null || true
 ok "configs copied"
 
 # ── per-machine files + wallpapers dir (cp -n keeps your edits on re-run) ───

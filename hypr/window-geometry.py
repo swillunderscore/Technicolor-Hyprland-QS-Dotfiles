@@ -32,7 +32,7 @@ MIN_SIZE = 50  # ignore tiny/transient surfaces
 # lowercase "steam"); recording it let a 700x330 popup poison the geometry and
 # force real Steam windows tiny in the corner. Never record/reposition it.
 EXCLUDE = {"com.dec05eba.gpu_screen_recorder", "gsr-ui", "hyprland-run", "wofi",
-           "Steam"}
+           "Steam", "aquamarine"}
 
 # Some XWayland apps (e.g. Godot) give their popups/tooltips the SAME class as
 # the main window, so a class-only geometry rule force-sizes the popup to the

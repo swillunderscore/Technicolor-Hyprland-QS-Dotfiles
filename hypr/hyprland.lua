@@ -227,11 +227,10 @@ hl.env("XCURSOR_THEME", "Bibata-Modern-Ice")
 hl.env("XCURSOR_SIZE", "24")
 
 -- ── Monitors ────────────────────────────────────────────────────────────────
--- Defined HERE (not only in the monitors.conf fragment) so every `hyprctl reload`
--- re-asserts the high refresh rate. The fragment is applied once at startup, but a
--- screen power-toggle / DPMS re-detects the displays at their default 60Hz and the
--- startup-only path never restored 164Hz — defining them in the main config means a
--- reload fixes it. (Matches monitors.conf; keep both in sync, or migrate fully here.)
+-- Machine-specific `monitor =` lines belong in local.conf (gitignored, read by
+-- the fragment loader at every parse — so a `hyprctl reload` re-asserts refresh
+-- rates after a DPMS/power-toggle re-detect, and the Settings Update re-copy
+-- can never clobber them). This generic line is only the single-screen default.
 -- EDIT for your displays (`hyprctl monitors -j` for output names/desc).
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "1.0" })
 
