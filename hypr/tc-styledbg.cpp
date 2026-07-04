@@ -49,11 +49,52 @@
 #include <QRegularExpression>
 #include <QTimer>
 #include <QWidget>
+#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <string>
 #ifdef HAVE_KCONFIG
 #include <KSharedConfig>
 #endif
+
+// ── Stop LD_PRELOAD leaking into Dolphin's child processes ───────────────────
+// dolphin-tc.sh exports LD_PRELOAD=tc-styledbg.so so this shim loads into
+// Dolphin. The problem: Dolphin then passes LD_PRELOAD to EVERY process it
+// launches, and this .so links libKF6ConfigCore.so.6 — which is absent inside
+// sandboxes like Steam's pressure-vessel runtime, so the /bin/bash that
+// bootstraps steamwebhelper (and each game launch) dies with "cannot open
+// shared object file", hanging Steam and blocking games. The shim is only ever
+// useful IN Dolphin itself (all its work is in-process; the kioworker notes
+// below are crash-safety, not features), so at load time we strip OUR entry
+// from LD_PRELOAD: we're already loaded into this process, but its children
+// won't inherit us. constructor(101) runs before main() and long before Dolphin
+// spawns anything. Any other preload the user set is preserved.
+__attribute__((constructor(101))) static void tc_unleak_ld_preload()
+{
+    const char *pre = getenv("LD_PRELOAD");
+    if (!pre || !*pre)
+        return;
+    const std::string in(pre);
+    std::string out;
+    size_t i = 0;
+    while (i <= in.size()) {
+        const size_t sep = in.find_first_of(": ", i);  // entries split on ':' or ' '
+        const std::string tok =
+            in.substr(i, sep == std::string::npos ? std::string::npos : sep - i);
+        if (!tok.empty() && tok.find("tc-styledbg.so") == std::string::npos) {
+            if (!out.empty())
+                out += ':';
+            out += tok;
+        }
+        if (sep == std::string::npos)
+            break;
+        i = sep + 1;
+    }
+    if (out.empty())
+        unsetenv("LD_PRELOAD");
+    else
+        setenv("LD_PRELOAD", out.c_str(), 1);
+}
 
 static void initQssWatcher()
 {
