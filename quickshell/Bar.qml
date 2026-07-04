@@ -2030,7 +2030,7 @@ PanelWindow {
                         }
                         MouseArea {
                             anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                            onClicked: Quickshell.execDetached(["sh", "-c", modelData.cmd])
+                            onClicked: Quickshell.execDetached(["sh", "-c", "cd \"$HOME\"; " + modelData.cmd])
                             onEntered: launcherItem.scale = 1.2; onExited: launcherItem.scale = 1.0
                         }
                         Behavior on scale { NumberAnimation { duration: 100 } }
@@ -3361,7 +3361,7 @@ PanelWindow {
                     event.accepted = true
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                     if (launcherPanel.filteredApps.length > 0) {
-                        Quickshell.execDetached(["sh", "-c", launcherPanel.filteredApps[0].exec])
+                        Quickshell.execDetached(["sh", "-c", "cd \"$HOME\"; " + launcherPanel.filteredApps[0].exec])
                         bar.closeLauncher()
                     }
                     event.accepted = true
@@ -3684,7 +3684,7 @@ PanelWindow {
                                 }
                                 MouseArea {
                                     id: appMouse; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                                    onClicked: { if (appItem.app) { Quickshell.execDetached(["sh", "-c", appItem.app.exec]); bar.closeLauncher() } }
+                                    onClicked: { if (appItem.app) { Quickshell.execDetached(["sh", "-c", "cd \"$HOME\"; " + appItem.app.exec]); bar.closeLauncher() } }
                                 }
                             }
                         }
