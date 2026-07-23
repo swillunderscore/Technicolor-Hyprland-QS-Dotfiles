@@ -8,8 +8,10 @@
 #         traffic this refresh, aggregated by comm, busiest first (the
 #         popup's per-process graph lines).
 #
-# nethogs outputs *cumulative* KB/refresh per PID; we diff between refreshes
-# to recover the per-second byte rate for that interval.
+# nethogs runs with -v 2 (cumulative TOTAL BYTES per PID — the default -v 0 is
+# a kB/s RATE, and diffing rates yields acceleration ≈ 0 for steady transfers,
+# which flatlined the per-app graph lines); we diff between refreshes to
+# recover the per-second byte rate for that interval.
 
 import os, signal, subprocess, sys
 
@@ -28,7 +30,7 @@ signal.signal(signal.SIGTERM, _shutdown)
 signal.signal(signal.SIGINT, _shutdown)
 
 proc = subprocess.Popen(
-    ["sudo", "-n", NETHOGS, "-t", "-d", "1"],
+    ["sudo", "-n", NETHOGS, "-t", "-d", "1", "-v", "2"],
     stdout=subprocess.PIPE,
     stderr=subprocess.DEVNULL,
     text=True,
@@ -57,9 +59,10 @@ def emit():
             agg = by_comm.setdefault(name, [0.0, 0.0])
             agg[0] += dr
             agg[1] += ds
+    # -v 2 values are already bytes — no kB conversion.
     print(
-        f"nettop {top_u_pid} {top_u_name} {int(top_u * 1024)} "
-        f"{top_d_pid} {top_d_name} {int(top_d * 1024)}",
+        f"nettop {top_u_pid} {top_u_name} {int(top_u)} "
+        f"{top_d_pid} {top_d_name} {int(top_d)}",
         flush=True,
     )
     # Per-process rates for the popup's per-app graph lines. Busiest first,
@@ -67,7 +70,7 @@ def emit():
     procs = sorted(by_comm.items(), key=lambda kv: -(kv[1][0] + kv[1][1]))[:12]
     print(
         "netprocs " + " ".join(
-            f"{name}:{int(d * 1024)}:{int(u * 1024)}" for name, (d, u) in procs
+            f"{name}:{int(d)}:{int(u)}" for name, (d, u) in procs
         ),
         flush=True,
     )
@@ -96,6 +99,11 @@ for raw in proc.stdout:
         continue
     pid = bits[-2]
     cmd = "/".join(bits[:-2])
+    # Proton/Wine games report Windows paths ("S:\common\Game Name\game.exe")
+    # whose spaces would truncate at the first word — take the backslash
+    # basename first so they come out as "game.exe".
+    if "\\" in cmd:
+        cmd = cmd.rsplit("\\", 1)[-1]
     bin_path = cmd.split(" ", 1)[0]
     # Chromium/Electron utility subprocesses set argv[0] = "/proc/self/exe"
     # so the kid can re-exec itself; that turns into the useless basename
