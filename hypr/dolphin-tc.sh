@@ -31,5 +31,16 @@ STYLE_SRC="$D/tc-style.cpp"
 if [ -e "$STYLE_SRC" ] && { [ ! -e "$STYLE_SO" ] || [ "$STYLE_SRC" -nt "$STYLE_SO" ]; }; then
     g++ -shared -fPIC -O2 -o "$STYLE_SO" "$STYLE_SRC" $(pkg-config --cflags --libs Qt6Widgets) 2>/dev/null
 fi
+# Technicolor theming needs these Qt env vars. A normal launch inherits them from
+# the Hyprland session, but a D-Bus FileManager1 activation (Brave's "show in
+# folder") only gets a tiny activation env that has qt6ct but LACKS the Breeze
+# style override + wayland platform — so Dolphin came up unthemed. Supply them
+# here (values match hyprland.lua); ':-' keeps whatever the session already set.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+export QT_QPA_PLATFORMTHEME="${QT_QPA_PLATFORMTHEME:-qt6ct}"
+export QT_STYLE_OVERRIDE="${QT_STYLE_OVERRIDE:-Breeze}"
+export XCURSOR_THEME="${XCURSOR_THEME:-Bibata-Modern-Ice}"
+export XCURSOR_SIZE="${XCURSOR_SIZE:-24}"
+
 [ -e "$SO" ] && export LD_PRELOAD="$SO${LD_PRELOAD:+:$LD_PRELOAD}"
 exec dolphin -stylesheet "$HOME/.config/qt6ct/technicolor.qss" "$@"
