@@ -307,10 +307,12 @@ hl.window_rule({ name = "nofocus-empty",
                  no_focus = true })
 hl.window_rule({ name = "hyprland-run-float", match = { class = "^(hyprland-run)$" }, float = true })
 hl.window_rule({ name = "hyprland-run-move",  match = { class = "^(hyprland-run)$" }, move = "20 100%-120" })
--- Telegram self-raises on every message; focus_on_activate doesn't catch the
--- explicit activate, so suppress it.
+-- Telegram self-raises on new messages; focus_on_activate=false doesn't catch its
+-- explicit activate. `activate` alone suppresses the raise/urgent but NOT the focus
+-- steal (a rare cross-monitor focus jump onto Telegram); `activatefocus`
+-- suppresses the focus-on-activate specifically.
 hl.window_rule({ name = "tg-noactivate",
-                 match = { class = "^(org\\.telegram\\.desktop)$" }, suppress_event = "activate" })
+                 match = { class = "^(org\\.telegram\\.desktop)$" }, suppress_event = "activate activatefocus" })
 
 -- chromakey glass (Hypr-DarkWindow). Shaders are registered AND the shade window
 -- rules are set together, but ONLY when the plugin is loaded. At the initial
