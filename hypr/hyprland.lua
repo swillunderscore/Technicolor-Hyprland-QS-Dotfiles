@@ -11,6 +11,22 @@
 -- ============================================================================
 
 local mainMod     = "SUPER"
+
+-- Scroll direction, in ONE place. Hyprland's `mouse_up` / `mouse_down` bind
+-- names follow the PROCESSED scroll axis, so `input:natural_scroll` inverts
+-- which name a physical wheel gesture triggers. Verified empirically by
+-- injecting a known REL_WHEEL through uinput:
+--     natural_scroll = false -> wheel forward = mouse_up
+--     natural_scroll = true  -> wheel forward = mouse_down
+-- Binding the raw names therefore hard-codes one setting (and one Hyprland
+-- version's idea of it — 0.56 flipped what 0.55 did here, which silently
+-- reversed the scroll binds). Instead derive the names from the setting below
+-- and bind by PHYSICAL gesture, so scroll-up/scroll-down keep meaning the same
+-- thing on any mouse and for anyone who prefers natural scrolling: flip this
+-- one flag and both the input option and the binds follow it.
+local naturalScroll = false
+local scrollUp      = naturalScroll and "mouse_down" or "mouse_up"
+local scrollDown    = naturalScroll and "mouse_up"   or "mouse_down"
 local H           = os.getenv("HOME")
 local terminal    = "kitty"   -- default; overridden by terminal.conf just below
 local fileManager = H .. "/.config/hypr/dolphin-tc.sh"
@@ -208,8 +224,11 @@ hl.config({
         float_switch_override_focus = 0,
         sensitivity = 0,
         force_no_accel = true,
+        -- Set EXPLICITLY (it was previously left at the default): the scroll
+        -- binds below are derived from this, so it must never be implicit.
+        natural_scroll = naturalScroll,
         touchpad = {
-            natural_scroll = false,
+            natural_scroll = naturalScroll,
         },
     },
     animations = {
@@ -405,10 +424,13 @@ hl.bind(mainMod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "d" }))
 -- alt-tab pie (quickshell global)
 hl.bind("ALT + Tab", hl.dsp.global("quickshell:alttab"))
 hl.bind("ALT + Tab", hl.dsp.global("quickshell:alttabrelease"), { release = true })
-hl.bind(mainMod .. " + mouse_down", hl.dsp.global("quickshell:alttab"))
+-- SUPER + scroll UP = raise the switcher, SUPER + scroll DOWN = send the
+-- hovered window away (minimize). Bound via scrollUp/scrollDown (see the top of
+-- this file) so the PHYSICAL gesture is what's fixed, not the axis name.
+hl.bind(mainMod .. " + " .. scrollUp, hl.dsp.global("quickshell:alttab"))
 hl.bind("SUPER_L", hl.dsp.global("quickshell:alttabrelease"), { release = true })
--- minimize hovered window (scroll-down on this hardware)
-hl.bind(mainMod .. " + mouse_up", exec(H .. "/.config/hypr/minimize.sh"))
+-- minimize the window under the cursor
+hl.bind(mainMod .. " + " .. scrollDown, exec(H .. "/.config/hypr/minimize.sh"))
 
 -- Workspace navigation
 hl.bind(mainMod .. " + bracketleft",        exec(H .. "/.config/hypr/workspace-move.sh left"))
