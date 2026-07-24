@@ -126,9 +126,13 @@ ShellRoot {
     property int netTopDownBytes: 0
     property int netTopTick: 0      // bumps on every nethogs refresh — bars use
                                     // this as the cue to push a fresh bucket
-    // Scrolling per-process rate history ({comm: [downBps, upBps]} per nethogs
-    // refresh, newest last) — the net popup draws one graph line per app.
-    property var netProcHist: []
+    // LATEST per-process rates only ({comm: [downBps, upBps]}), not a history.
+    // The bars fold this into their own history on the SAME tick that pushes the
+    // /proc/net/dev totals, so the per-app lines and the total line are sampled
+    // on one clock and line up bucket-for-bucket. (Building the history here
+    // instead put it on nethogs' independent ~1 s clock, which drifted against
+    // the bar's timer and slid the per-app lines sideways under the total.)
+    property var netProcRates: ({})
 
     Process {
         id: nethogsProc
@@ -150,10 +154,7 @@ ShellRoot {
                         var comm = f.slice(0, f.length - 2).join(":")
                         if (comm) tick[comm] = [dn, up]
                     }
-                    var h = root.netProcHist.slice()
-                    h.push(tick)
-                    while (h.length > 48) h.shift()   // == Bar.qml ioHistLen
-                    root.netProcHist = h
+                    root.netProcRates = tick
                     return
                 }
                 if (p[0] !== "nettop" || p.length < 7) return
@@ -201,7 +202,7 @@ ShellRoot {
             fontFamily: root.uiFont
             sharedNetTopUpComm: root.netTopUpComm
             sharedNetTopDownComm: root.netTopDownComm
-            sharedNetProcHist: root.netProcHist
+            sharedNetProcRates: root.netProcRates
 
             Component.onCompleted: root.primaryBar = this
             Component.onDestruction: if (root.primaryBar === this) root.primaryBar = null

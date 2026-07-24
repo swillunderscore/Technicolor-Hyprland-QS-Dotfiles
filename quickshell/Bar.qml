@@ -36,9 +36,12 @@ PanelWindow {
     // buckets with the top sender/receiver app for that 1-second window.
     property string sharedNetTopUpComm: "-"
     property string sharedNetTopDownComm: "-"
-    // Per-process rate history from the same streamer ({comm: [downBps,
-    // upBps]} per refresh, newest last) — the net popup's per-app lines.
-    property var sharedNetProcHist: []
+    // LATEST per-process rates from the streamer ({comm: [downBps, upBps]}),
+    // folded into netProcHist below on the same tick as the totals so the two
+    // series stay index-aligned (nethogs runs on its own ~1 s clock).
+    property var sharedNetProcRates: ({})
+    // Per-app net history, one bucket per stat tick — parallel to netHist.
+    property var netProcHist: []
     // Same shape for disk, built from the pio diffs each tick ({comm:
     // [readBps, writeBps]}). Caveat: /proc/PID/io is owner-readable only, so
     // other users' processes (system services) can't be attributed here.
@@ -1215,6 +1218,13 @@ PanelWindow {
                               bApp: bar.sharedNetTopUpComm })
                     while (nh.length > bar.ioHistLen) nh.shift()
                     bar.netHist = nh
+                    // Same tick -> same bucket index as the total above. The
+                    // streamer's latest rates are held between its refreshes,
+                    // so a slower sensor plateaus rather than misaligning.
+                    var nph = bar.netProcHist.slice()
+                    nph.push(bar.sharedNetProcRates || {})
+                    while (nph.length > bar.ioHistLen) nph.shift()
+                    bar.netProcHist = nph
                 }
                 bar.lastNetRx = pNetRx
                 bar.lastNetTx = pNetTx
@@ -1629,6 +1639,11 @@ PanelWindow {
         property var procData: []
         property var procApps: []
         property int procField: 0
+        // How many buckets the per-app series lags the total (see the draw code).
+        // Measured end-to-end over several de-phased bursts: 1.26-2.02 s,
+        // mean 1.62 s (1 bucket = 1 s). The spread is nethogs' 1 s snapshot
+        // phase; the mean is the best fixed correction.
+        property real procLagBuckets: 1.6
         onProcDataChanged: requestPaint()
         onProcAppsChanged: requestPaint()
         onDataChanged: requestPaint()
@@ -1689,7 +1704,14 @@ PanelWindow {
             var pd = mg.procData, pn = pd ? pd.length : 0
             var apps = mg.procApps
             if (pn >= 2 && apps && apps.length) {
-                var px0 = width - (pn - 1) * stepX
+                // Per-app samples describe an EARLIER interval than the total in
+                // the same bucket: nethogs only publishes a completed 1 s
+                // snapshot, so by the time a bucket is pushed its per-app numbers
+                // are ~1 interval old (measured ~1.7 s end-to-end vs the
+                // instantaneous /proc/net/dev total). Plot them at the time they
+                // actually happened instead of the time they arrived, so a spike
+                // lines up with the same spike in the total.
+                var px0 = width - (pn - 1) * stepX - mg.procLagBuckets * stepX
                 ctx.lineWidth = 1.3
                 for (var pi = 0; pi < apps.length; pi++) {
                     var comm = apps[pi].app
@@ -2729,7 +2751,7 @@ PanelWindow {
         // the pio diffs (owner-only; other users' I/O can't be attributed).
         // procApps* = the apps drawn as lines AND listed in the legend (same
         // list, so color key and graph always agree), by window peak.
-        readonly property var procHistData: mk === "net" ? bar.sharedNetProcHist
+        readonly property var procHistData: mk === "net" ? bar.netProcHist
             : mk === "disk" ? bar.diskProcHist : []
         readonly property var procAppsA: monPopup.graphDual ? bar.procTopApps(procHistData, 0, 6) : []
         readonly property var procAppsB: monPopup.graphDual ? bar.procTopApps(procHistData, 1, 6) : []

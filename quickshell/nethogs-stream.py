@@ -13,7 +13,7 @@
 # which flatlined the per-app graph lines); we diff between refreshes to
 # recover the per-second byte rate for that interval.
 
-import os, signal, subprocess, sys
+import os, select, signal, subprocess, sys
 
 NETHOGS = "/usr/bin/nethogs"
 
@@ -37,9 +37,18 @@ proc = subprocess.Popen(
     bufsize=1,
 )
 
-prev: dict[str, tuple[float, float]] = {}
+# Last known cumulative counters, kept PERSISTENTLY (not just for the previous
+# snapshot): nethogs drops a process from its listing while it has no traffic,
+# so a process that idles and then resumes would look brand-new and diff against
+# zero — reporting its entire lifetime total as one instant spike. Remembering
+# it across the gap keeps the diff honest. Entries are pruned once they've been
+# absent a while so this can't grow forever.
+prev: dict[str, tuple[float, float, int]] = {}   # pid -> (sent, recv, tick)
 curr: dict[str, tuple[float, float, str]] = {}
 seen_refresh = False
+primed = False          # set once the first snapshot has established baselines
+tick = 0                # rotate counter, used to age out stale pids
+STALE_TICKS = 300       # ~5 min at one snapshot/second
 
 
 def emit():
@@ -48,7 +57,24 @@ def emit():
     top_u = top_d = 0.0
     by_comm: dict[str, list[float]] = {}
     for pid, (sent, recv, name) in curr.items():
-        ps, pr = prev.get(pid, (sent, recv))
+        # Baseline for a pid we haven't seen before:
+        #   * on the very FIRST snapshot, every pid is "new" and its counter is
+        #     however much it had already transferred before we attached, so
+        #     baseline = its current value (otherwise the graph opens with one
+        #     enormous bogus spike).
+        #   * afterwards a new pid is a genuinely NEW flow whose -v 2 counter
+        #     starts near zero, so baseline = 0 and its very first interval is
+        #     reported. Defaulting to "current" here instead (the old behaviour)
+        #     made every new flow diff to 0, which the `ds > 0 or dr > 0` filter
+        #     then dropped — costing a full extra refresh of latency and losing
+        #     short transfers entirely.
+        known = prev.get(pid)
+        if known is not None:
+            ps, pr = known[0], known[1]
+        elif primed:
+            ps, pr = 0.0, 0.0       # genuinely new flow: count it from zero
+        else:
+            ps, pr = sent, recv     # first snapshot: adopt as baseline, no spike
         ds = max(0.0, sent - ps)
         dr = max(0.0, recv - pr)
         if ds > top_u:
@@ -76,13 +102,48 @@ def emit():
     )
 
 
-for raw in proc.stdout:
+def rotate():
+    """Emit the snapshot just finished and make it the baseline for the next."""
+    global prev, curr, primed, tick
+    emit()
+    primed = True
+    tick += 1
+    for pid, (s, r, _) in curr.items():
+        prev[pid] = (s, r, tick)
+    if tick % 60 == 0:              # occasional prune of long-gone processes
+        for pid in [k for k, v in prev.items() if tick - v[2] > STALE_TICKS]:
+            del prev[pid]
+    curr = {}
+
+
+# nethogs prints "Refreshing:" then that snapshot's lines, all at once, once per
+# -d interval (1 s; fractional -d is NOT supported — it busy-spins). Emitting
+# only when the NEXT "Refreshing:" arrived meant a finished snapshot sat unsent
+# for a whole interval: measured 2.6 s before a new flow reached the graph while
+# the /proc/net/dev total reacted immediately. Instead flush as soon as the
+# block goes quiet (no further output for IDLE_FLUSH_S), which cuts the wait to
+# roughly nethogs' own interval. "Refreshing:" then only has to reset the
+# already-flushed state (and still rotates if a flush somehow hasn't happened).
+IDLE_FLUSH_S = 0.12
+flushed = False
+
+while True:
+    ready, _, _ = select.select([proc.stdout], [], [], IDLE_FLUSH_S)
+    if not ready:
+        # Output went quiet: the snapshot is complete, send it now.
+        if seen_refresh and curr and not flushed:
+            rotate()
+            flushed = True
+        continue
+
+    raw = proc.stdout.readline()
+    if not raw:                      # nethogs exited
+        break
     line = raw.rstrip("\n")
     if line.startswith("Refreshing:"):
-        if seen_refresh:
-            emit()
-        prev = {pid: (s, r) for pid, (s, r, _) in curr.items()}
-        curr = {}
+        if seen_refresh and curr and not flushed:
+            rotate()                 # fallback: block never went idle
+        flushed = False
         seen_refresh = True
         continue
     parts = line.split("\t")
