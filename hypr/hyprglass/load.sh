@@ -9,16 +9,26 @@
 # layers to re-sample every frame.
 #
 # The BSD-3 source is vendored next to this script (see ./LICENSE) and built
-# locally — no hyprpm, no fork. Called from hyprland.conf right after
-# `hyprpm reload`, so it can replace any hyprpm-loaded copy.
+# locally — no hyprpm, no fork. Called from the hyprland.lua startup handler.
+#
+# ABI SAFETY: never dlopen a .so built against a different Hyprland — a stale
+# plugin segfaults the compositor during dlopen and drops the session into
+# safe mode (that is exactly what the 0.55.4 -> 0.56.0 update did to
+# Hypr-DarkWindow). ../plugin-abi.sh rebuilds on any Hyprland/hypr*-library
+# change BEFORE loading, and refuses to load if that build fails — you lose the
+# glass effect, never the session.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 SO="$DIR/hyprglass.so"
+STAMP="$DIR/.abi-stamp"
 
-build()  { make -s -C "$DIR"; }
-loaded() { hyprctl plugins list 2>/dev/null | grep -qi hyprglass; }
-
-[ -f "$SO" ] || build
+if [ -r "$DIR/../plugin-abi.sh" ]; then
+    . "$DIR/../plugin-abi.sh"
+    tc_plugin_guard "$DIR" "$SO" "$STAMP" "Liquid glass (hyprglass)" || exit 0
+else
+    # No guard available: still never load a possibly-stale binary — rebuild it.
+    make -s -B -C "$DIR" >/dev/null 2>&1 && [ -f "$SO" ] || exit 0
+fi
 
 # Drop any OTHER hyprglass already loaded (e.g. an hyprpm-managed copy in either
 # the user or the system store) so ours is the one in effect.
@@ -30,7 +40,3 @@ for p in \
 done
 hyprctl plugin unload "$SO" >/dev/null 2>&1   # idempotent on re-run
 hyprctl plugin load   "$SO" >/dev/null 2>&1
-
-# Didn't take? The binary is ABI-stale after a Hyprland update -> FORCE a
-# rebuild (-B; plain `make` sees the .so newer than sources and skips it), reload.
-loaded || { make -s -B -C "$DIR"; hyprctl plugin load "$SO" >/dev/null 2>&1; }

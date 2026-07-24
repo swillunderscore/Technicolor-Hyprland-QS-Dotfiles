@@ -4,15 +4,25 @@
 # custom shaders). Built against the SYSTEM Hyprland headers (pkg-config
 # hyprland) — no hyprpm, no sudo — so a Hyprland update can't strand it in a
 # root-owned /var/cache that needs a password to rebuild. Mirrors hyprglass/load.sh.
-# Source vendored from github.com/micha4w/Hypr-DarkWindow. Called from
-# hyprland.conf's plugin exec-once.
+# Source vendored from github.com/micha4w/Hypr-DarkWindow. Called from the
+# hyprland.lua startup handler.
+#
+# ABI SAFETY: never dlopen a .so built against a different Hyprland — 0.56.0
+# segfaulted on the 0.55.4-built copy and dropped the session into safe mode.
+# ../plugin-abi.sh rebuilds on any Hyprland/hypr*-library change BEFORE loading
+# and refuses to load if that build fails (you lose chromakey, never the session).
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 SO="$DIR/out/hypr-darkwindow.so"
+STAMP="$DIR/out/.abi-stamp"
 
-loaded() { hyprctl plugins list 2>/dev/null | grep -qi darkwindow; }
-
-[ -f "$SO" ] || make -s -C "$DIR" >/dev/null 2>&1
+if [ -r "$DIR/../plugin-abi.sh" ]; then
+    . "$DIR/../plugin-abi.sh"
+    tc_plugin_guard "$DIR" "$SO" "$STAMP" "Chromakey glass (Hypr-DarkWindow)" || exit 0
+else
+    # No guard available: still never load a possibly-stale binary — rebuild it.
+    make -s -B -C "$DIR" >/dev/null 2>&1 && [ -f "$SO" ] || exit 0
+fi
 
 # Drop any hyprpm-managed copy (user or system store) so ours is the one loaded.
 for p in \
@@ -22,7 +32,3 @@ for p in \
 done
 hyprctl plugin unload "$SO" >/dev/null 2>&1   # idempotent on re-run
 hyprctl plugin load   "$SO" >/dev/null 2>&1
-
-# Didn't take? The binary is ABI-stale after a Hyprland update -> FORCE a rebuild
-# (-B; plain make would see the .so newer than sources and skip it), then reload.
-loaded || { make -s -B -C "$DIR" >/dev/null 2>&1; hyprctl plugin load "$SO" >/dev/null 2>&1; }

@@ -45,3 +45,9 @@ hypr/transition.conf
 # Hypr-DarkWindow plugin build artifacts (MIT source vendored; its load.sh
 # compiles it locally on first run, like hyprglass)
 hypr/Hypr-DarkWindow/out/
+
+# Per-machine plugin build state written by hypr/plugin-abi.sh: .abi-stamp records
+# which Hyprland ABI the local .so was built for; build-failed.log is kept only
+# when a rebuild fails so the plugin is skipped instead of crashing the session.
+hypr/hyprglass/.abi-stamp
+hypr/*/build-failed.log
