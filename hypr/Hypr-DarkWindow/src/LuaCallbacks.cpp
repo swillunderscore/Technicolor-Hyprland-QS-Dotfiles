@@ -200,7 +200,10 @@ static int dispatchedShade(lua_State* L)
     PHLWINDOW window = nullptr;
     if (!lua_isnil(L, lua_upvalueindex(2)))
     {
-        window = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(2)));
+        // 0.56 removed CCompositor::getWindowByRegex; the Lua bindings' own
+        // selector helper is the supported replacement (and takes the same
+        // selector strings), so resolve the upvalue through it.
+        window = HyprLua::windowFromLuaSelectorOrObject(L, lua_upvalueindex(2), "darkwindow.<dispatched shade>");
         if (!window)
             return HyprLua::dispatcherError(
                 L, "darkwindow.<dispatched shade>: window not found", eActionErrorLevel::ERROR, eActionErrorCode::NOT_FOUND

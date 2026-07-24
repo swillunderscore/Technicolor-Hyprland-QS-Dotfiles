@@ -8,6 +8,7 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
+#include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -161,12 +162,12 @@ static void hkRenderLayer(Render::IHyprRenderer* thisptr, PHLLS layerSurface, PH
             it = layerStates.emplace(rawPtr, std::make_shared<CGlassLayerSurface>(layerSurface)).first;
         }
 
-        if (layerSurface->m_fadingOut) {
+        if (!layerSurface->m_mapped) {   // 0.56: fading-out layers render via CFadingOutState, not here
             ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, layerSurface, monitor, now, popups, lockscreen);
             return;
         }
 
-        float alpha = layerSurface->m_alpha->value();
+        float alpha = layerSurface->alpha().value();
         if (alpha < 0.001f) {
             ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, layerSurface, monitor, now, popups, lockscreen);
             return;
@@ -259,7 +260,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::invokeHyprctlCommand("keyword", "decoration:shadow:enabled true");
     }
 
-    for (auto& window : g_pCompositor->m_windows) {
+    for (auto& window : Desktop::viewState()->windows()) {   // 0.56: window list lives on the desktop view state
         if (window->isHidden() || !window->m_isMapped)
             continue;
         onNewWindow(window);

@@ -82,17 +82,17 @@ void CGlassLayerSurface::damageIfMoved() {
     if (!layerSurface)
         return;
 
-    const auto currentPosition = layerSurface->m_realPosition->value();
-    const auto currentSize     = layerSurface->m_realSize->value();
+    const auto currentPosition = layerSurface->positionAnimation()->value();
+    const auto currentSize     = layerSurface->sizeAnimation()->value();
     if (currentSize.x <= 0.0 || currentSize.y <= 0.0 ||
         !std::isfinite(currentPosition.x) || !std::isfinite(currentPosition.y) ||
         !std::isfinite(currentSize.x) || !std::isfinite(currentSize.y))
         return;
 
-    const bool isAnimating = layerSurface->m_realPosition->isBeingAnimated() ||
-                             layerSurface->m_realSize->isBeingAnimated() ||
-                             layerSurface->m_alpha->isBeingAnimated() ||
-                             layerSurface->m_fadingOut;
+    const bool isAnimating = layerSurface->positionAnimation()->isBeingAnimated() ||
+                             layerSurface->sizeAnimation()->isBeingAnimated() ||
+                             layerSurface->alpha().isBeingAnimated() ||
+                             !layerSurface->m_mapped;   // 0.56: fade-outs are separate snapshots now
 
     const bool moved = currentPosition != m_lastPosition || currentSize != m_lastSize;
 
@@ -139,9 +139,9 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
     // This skips the most expensive GPU work (blit + 6 blur passes).
     const uint64_t currentGeneration = g_pGlobalState->getSceneGeneration(monitor.get());
     const auto activeWs = monitor->m_activeWorkspace;
-    const bool isAnimating = layerSurface->m_realPosition->isBeingAnimated() ||
-                             layerSurface->m_realSize->isBeingAnimated() ||
-                             layerSurface->m_alpha->isBeingAnimated() ||
+    const bool isAnimating = layerSurface->positionAnimation()->isBeingAnimated() ||
+                             layerSurface->sizeAnimation()->isBeingAnimated() ||
+                             layerSurface->alpha().isBeingAnimated() ||
                              (activeWs && activeWs->m_renderOffset->isBeingAnimated());
     // [technicolor fork] Force a fresh re-sample for glass LAYER surfaces every
     // frame. The cache below assumes the backdrop only changes when a window
@@ -155,7 +155,7 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
                                    currentGeneration != m_lastSceneGeneration ||
                                    isAnimating;
 
-    if (layerSurface->m_fadingOut) {
+    if (!layerSurface->m_mapped) {   // 0.56: see above
         // During fade-out, re-sampling captures stale pixels. Reuse cached sample.
         if (!m_hasCachedSample)
             return;

@@ -103,12 +103,12 @@ void SpecialVariables::SetUniforms(ShadedWindow& config, PHLMONITOR monitor, PHL
 
     if (loc = UniformLocations[(size_t)WindowSize]; loc != -1)
     {
-        auto size = window->m_realSize->value();
+        auto size = window->sizeAnimation()->value();
         glUniform2f(loc, size.x, size.y);
     }
     if (loc = UniformLocations[(size_t)CursorPos]; loc != -1)
     {
-        Vector2D pos = g_pPointerManager->position() - window->m_realPosition->value();
+        Vector2D pos = Pointer::mgr()->position() - window->positionAnimation()->value();
         glUniform2f(loc, (float)pos.x, (float)pos.y);
     }
     if (loc = UniformLocations[(size_t)MonitorScale]; loc != -1)
