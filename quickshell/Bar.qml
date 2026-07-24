@@ -42,6 +42,16 @@ PanelWindow {
     property var sharedNetProcRates: ({})
     // Per-app net history, one bucket per stat tick — parallel to netHist.
     property var netProcHist: []
+    // Same idea for the single-stat graphs. sysmon.sh already reports every
+    // process each tick and Bar already aggregates it to find the top consumer,
+    // so keeping the whole bucket instead of just the winner costs a dict copy
+    // — no extra /proc scanning. Values are [percentOfTotal, absolute] so the
+    // line shares the total series' units while the legend shows a real amount.
+    // (GPU/VRAM deliberately have none: their fdinfo scan only runs while that
+    // popup is open, so there'd be no history to draw.)
+    property var cpuProcHist: []
+    property var memProcHist: []
+    property var swapProcHist: []
     // Same shape for disk, built from the pio diffs each tick ({comm:
     // [readBps, writeBps]}). Caveat: /proc/PID/io is owner-readable only, so
     // other users' processes (system services) can't be attributed here.
@@ -527,15 +537,32 @@ PanelWindow {
     // tick, newest last). Returns [{app, cur, peak}] by peak descending,
     // capped at k — feeds both the per-app graph lines and their legend, so
     // the line set and the key always agree.
+    // The k biggest entries of an aggregate as {comm: [pct, absolute]}, capped
+    // so a fork-bomb of short-lived processes can't grow the history unbounded.
+    function procBucket(agg, k, denom) {
+        var keys = Object.keys(agg)
+        keys.sort(function (x, y) { return agg[y] - agg[x] })
+        var out = {}
+        for (var i = 0; i < keys.length && i < k; i++) {
+            var v = agg[keys[i]]
+            if (!(v > 0)) break
+            out[keys[i]] = [denom > 0 ? 100 * v / denom : 0, v]
+        }
+        return out
+    }
+
     function procTopApps(hist, field, k) {
         if (!hist || !hist.length) return []
-        var peak = {}, cur = {}
+        var peak = {}, cur = {}, abs = {}
         for (var i = 0; i < hist.length; i++) {
             var t = hist[i]
             for (var comm in t) {
                 var v = t[comm][field] || 0
                 if (!(comm in peak) || v > peak[comm]) peak[comm] = v
-                if (i === hist.length - 1) cur[comm] = v
+                if (i === hist.length - 1) {
+                    cur[comm] = v
+                    abs[comm] = t[comm][1] || 0    // absolute, for the legend
+                }
             }
         }
         var keys = Object.keys(peak)
@@ -543,7 +570,8 @@ PanelWindow {
         var out = []
         for (var j = 0; j < keys.length && out.length < k; j++) {
             if (peak[keys[j]] <= 0) break
-            out.push({ app: keys[j], cur: cur[keys[j]] || 0, peak: peak[keys[j]] })
+            out.push({ app: keys[j], cur: cur[keys[j]] || 0, peak: peak[keys[j]],
+                       abs: abs[keys[j]] || 0 })
         }
         return out
     }
@@ -1160,6 +1188,27 @@ PanelWindow {
             var topSwapComm = bar.topSwapApps.length ? bar.topSwapApps[0].app : ""
             var topGpuComm = bar.topGpuApps.length ? bar.topGpuApps[0].app : ""
             var topVramComm = bar.topVramApps.length ? bar.topVramApps[0].app : ""
+            // Per-app buckets, pushed on the SAME tick as the totals below so
+            // bucket i means the same instant in both series (and unlike the net
+            // path there's no sensor lag here — it's all from this tick's scan).
+            if (cpuVal >= 0) {
+                var cph = bar.cpuProcHist.slice()
+                cph.push(bar.procBucket(cpuAgg, 8, cpuDT))
+                while (cph.length > bar.ioHistLen) cph.shift()
+                bar.cpuProcHist = cph
+            }
+            if (memVal >= 0) {
+                var mph = bar.memProcHist.slice()
+                mph.push(bar.procBucket(memAgg, 8, bar.memTotalGB * 1073741824))
+                while (mph.length > bar.ioHistLen) mph.shift()
+                bar.memProcHist = mph
+            }
+            if (swapVal >= 0) {
+                var sph = bar.swapProcHist.slice()
+                sph.push(bar.procBucket(swapAgg, 8, bar.swapTotalGB * 1073741824))
+                while (sph.length > bar.ioHistLen) sph.shift()
+                bar.swapProcHist = sph
+            }
             if (cpuVal >= 0)  bar.cpuHist  = bar.pushHist(bar.cpuHist,  { v: cpuVal,  app: topCpuComm })
             if (gpuVal >= 0)  bar.gpuHist  = bar.pushHist(bar.gpuHist,  { v: gpuVal,  app: topGpuComm })
             if (vramVal >= 0) bar.vramHist = bar.pushHist(bar.vramHist, { v: vramVal, app: topVramComm })
@@ -1735,6 +1784,8 @@ PanelWindow {
     component MonProcChip: Row {
         id: mpc
         required property var modelData
+        // "rate" (net/disk, bytes/s) | "pct" (cpu) | "bytes" (mem/swap, absolute)
+        property string unit: "rate"
         readonly property string legendIcon: bar.strictIconPath(modelData.app)
         readonly property int chipSize: isPrimary ? 14 : 11
         spacing: isPrimary ? 4 : 3
@@ -1761,8 +1812,14 @@ PanelWindow {
             anchors.verticalCenter: parent.verticalCenter
         }
         Text {
-            visible: mpc.modelData.cur > 0
-            text: bar.fmtRate(mpc.modelData.cur) + "/s"
+            visible: mpc.unit === "pct" ? mpc.modelData.cur >= 0.5
+                   : mpc.unit === "bytes" ? (mpc.modelData.abs || 0) > 0
+                   : mpc.modelData.cur > 0
+            text: mpc.unit === "pct"
+                    ? (mpc.modelData.cur < 10 ? mpc.modelData.cur.toFixed(1)
+                                              : Math.round(mpc.modelData.cur)) + "%"
+                  : mpc.unit === "bytes" ? bar.fmtRate(mpc.modelData.abs || 0)
+                  : bar.fmtRate(mpc.modelData.cur) + "/s"
             color: monPopup.fg
             opacity: 0.75
             font.pixelSize: isPrimary ? 11 : 9
@@ -2681,7 +2738,8 @@ PanelWindow {
             + (!ioWide && mk === "cpu" ? (isPrimary ? 40 : 30) : 0)
             + (!ioWide && mk === "cpu" && coreRows > 0 ? coreGridH + (isPrimary ? 8 : 6) : 0)
             + (!ioWide && multiGpu ? (bar.gpuHists.length - 1) * (isPrimary ? 64 : 50) : 0)
-            + (!ioWide && topApps.length > 0 ? topAppsFlow.implicitHeight + (isPrimary ? 6 : 4) : 0)
+            + (!ioWide && topApps.length > 0 && singleProcApps.length === 0
+                 ? topAppsFlow.implicitHeight + (isPrimary ? 6 : 4) : 0)
         Behavior on bodyW { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
         Behavior on bodyH { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
         visible: monPopup.shown || monShape.liquidProgress > 0.001
@@ -2753,6 +2811,15 @@ PanelWindow {
         // list, so color key and graph always agree), by window peak.
         readonly property var procHistData: mk === "net" ? bar.netProcHist
             : mk === "disk" ? bar.diskProcHist : []
+        // Single-stat per-app series. gpu/vram intentionally absent — their
+        // per-process scan only runs while the popup is open, so there is no
+        // history behind it; those keep the peak-app icon instead.
+        readonly property var singleProcData: mk === "cpu" ? bar.cpuProcHist
+            : mk === "mem" ? bar.memProcHist
+            : mk === "zram" ? bar.swapProcHist : []
+        readonly property var singleProcApps: (!monPopup.graphDual && singleProcData.length)
+            ? bar.procTopApps(singleProcData, 0, 6) : []
+        readonly property string singleProcUnit: mk === "cpu" ? "pct" : "bytes"
         readonly property var procAppsA: monPopup.graphDual ? bar.procTopApps(procHistData, 0, 6) : []
         readonly property var procAppsB: monPopup.graphDual ? bar.procTopApps(procHistData, 1, 6) : []
 
@@ -2849,6 +2916,11 @@ PanelWindow {
                             dual: false
                             fixedMax: 100
                             stroke: monPopup.fg
+                            // One line per app, same tick as the total -> no shift.
+                            procData: monPopup.singleProcData
+                            procApps: monPopup.singleProcApps
+                            procField: 0
+                            procLagBuckets: 0
                         }
                         Item {
                             id: sPeak
@@ -2884,7 +2956,9 @@ PanelWindow {
                             x: Math.max(0, Math.min(popupGraphS.width - iconPx,
                                 x0 + peakIdx * stepX - iconPx / 2))
                             y: Math.max(0, popupGraphS.height - (peakVal / 100) * (popupGraphS.height - 2) - 1 - iconPx)
-                            visible: peakIdx >= 0 && peakApp !== ""
+                            // Superseded by the per-app lines where we have
+                            // them; still the only attribution gpu/vram get.
+                            visible: peakIdx >= 0 && peakApp !== "" && monPopup.singleProcApps.length === 0
                             Image {
                                 id: sImg
                                 anchors.fill: parent
@@ -2903,6 +2977,17 @@ PanelWindow {
                                 color: bar.commColor(sPeak.peakApp)
                                 visible: !sImg.visible
                             }
+                        }
+                    }
+
+                    // Legend for the single-stat per-app lines (cpu/mem/swap).
+                    Flow {
+                        visible: monPopup.singleProcApps.length > 0
+                        Layout.fillWidth: true
+                        spacing: isPrimary ? 10 : 7
+                        Repeater {
+                            model: monPopup.singleProcApps
+                            delegate: MonProcChip { unit: monPopup.singleProcUnit }
                         }
                     }
 
@@ -3037,7 +3122,10 @@ PanelWindow {
                     //    open) — same icon-or-dot chips as the IO legends ──
                     Flow {
                         id: topAppsFlow
+                        // Superseded by the per-app line legend where that exists
+                        // (cpu/mem/zram); still the only key gpu/vram get.
                         visible: !monPopup.graphDual && monPopup.topApps.length > 0
+                                 && monPopup.singleProcApps.length === 0
                         Layout.fillWidth: true
                         spacing: isPrimary ? 10 : 7
                         Repeater {
