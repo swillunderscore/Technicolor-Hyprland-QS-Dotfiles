@@ -79,8 +79,8 @@ hyprctl clients -j | jq -r --argjson cx "$cx" --argjson cy "$cy" --argjson mons 
     )] | sort_by(
         (if .w.pinned then 0
          elif (.w.overFullscreen // false) then 1
-         elif (.w.fullscreen // 0) > 0 then 2
-         elif .w.floating then 3
+         elif (.w.fullscreen // 0) == 2 then 3
+         elif (.w.floating or ((.w.fullscreen // 0) == 1)) then 2
          else 4 end),
         (-.i)
     ) | .[0].w.address // empty'
