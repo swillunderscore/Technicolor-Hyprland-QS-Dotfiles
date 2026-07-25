@@ -4430,12 +4430,8 @@ PanelWindow {
         onComputedMenuHChanged: {
             if (computedMenuH > sessionFloorH) sessionFloorH = computedMenuH
         }
-        Connections {
-            target: bar
-            function onNotifMenuOpenChanged() {
-                if (!bar.notifMenuOpen) notifMenuPanel.sessionFloorH = 0
-            }
-        }
+        // NOTE: the sticky floor is reset in notifMenuShape once the close
+        // animation has fully drained, NOT here — see onLiquidProgressChanged.
         readonly property int radius: isPrimary ? 14 : 10
         readonly property int filletR: isPrimary ? 12 : 9
 
@@ -4462,6 +4458,16 @@ PanelWindow {
             readonly property int fullH: notifMenuPanel.menuH + notifMenuPanel.filletR
             property real liquidProgress: bar.notifMenuOpen ? 1.0 : 0.0
             Behavior on liquidProgress { NumberAnimation { duration: 460; easing.type: Easing.InOutQuint } }
+            // Drop the panel's sticky height floor only once the close has fully
+            // drained. Resetting it the instant notifMenuOpen flipped collapsed
+            // menuH — and with it this Item's height/y and the drip path — on the
+            // first frame of the close, so the box visibly snapped (measured 54 px
+            // after viewing a taller tab) and then animated away from the wrong
+            // geometry. Reopening mid-close simply keeps the floor.
+            onLiquidProgressChanged: {
+                if (liquidProgress <= 0.001 && !bar.notifMenuOpen)
+                    notifMenuPanel.sessionFloorH = 0
+            }
 
             x: Math.max(8, Math.min(notifMenuPanel.anchorX - width / 2, notifMenuPanel.width - width - 8))
             width: notifMenuPanel.menuW
