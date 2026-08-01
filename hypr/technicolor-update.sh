@@ -22,7 +22,15 @@ main() {
     new="$(git -C "$TMP" rev-parse --short HEAD 2>/dev/null)"
 
     echo "Copying configs…"
-    cp -r "$TMP"/hypr "$TMP"/quickshell "$TMP"/mako "$TMP"/spicetify ~/.config/ 2>/dev/null
+    cp -r "$TMP"/hypr "$TMP"/quickshell "$TMP"/mako ~/.config/ 2>/dev/null
+    # Spicetify is OPT-IN at install time (it patches the Spotify client — against
+    # their ToS, so the installer asks first and warns). Updating must not quietly
+    # opt you in: only refresh the theme if you already have Spicetify or its config.
+    # Without this, anyone who declined Spotify theming got ~/.config/spicetify
+    # created behind their back on the first "Check for updates".
+    if command -v spicetify >/dev/null 2>&1 || [ -d ~/.config/spicetify ]; then
+        cp -r "$TMP"/spicetify ~/.config/ 2>/dev/null
+    fi
     mkdir -p ~/.local/share/applications
     cp "$TMP"/applications/*.desktop ~/.local/share/applications/ 2>/dev/null
     # Files with safe defaults that are gitignored (so the copy above doesn't
