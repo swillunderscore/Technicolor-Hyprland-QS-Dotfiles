@@ -219,6 +219,13 @@ DolphinUrlNavigator, KUrlNavigator {{ background-color: rgb{sec}; color: rgb{ink
    everything inside rides it. Text/handles stay the secondary ink. */
 KUrlNavigatorButton, DolphinUrlNavigator QToolButton, KUrlNavigator QToolButton,
 KUrlNavigator QPushButton, DolphinUrlNavigator QPushButton {{ background: transparent; color: rgb{inks}; border: none; }}
+/* Styling those buttons at all stops Qt drawing Breeze's NATIVE hover, so without
+   an explicit :hover they gave zero feedback — you could not tell a breadcrumb was
+   clickable. Re-add hover/pressed on the accent, matching QMenu::item:selected. */
+KUrlNavigatorButton:hover, DolphinUrlNavigator QToolButton:hover, KUrlNavigator QToolButton:hover,
+KUrlNavigator QPushButton:hover, DolphinUrlNavigator QPushButton:hover {{ background: rgb{acc}; color: rgb{inka}; border: none; border-radius: 6px; }}
+KUrlNavigatorButton:pressed, DolphinUrlNavigator QToolButton:pressed, KUrlNavigator QToolButton:pressed,
+KUrlNavigator QPushButton:pressed, DolphinUrlNavigator QPushButton:pressed {{ background: rgb{acc_prs}; color: rgb{inka}; border: none; border-radius: 6px; }}
 DolphinUrlNavigator QLineEdit, KUrlNavigator QLineEdit, DolphinUrlNavigator QComboBox,
 KUrlNavigator QComboBox, KUrlComboBox {{ background: transparent; color: rgb{inks}; border: none; selection-background-color: rgb{acc}; selection-color: rgb{inka}; }}
 QDockWidget::title {{ background-color: rgb{sec}; color: rgb{inks}; border-radius: 8px; }}
@@ -315,6 +322,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
    metadata (a thin QFrame line that also never recolored) */
 InformationPanel QFrame {{ border: none; background: transparent; }}
 """.format(key=KEY, sec=secondary, prim=primary, prim_alt=mixb(primary, 0.93), acc=accent,
+           acc_prs=mixb(accent, 0.82),
            sec_alt=mixb(secondary, 0.88), sec_div=mixb(secondary, 0.78),
            xhov=blend(secondary, (255, 255, 255), 0.72),
            inks=ink_s, inkp=ink_p, inka=ink_a, home=os.path.expanduser("~"))

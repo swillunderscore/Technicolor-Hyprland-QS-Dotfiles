@@ -137,6 +137,20 @@ if ask "Theme your file manager + Qt apps?  (installs Dolphin + qt6ct-kde)"; the
   info "  (full details: README → App theming → Dolphin / Qt apps)"
 fi
 
+# LibreOffice only maps XDG_CURRENT_DESKTOP=KDE -> kf6 and GNOME -> gtk3. Under
+# Hyprland it matches neither and silently falls back to its ancient built-in "gen"
+# widget set: crammed menubar, boxy outlined toolbar buttons, ignores your colours.
+# Gated on soffice actually existing, so this is a no-op if you don't use LibreOffice.
+if command -v soffice >/dev/null 2>&1 && ask "Fix LibreOffice's toolbar + make it follow your colours?"; then
+  mkdir -p "$HOME/.config/environment.d"
+  printf '%s\n' \
+    '# Hyprland is not a desktop LibreOffice recognises, so it falls back to the old' \
+    '# "gen" widget set. Pin the Qt6/KDE one so it matches the rest of Technicolor.' \
+    'SAL_USE_VCLPLUGIN=kf6' > "$HOME/.config/environment.d/libreoffice.conf"
+  ok "LibreOffice pinned to the kf6 widget backend"
+  info "takes effect after your next log out + log in"
+fi
+
 if ask "Theme GTK apps?  (no install — sets your global GTK theme)"; then
   ok "enabled — the wallpaper cycle writes + selects a Technicolor GTK theme"
   info "this makes GTK apps + file dialogs follow the wallpaper"
