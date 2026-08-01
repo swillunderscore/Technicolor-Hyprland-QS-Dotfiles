@@ -31,6 +31,18 @@ main() {
     if command -v spicetify >/dev/null 2>&1 || [ -d ~/.config/spicetify ]; then
         cp -r "$TMP"/spicetify ~/.config/ 2>/dev/null
     fi
+    # LibreOffice falls back to its ancient "gen" widget set under Hyprland (it only
+    # maps KDE->kf6 and GNOME->gtk3), giving a cramped menubar and boxy toolbar
+    # buttons. Same fix install.sh applies — repeated here so people who installed
+    # before this existed get it on update. No-op without LibreOffice.
+    if command -v soffice >/dev/null 2>&1 && [ ! -f ~/.config/environment.d/libreoffice.conf ]; then
+        mkdir -p ~/.config/environment.d
+        printf '%s\n' \
+            '# Hyprland is not a desktop LibreOffice recognises, so it falls back to the old' \
+            '# "gen" widget set. Pin the Qt6/KDE one so it matches the rest of Technicolor.' \
+            'SAL_USE_VCLPLUGIN=kf6' > ~/.config/environment.d/libreoffice.conf
+        echo "LibreOffice: pinned to the kf6 widget backend (applies after next login)"
+    fi
     mkdir -p ~/.local/share/applications
     cp "$TMP"/applications/*.desktop ~/.local/share/applications/ 2>/dev/null
     # Files with safe defaults that are gitignored (so the copy above doesn't

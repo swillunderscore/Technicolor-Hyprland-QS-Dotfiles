@@ -141,13 +141,15 @@ fi
 # Hyprland it matches neither and silently falls back to its ancient built-in "gen"
 # widget set: crammed menubar, boxy outlined toolbar buttons, ignores your colours.
 # Gated on soffice actually existing, so this is a no-op if you don't use LibreOffice.
-if command -v soffice >/dev/null 2>&1 && ask "Fix LibreOffice's toolbar + make it follow your colours?"; then
+# Not a prompt: with LibreOffice installed this is strictly a bug fix, and asking
+# "do you want your toolbar to not be broken?" is noise. No-op without LibreOffice.
+if command -v soffice >/dev/null 2>&1; then
   mkdir -p "$HOME/.config/environment.d"
   printf '%s\n' \
     '# Hyprland is not a desktop LibreOffice recognises, so it falls back to the old' \
     '# "gen" widget set. Pin the Qt6/KDE one so it matches the rest of Technicolor.' \
     'SAL_USE_VCLPLUGIN=kf6' > "$HOME/.config/environment.d/libreoffice.conf"
-  ok "LibreOffice pinned to the kf6 widget backend"
+  ok "LibreOffice pinned to the kf6 widget backend (fixes its cramped toolbar)"
   info "takes effect after your next log out + log in"
 fi
 
