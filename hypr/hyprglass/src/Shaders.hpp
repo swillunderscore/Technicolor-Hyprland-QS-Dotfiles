@@ -216,14 +216,36 @@ vec3 waveHessian(vec2 q, float e) {
 // p -> p + k*grad(h). det crosses zero on a CURVE, which is why caustics are
 // thin filaments and not blobs.
 float causticLayer(vec2 q, float e, float lens) {
+    // lens here is the SAME displacement coefficient the warp uses, expressed
+    // in the wave field's own coordinates. det(I + lens*H) is then literally the
+    // area change of the mapping that is bending the image — so a bright vein
+    // appears exactly where the warp is squeezing the picture together, instead
+    // of being an independent pattern that merely looks similar.
     vec3  H   = waveHessian(q, e);
     float det = (1.0 + lens * H.x) * (1.0 + lens * H.y) - (lens * H.z) * (lens * H.z);
     float ad  = abs(det);
     // Thin bright core inside a soft halo — a single floor gives either a hard
     // wire or a fat smudge; sunlit caustics are both at once.
-    float core = clamp(1.0 / max(ad, 0.016) - 1.0, 0.0, 18.0) / 18.0;
-    float halo = clamp(1.0 / max(ad, 0.110) - 1.0, 0.0,  5.0) /  5.0;
-    return core * 0.85 + halo * 0.10;
+    // 1/|det| - 1 is the change in brightness. It is POSITIVE where the surface
+    // folds light together and NEGATIVE where it pulls light apart, and both
+    // halves are real: a caustic does not manufacture light, it moves it, so
+    // every bright vein is paid for by the water around it going dim. Keeping
+    // only the positive half — which is what clamping at zero did — leaves
+    // bright lines sitting on an untouched background, and that reads as a
+    // pattern laid over the image rather than light passing through it. The
+    // missing shadow is what the veins need in order to look like they are
+    // cast by something.
+    float f    = 1.0 / max(ad, 0.016) - 1.0;
+    float core = clamp(f, 0.0, 18.0) / 18.0;
+    float halo = clamp(1.0 / max(ad, 0.110) - 1.0, 0.0, 5.0) / 5.0;
+    // Spreading saturates: |det| -> infinity can only ever remove the light
+    // that was there, so this side is bounded at 1 by physics, not by taste.
+    float dim  = clamp(-f, 0.0, 1.0);
+    // Weighted well below its true share. The focused side was normalised down
+    // by 18 to keep the veins from blowing out, so an honest 1:1 shadow would
+    // swamp them and turn every window muddy; this is the largest value that
+    // still just gives the veins something to sit against.
+    return core * 0.85 + halo * 0.10 - dim * 0.16;
 }
 
 // THREE SUPERIMPOSED LAYERS.
@@ -237,15 +259,15 @@ float causticLayer(vec2 q, float e, float lens) {
 // Two taps at different finite-difference widths read the SAME simulated
 // surface at two scales — the long swell and the fine chop — which is what
 // produced the overlapping net in the reference photo.
-float caustic(vec2 q) {
-    // DEPTH is the distance from the surface to the floor: the further the
-    // refracted light travels, the more it converges, so deeper water gives
-    // tighter, crisper filaments. It is the same 'k' as the Jacobian lens.
-    float d = max(shimmerDepth, 0.05);
-    // Two stencils read the long swell and the chop; the wide one needs a
-    // proportionally longer throw to focus at all.
-    return causticLayer(q, 0.0150, 0.055 * d) * 0.75
-         + causticLayer(q, 0.0320, 0.090 * d) * 0.45;
+float caustic(vec2 q, float lensK) {
+    // Converted from screen-uv into wave-field units, because the Hessian is
+    // measured in the latter. Without this the two effects would agree in
+    // principle and disagree in practice.
+    float k = lensK * 0.275;
+    // Two stencils: the long swell and the chop. The wide one integrates over a
+    // longer baseline so it needs a proportionally longer throw to fold at all.
+    return causticLayer(q, 0.0150, k) * 0.75
+         + causticLayer(q, 0.0320, k * 1.64) * 0.45;
 }
 
 vec2 refractionDir(vec2 uv) {
@@ -354,8 +376,17 @@ void main() {
     // Applied to the SAMPLE positions, before anything is read, so it warps the
     // real backdrop rather than smearing an already-sampled colour.
     // ========================================
-    vec2 waveWarp = vec2(0.0);
-    vec2 wpBase   = vec2(0.0);
+    vec2  waveWarp = vec2(0.0);
+    vec2  wpBase   = vec2(0.0);
+    // ONE physical coefficient for both the bending and the brightening.
+    // Depth is how far refracted light travels before it lands, so it sets how
+    // far the view is displaced AND how much that displacement concentrates the
+    // light. Driving them from separate numbers is why depth felt fake: it
+    // sharpened the veins without moving anything, which no real depth does.
+    // Depth is the physical distance, so it alone sets the coefficient. The
+    // warping slider then chooses how much of that bend is actually shown,
+    // which is why it can sit at zero without the light going out.
+    float lensK    = max(shimmerDepth, 0.02) * 0.200;
     if (shimmerIntensity > 0.001) {
         wpBase = (uvG - 0.5) * (fullSize / max(fullSize.x, 1.0))
                * (0.85 * shimmerScale) + 0.5;
@@ -363,7 +394,10 @@ void main() {
             // Divided by the window's pixel size so the shift is a constant
             // number of PIXELS: a small popup and a maximised window then warp
             // by the same visible amount instead of the big one barely moving.
-            waveWarp = waveSlope(wpBase, 0.0150) * shimmerRefract * 0.020
+            // Warping scales the whole optical effect; depth is the physical
+            // distance. Their product is the displacement coefficient, and the
+            // caustics below use the very same number.
+            waveWarp = waveSlope(wpBase, 0.0150) * lensK * shimmerRefract
                      / max(fullSize / max(fullSize.x, 1.0), vec2(0.001));
 
             // ── STAY INSIDE THE CAPTURED BACKDROP ──────────────────────────
@@ -463,7 +497,7 @@ void main() {
         // toward that corner instead of growing in place.
         vec2 wp = (causticUV - 0.5) * (fullSize / max(fullSize.x, 1.0))
                 * (0.85 * shimmerScale) + 0.5;
-        float c = caustic(wp);
+        float c = caustic(wp, lensK);
 
         if (shimmerLightFromBackdrop != 0) {
             // THE BACKDROP IS THE LIGHT SOURCE — the WARPED backdrop.
@@ -492,7 +526,12 @@ void main() {
             // too dark to carry the effect (or a future explicit light).
             float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
             float headroom = 1.0 - smoothstep(0.55, 1.0, lum);
-            color += vec3(1.0, 0.985, 0.95) * c * shimmerIntensity * 0.35 * headroom;
+            // Focusing adds the lamp's own colour; spreading can only take away
+            // light that is already in the image, so the dim half scales the
+            // pixel instead of subtracting a white, which would drive dark
+            // backdrops negative.
+            color += vec3(1.0, 0.985, 0.95) * max(c, 0.0) * shimmerIntensity * 0.35 * headroom;
+            color *= 1.0 + min(c, 0.0) * shimmerIntensity * 0.5;
         }
     }
 
