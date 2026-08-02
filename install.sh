@@ -137,6 +137,25 @@ if ask "Theme your file manager + Qt apps?  (installs Dolphin + qt6ct-kde)"; the
   info "  (full details: README → App theming → Dolphin / Qt apps)"
 fi
 
+# Effects governor: steps the desktop down while the GPU is busy so games and
+# local models get the frame time. Autostarted rather than left to the user
+# because the Settings toggle only matters if something is polling. It self-idles
+# when ENABLED=0, so switching it off in Settings costs one file read every 2s
+# rather than needing the service stopped.
+mkdir -p "$HOME/.config/autostart"
+cat > "$HOME/.config/autostart/technicolor-effects-governor.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Technicolor effects governor
+Comment=Steps desktop effects down while the GPU is busy
+Icon=preferences-desktop-display
+Exec=$HOME/.config/hypr/effects-governor.sh daemon
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+chmod +x "$HOME/.config/hypr/effects-governor.sh" 2>/dev/null
+ok "effects governor installed (Settings → Effects to tune or turn off)"
+
 # LibreOffice only maps XDG_CURRENT_DESKTOP=KDE -> kf6 and GNOME -> gtk3. Under
 # Hyprland it matches neither and silently falls back to its ancient built-in "gen"
 # widget set: crammed menubar, boxy outlined toolbar buttons, ignores your colours.

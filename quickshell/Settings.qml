@@ -45,6 +45,7 @@ FloatingWindow {
             else if (shell.settingsTab === 2) tuneFile.reload()
             else if (shell.settingsTab === 1) win.refreshWallpapers()
             else if (shell.settingsTab === 5) win.loadHotkeys()
+            else if (shell.settingsTab === 6) govConfFile.reload()
             if (shell.settingsTab !== 5) win.endCapture()   // leaving Hotkeys cancels a pending rebind
         }
         // escape hatch from the capture submap (hyprland.conf) fired — clear UI
@@ -227,6 +228,89 @@ FloatingWindow {
         timerSetProc.command = ["bash", "-c",
             "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/wallpaper-timer.conf'"]
         timerSetProc.running = true
+    }
+
+    // ── Effects governor (Effects tab) ── effects-governor.conf, read by
+    // effects-governor.sh. That script owns ALL compositor writes; this tab only
+    // edits the conf and calls it. Two reasons that split matters:
+    //   1. the daemon re-reads the conf every tick, so a slider takes effect
+    //      without restarting anything;
+    //   2. under the Lua parser `hyprctl keyword` is REJECTED ("use eval"), and
+    //      keeping every write in one script means that lesson lives in one place
+    //      instead of being re-learned in QML.
+    property bool  govEnabled: true
+    property real  govGpuHigh: 70
+    property real  govGpuLow: 45
+    property real  govMaxTier: 3
+    property bool  govBatteryEnabled: true
+    property real  govBatteryLow: 25
+    property real  govBatteryTier: 2
+    property int   govTier: 0          // live tier, polled for the readout
+    property int   govGpuBusy: -1
+    property bool  govHasBattery: false // false on desktops → battery UI hidden
+
+    FileView {
+        id: govConfFile
+        path: win.homeDir + "/.config/hypr/effects-governor.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var t = this.text()
+            function num(k, d) { var m = t.match(new RegExp(k + "\\s*=\\s*([0-9]+)")); return m ? parseInt(m[1]) : d }
+            win.govEnabled        = num("ENABLED", 1) === 1
+            win.govGpuHigh        = num("GPU_HIGH", 70)
+            win.govGpuLow         = num("GPU_LOW", 45)
+            win.govMaxTier        = num("MAX_TIER", 3)
+            win.govBatteryEnabled = num("BATTERY_ENABLED", 1) === 1
+            win.govBatteryLow     = num("BATTERY_LOW", 25)
+            win.govBatteryTier    = num("BATTERY_TIER", 2)
+        }
+    }
+    Process { id: govSetProc }
+    function writeGovernorConf() {
+        // GPU_LOW must stay below GPU_HIGH — the gap IS the hysteresis. If they
+        // meet, a workload sitting on that number flaps the desktop between two
+        // looks every poll. Clamped here so the sliders cannot express it.
+        var lo = Math.min(win.govGpuLow, win.govGpuHigh - 5)
+        var body = "ENABLED=" + (win.govEnabled ? 1 : 0) +
+                   "\nGPU_HIGH=" + Math.round(win.govGpuHigh) +
+                   "\nGPU_LOW=" + Math.round(lo) +
+                   "\nPOLL_SECONDS=2" +
+                   "\nMAX_TIER=" + Math.round(win.govMaxTier) +
+                   "\nBATTERY_ENABLED=" + (win.govBatteryEnabled ? 1 : 0) +
+                   "\nBATTERY_LOW=" + Math.round(win.govBatteryLow) +
+                   "\nBATTERY_TIER=" + Math.round(win.govBatteryTier) + "\n"
+        var b64 = Qt.btoa(body)
+        govSetProc.command = ["bash", "-c",
+            "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/effects-governor.conf'"]
+        govSetProc.running = true
+    }
+    // Manual tier apply (the quick toggles). Goes through the script so the
+    // hyprctl-eval details stay in exactly one file.
+    Process { id: govTierProc }
+    function govApplyTier(t) {
+        govTierProc.command = ["bash", "-c", "\"$HOME/.config/hypr/effects-governor.sh\" tier " + t]
+        govTierProc.running = true
+        win.govTier = t
+    }
+    // Status readout. Only polls while the Effects tab is actually open —
+    // a settings panel has no business waking every 2s in the background.
+    Process {
+        id: govStatusProc
+        command: ["bash", "-c", "\"$HOME/.config/hypr/effects-governor.sh\" status; echo \"hasbat:$(\"$HOME/.config/hypr/effects-governor.sh\" has-battery)\""]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var t = this.text
+                var mt = t.match(/tier:\s*([0-9]+)/);      if (mt) win.govTier = parseInt(mt[1])
+                var mg = t.match(/gpu_busy:\s*(-?[0-9]+)/); if (mg) win.govGpuBusy = parseInt(mg[1])
+                win.govHasBattery = /hasbat:yes/.test(t)
+            }
+        }
+    }
+    Timer {
+        running: win.visible && win.shell && win.shell.settingsTab === 6
+        interval: 2000; repeat: true; triggeredOnStart: true
+        onTriggered: if (!govStatusProc.running) govStatusProc.running = true
     }
 
     // ── Wallpaper switch transition (Wallpaper tab) ── transition.conf, read by
@@ -1064,7 +1148,10 @@ FloatingWindow {
                 Row {
                     id: tabBar
                     anchors.fill: parent; anchors.margins: 6; spacing: 6
-                    property var tabs: ["Apps", "Wallpaper", "Colors", "Glass", "System", "Hotkeys"]
+                    // Effects is APPENDED, not slotted next to Glass: every tab
+                    // body is keyed by index (settingsTab === N), so inserting in
+                    // the middle would silently repoint five existing tabs.
+                    property var tabs: ["Apps", "Wallpaper", "Colors", "Glass", "System", "Hotkeys", "Effects"]
                     Repeater {
                         model: tabBar.tabs
                         delegate: Rectangle {
@@ -2042,6 +2129,186 @@ FloatingWindow {
                                     width: parent.width; wrapMode: Text.WordWrap; topPadding: 6
                                     color: win.fg; opacity: 0.45; font.pixelSize: 11; font.family: win.ff
                                     text: "Click a shortcut's keys to rebind it — hold your modifiers (Super/Ctrl/Alt/Shift) and press the key. ↺ resets one to its default. Media, volume and mouse binds are fixed. Your rebinds are saved to keybinds.conf and survive updates."
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Effects tab (load governor) =====
+                Item {
+                    anchors.fill: parent
+                    visible: win.shell && win.shell.settingsTab === 6
+                    SmoothList {
+                        anchors.fill: parent; clip: true; contentHeight: fxCol.height
+                        Column {
+                            id: fxCol
+                            width: parent.width; spacing: 10
+
+                            Text { text: "Effects under load"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                                text: "Steps the desktop down as the GPU gets busy, so a game or a local model gets the frame time instead of the glass — then puts it back when things calm down. Leave the governor off if you would rather have a flashy desktop all the time." }
+
+                            // live readout
+                            Rectangle {
+                                width: parent.width; height: 44; radius: 9; color: win.rowBg
+                                Text {
+                                    anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    color: win.fg; font.pixelSize: 12; font.family: win.ff
+                                    text: "Now: tier " + win.govTier + " · " + ["everything on", "no shimmer", "no bar glass", "no glass", "no animations"][Math.min(win.govTier, 4)]
+                                }
+                                Text {
+                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    color: win.fg; opacity: 0.6; font.pixelSize: 12; font.family: win.ff
+                                    text: win.govGpuBusy >= 0 ? "GPU " + win.govGpuBusy + "%" : "GPU n/a"
+                                }
+                            }
+
+                            // master switch
+                            Rectangle {
+                                width: parent.width; height: Math.max(50, govCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                                Column {
+                                    id: govCol
+                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    anchors.right: govTg.left; anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                    Text { text: "Automatic governor"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                    Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                           text: "Turn effects down on their own when the GPU is busy. Off means they stay exactly as you set them, however heavy." }
+                                }
+                                TcToggle {
+                                    id: govTg
+                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    on: win.govEnabled
+                                    onToggled: (v) => { win.govEnabled = v; win.writeGovernorConf() }
+                                }
+                            }
+
+                            // thresholds
+                            Repeater {
+                                model: [
+                                    { key: "high", label: "Step down above", from: 30, to: 95, unit: "% GPU" },
+                                    { key: "low",  label: "Step back up below", from: 10, to: 90, unit: "% GPU" },
+                                    { key: "tier", label: "Furthest step it may take", from: 1, to: 4, unit: "" }
+                                ]
+                                delegate: Item {
+                                    id: fxRow
+                                    required property var modelData
+                                    width: fxCol.width; height: 50
+                                    opacity: win.govEnabled ? 1 : 0.4
+                                    property real val: modelData.key === "high" ? win.govGpuHigh
+                                                     : modelData.key === "low"  ? win.govGpuLow : win.govMaxTier
+                                    Item {
+                                        width: parent.width; height: 20
+                                        Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                               text: fxRow.modelData.label; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                               text: Math.round(fxRow.val) + fxRow.modelData.unit
+                                               color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                                    }
+                                    TcSlider {
+                                        width: parent.width; y: 24
+                                        enabled: win.govEnabled
+                                        from: fxRow.modelData.from; to: fxRow.modelData.to; value: fxRow.val
+                                        onMoved: (v) => {
+                                            var vv = Math.round(v)
+                                            fxRow.val = vv
+                                            if (fxRow.modelData.key === "high")      win.govGpuHigh = vv
+                                            else if (fxRow.modelData.key === "low")  win.govGpuLow = vv
+                                            else                                     win.govMaxTier = vv
+                                        }
+                                        onCommitted: (v) => win.writeGovernorConf()
+                                    }
+                                }
+                            }
+
+                            Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.45; font.pixelSize: 10; font.family: win.ff
+                                text: "The gap between those two numbers is deliberate: stepping down and back up at the same load would flap the desktop between two looks every couple of seconds. \"Step back up\" is held at least 5% below \"step down\"." }
+
+                            // ── battery (laptops only) ─────────────────────────────
+                            // Hidden entirely on desktops. A wireless mouse reports
+                            // type=Battery, so detection also requires scope!=Device —
+                            // otherwise every desktop with a Logitech mouse grows
+                            // battery settings it can never use.
+                            Text { visible: win.govHasBattery; text: "On battery"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Rectangle {
+                                visible: win.govHasBattery
+                                width: parent.width; height: Math.max(50, batCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                                Column {
+                                    id: batCol
+                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    anchors.right: batTg.left; anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                    Text { text: "Cut effects on low battery"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                    Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                           text: "Only while unplugged and below the level you pick below." }
+                                }
+                                TcToggle {
+                                    id: batTg
+                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    on: win.govBatteryEnabled
+                                    onToggled: (v) => { win.govBatteryEnabled = v; win.writeGovernorConf() }
+                                }
+                            }
+                            Repeater {
+                                model: win.govHasBattery ? [
+                                    { key: "blow",  label: "Below this charge", from: 5,  to: 60, unit: "%" },
+                                    { key: "btier", label: "Hold at least tier", from: 1, to: 4,  unit: "" }
+                                ] : []
+                                delegate: Item {
+                                    id: batRow
+                                    required property var modelData
+                                    width: fxCol.width; height: 50
+                                    opacity: win.govBatteryEnabled ? 1 : 0.4
+                                    property real val: modelData.key === "blow" ? win.govBatteryLow : win.govBatteryTier
+                                    Item {
+                                        width: parent.width; height: 20
+                                        Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                               text: batRow.modelData.label; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                               text: Math.round(batRow.val) + batRow.modelData.unit
+                                               color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                                    }
+                                    TcSlider {
+                                        width: parent.width; y: 24
+                                        enabled: win.govBatteryEnabled
+                                        from: batRow.modelData.from; to: batRow.modelData.to; value: batRow.val
+                                        onMoved: (v) => {
+                                            var vv = Math.round(v); batRow.val = vv
+                                            if (batRow.modelData.key === "blow") win.govBatteryLow = vv
+                                            else                                 win.govBatteryTier = vv
+                                        }
+                                        onCommitted: (v) => win.writeGovernorConf()
+                                    }
+                                }
+                            }
+
+                            // ── manual override ────────────────────────────────────
+                            Text { text: "Set it yourself"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                                text: "Applies right now. With the governor on it will move this again on its next check, so treat these as a nudge rather than a setting. Nothing is written to your config — a Hyprland reload puts everything back." }
+                            Flow {
+                                width: parent.width; spacing: 6
+                                Repeater {
+                                    model: [
+                                        { t: 0, l: "Everything on" },
+                                        { t: 1, l: "No shimmer" },
+                                        { t: 2, l: "No bar glass" },
+                                        { t: 3, l: "No glass" },
+                                        { t: 4, l: "All off" }
+                                    ]
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        width: Math.max(96, tierLbl.implicitWidth + 22); height: 30; radius: 8
+                                        color: win.govTier === modelData.t ? win.rowHover : (tierM.containsMouse ? win.rowHover : win.rowBg)
+                                        border.width: win.govTier === modelData.t ? 1 : 0
+                                        border.color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, 0.35)
+                                        Text { id: tierLbl; anchors.centerIn: parent; text: modelData.l; color: win.fg
+                                               font.pixelSize: 11; font.family: win.ff
+                                               font.bold: win.govTier === modelData.t }
+                                        MouseArea { id: tierM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            onClicked: win.govApplyTier(modelData.t) }
+                                    }
                                 }
                             }
                         }

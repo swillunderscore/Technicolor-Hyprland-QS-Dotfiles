@@ -1,0 +1,33 @@
+# Technicolor effects governor — written by Settings → Effects.
+# Copied to effects-governor.conf on install/update if that file is missing;
+# your edits are never clobbered.
+#
+# The governor steps desktop effects DOWN as the GPU gets busy and back up when
+# it calms, so a game or a local model gets the frame time instead of the glass.
+
+# Master switch. 0 = never touch effects automatically (they stay as you set
+# them, however heavy). Leave this off if you WANT a flashy idle desktop.
+ENABLED=1
+
+# Step down above GPU_HIGH % busy, step back up below GPU_LOW %.
+# The GAP between them is hysteresis — it stops a workload sitting near one
+# number from flapping the desktop between two looks every couple of seconds.
+# Bringing these together makes it twitchy; spreading them makes it lazier.
+GPU_HIGH=70
+GPU_LOW=45
+POLL_SECONDS=2
+
+# How far the automatic governor may go on its own.
+#   0 everything on
+#   1 shimmer off
+#   2 + layer glass off (bar/popups plain; windows keep glass)
+#   3 + hyprglass off entirely
+#   4 + animations and shadows off   <- manual only, above MAX_TIER by default
+MAX_TIER=3
+
+# ── Laptops only ────────────────────────────────────────────────────────────
+# Ignored on desktops. Detection requires type=Battery AND scope!=Device, so a
+# wireless mouse's battery does not make your desktop think it is a laptop.
+BATTERY_ENABLED=1
+BATTERY_LOW=25      # below this %, while discharging...
+BATTERY_TIER=2      # ...hold at least this tier

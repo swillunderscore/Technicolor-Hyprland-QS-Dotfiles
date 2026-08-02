@@ -54,6 +54,22 @@ main() {
     cp -n ~/.config/hypr/keybinds.conf.example ~/.config/hypr/keybinds.conf 2>/dev/null
     cp -n ~/.config/hypr/transition.conf.example ~/.config/hypr/transition.conf 2>/dev/null
     cp -n ~/.config/hypr/local.conf.example ~/.config/hypr/local.conf 2>/dev/null
+    cp -n ~/.config/hypr/effects-governor.conf.example ~/.config/hypr/effects-governor.conf 2>/dev/null
+    chmod +x ~/.config/hypr/effects-governor.sh 2>/dev/null
+    # Autostart for the effects governor — written here too so installs that
+    # predate it pick it up on update. Overwritten each time on purpose: the
+    # tunables all live in effects-governor.conf, so nothing user-owned is lost.
+    mkdir -p ~/.config/autostart
+    cat > ~/.config/autostart/technicolor-effects-governor.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=Technicolor effects governor
+Comment=Steps desktop effects down while the GPU is busy
+Icon=preferences-desktop-display
+Exec=$HOME/.config/hypr/effects-governor.sh daemon
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
     # record the pulled commit so "Check for updates" can list what's new next time
     git -C "$TMP" rev-parse HEAD > "$HOME/.config/hypr/.technicolor-version" 2>/dev/null
 

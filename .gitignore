@@ -51,3 +51,4 @@ hypr/Hypr-DarkWindow/out/
 # when a rebuild fails so the plugin is skipped instead of crashing the session.
 hypr/hyprglass/.abi-stamp
 hypr/*/build-failed.log
+hypr/effects-governor.conf
