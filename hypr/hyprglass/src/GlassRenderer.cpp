@@ -257,7 +257,20 @@ void stepWaveSim() {
     // Closer to 1: energy survives long enough for many disturbances to be in
     // flight at once and interfere, instead of one lonely wavefront at a time.
     // Still below 1, so agitation genuinely settles when impulses pause.
-    glUniform1f(u.damping, 0.9994f);
+    // DAMPING MUST SCALE WITH SPEED TOO.
+    // Below 1x the step rate is held constant (so slow stays smooth), which
+    // means a step of wall-clock time buys less simulated time. Leaving damping
+    // per-step therefore decays energy at the SAME real rate while the waves
+    // crawl — at 0.002 they died essentially where they were born instead of
+    // travelling slowly. Scaling the loss per step keeps decay tied to simulated
+    // time, so slow water is slow in every respect rather than just sluggish.
+    {
+        const auto& dpc = g_pGlobalState->config;
+        const float dsp = dpc.shimmerSpeed
+            ? std::clamp(static_cast<float>(**dpc.shimmerSpeed), 0.0f, 4.0f) : 1.0f;
+        const float sub = std::min(dsp, 1.0f);
+        glUniform1f(u.damping, 1.0f - (1.0f - 0.9994f) * sub);
+    }
     glUniform1f(u.bedVariation,
                 g_pGlobalState->config.shimmerBed
                     ? static_cast<float>(**g_pGlobalState->config.shimmerBed) : 0.45f);
@@ -267,8 +280,14 @@ void stepWaveSim() {
     const auto& scfg = g_pGlobalState->config;
     const float agit = scfg.shimmerAgitation ? static_cast<float>(**scfg.shimmerAgitation) : 0.5f;
     const float chop = scfg.shimmerChop      ? static_cast<float>(**scfg.shimmerChop)      : 0.5f;
-    // agitation 0..1 -> an event every 90..8 steps
-    const uint64_t every = static_cast<uint64_t>(90.0f - 82.0f * std::clamp(agit, 0.0f, 1.0f));
+    // agitation 0..1 -> an event every 90..8 steps of SIMULATED time
+    uint64_t every = static_cast<uint64_t>(90.0f - 82.0f * std::clamp(agit, 0.0f, 1.0f));
+    // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
+    // in physics and wrong in use: at speed 0.002 it worked out to one
+    // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is
+    // wanted as slow MOTION, not as a slow world where nothing happens.
+    // Keeping the rate in real time means low speed reads as a gently evolving
+    // texture that is still fed, and "How often" stays an independent control.
 
 
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
