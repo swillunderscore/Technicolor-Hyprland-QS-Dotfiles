@@ -164,7 +164,12 @@ const float PHI = 1.61803398875;
 // appearing out of nowhere in the middle of a window — the "smash" that was so
 // obvious before. The ring is off-screen in every direction regardless of how
 // the user's monitors are arranged, so no layout detection is needed.
-const float VIS = 0.34;   // half-width of the visible window into the sim
+// Half-width of the visible window into the sim. Smaller = the injection ring
+// sits proportionally further outside what you can see, so a disturbance has
+// more water to cross before it arrives. At 0.34 the ring (radius 0.40-0.49)
+// landed only just past the visible edge and the "smash" was still catchable in
+// the corner of your eye.
+const float VIS = 0.21;
 
 float waveH(vec2 q) {
     // NEITHER fract() NOR clamp(). fract() wrapped, putting a hard seam wherever

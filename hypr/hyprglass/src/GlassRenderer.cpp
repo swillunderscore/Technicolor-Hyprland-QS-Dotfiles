@@ -145,6 +145,15 @@ void stepWaveSim() {
         static double accum = 0.0;
         constexpr double STEP = 1.0 / 120.0;
 
+        // SPEED scales how much simulated time each real second buys. It used to
+        // multiply uTime, which the analytic surface read — but the surface is a
+        // simulation now and never looks at uTime, so the slider did nothing at
+        // all. Scaling the accumulator is the honest equivalent: the water
+        // genuinely runs faster or slower.
+        const auto& spcfg = g_pGlobalState->config;
+        const double speedMul = spcfg.shimmerSpeed
+            ? std::clamp(static_cast<double>(**spcfg.shimmerSpeed), 0.0, 4.0) : 1.0;
+
         const auto now = steady_clock::now();
         if (last.time_since_epoch().count() == 0)
             last = now;
@@ -155,7 +164,7 @@ void stepWaveSim() {
         // huge; replaying all of it at once both stutters and can destabilise
         // the integrator. Dropping the excess is the right trade.
         if (dt > 0.25) dt = 0.25;
-        accum += dt;
+        accum += dt * speedMul;
 
         steps = static_cast<int>(accum / STEP);
         if (steps <= 0)
