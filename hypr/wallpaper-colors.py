@@ -337,7 +337,7 @@ def main():
         except Exception:
             pass
 
-        # wlogout: wallpaper-themed liquid-glass style.css (hyprglass glasses its
+        # wlogout: wallpaper-themed liquid-glass style.css (hyprwater glasses its
         # logout_dialog layer — no chromakey).
         try:
             subprocess.run(['python3', os.path.expanduser('~/.config/hypr/gen-wlogout-style.py')],

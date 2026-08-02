@@ -418,7 +418,7 @@ void main() {
                      / max(fullSize / max(fullSize.x, 1.0), vec2(0.001));
 
             // ── STAY INSIDE THE CAPTURED BACKDROP ──────────────────────────
-            // hyprglass only samples a padded region around the window, so
+            // hyprwater only samples a padded region around the window, so
             // there is a hard limit on how far a sample may reach. Past it the
             // sampler clamps, and because the wave keeps moving, the clamped
             // band moves with it — which is what the flicker at the top edge

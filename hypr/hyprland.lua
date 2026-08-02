@@ -192,7 +192,7 @@ hl.config({
         },
         blur = {
             -- enabled=false, but size/passes set the render damage-expansion
-            -- radius hyprglass needs (size * 2^passes). 40 covers the sampling
+            -- radius hyprwater needs (size * 2^passes). 40 covers the sampling
             -- reach; lower values caused stacked-glass glitter on focus changes.
             enabled = false,
             size = 40,
@@ -287,11 +287,11 @@ A("workspacesIn",  1, 3.63, "slideOut", "slide")
 A("workspacesOut", 1, 5.82, "slideOut", "slide")
 A("zoomFactor",    1, 7,    "quick")
 
--- ── hyprglass plugin config ─────────────────────────────────────────────────
+-- ── hyprwater plugin config ─────────────────────────────────────────────────
 -- liquid glass without frosting: no blur/tint, tone-mapping neutralized, lens kept.
 hl.config({
     plugin = {
-        hyprglass = {
+        hyprwater = {
             blur_strength = 0.2,
             blur_iterations = 1,
             tint_color = 0x00000000,
@@ -381,7 +381,7 @@ end
 -- reload re-asserts the high refresh rate.
 load_fragment_safe("window-geometry.conf")  -- per-app tiled/floating + geometry
 load_fragment_safe("colors.conf")           -- focused-window border = wallpaper accent
-load_fragment_safe("hyprglass-tuning.conf") -- Settings → Glass (overrides the defaults above)
+load_fragment_safe("hyprwater-tuning.conf") -- Settings → Glass (overrides the defaults above)
 load_fragment_safe("local.conf")            -- machine-local: env, headless monitor, game rules, execs
 load_fragment_safe("keybinds.conf")         -- Settings → Hotkeys rebinds (currently a no-op)
 
@@ -496,9 +496,9 @@ hl.on("hyprland.start", function()
     -- then `hyprctl reload`. The reload re-runs THIS config with the plugins now
     -- present: the chromakey block above registers its shaders + shade rules and
     -- the darkwindow plugin (on its config.reloaded handler) compiles them and
-    -- applies them to existing windows; hyprglass likewise re-reads its tuning.
+    -- applies them to existing windows; hyprwater likewise re-reads its tuning.
     -- This replaces the old `sleep 6 && apply-fragments.sh` — no arbitrary delay,
     -- and correct ordering (shaders compiled in the same reload that binds the
     -- rules), so chromakey works even for windows already open at login.
-    hl.exec_cmd("sh -c '\"$HOME/.config/hypr/Hypr-DarkWindow/load.sh\"; \"$HOME/.config/hypr/hyprglass/load.sh\"; sleep 0.5; hyprctl reload'")
+    hl.exec_cmd("sh -c '\"$HOME/.config/hypr/Hypr-DarkWindow/load.sh\"; \"$HOME/.config/hypr/hyprwater/load.sh\"; sleep 0.5; hyprctl reload'")
 end)

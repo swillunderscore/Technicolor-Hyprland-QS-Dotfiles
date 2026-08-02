@@ -72,7 +72,11 @@ using Render::GL::g_pHyprOpenGL;
 inline HANDLE                        PHANDLE = nullptr;
 inline std::unique_ptr<SGlobalState> g_pGlobalState;
 
-inline constexpr std::string_view PLUGIN_NAME        = "hyprglass";
-inline constexpr std::string_view PLUGIN_DESCRIPTION = "Apple-style Liquid Glass effect";
-inline constexpr std::string_view PLUGIN_AUTHOR      = "Hyprnux";
+inline constexpr std::string_view PLUGIN_NAME        = "hyprwater";
+inline constexpr std::string_view PLUGIN_DESCRIPTION = "Liquid glass with a simulated water surface";
+// This fork's author, not upstream's. Reporting "hyprwater by Hyprnux" would
+// credit them for work they did not do, and BSD-3 clause 3 specifically bars
+// using their name to promote a derived product. Upstream is credited in
+// LICENSE and in the README instead, which is where attribution belongs.
+inline constexpr std::string_view PLUGIN_AUTHOR      = "swillunderscore";
 inline constexpr std::string_view PLUGIN_VERSION     = "1.0.0";

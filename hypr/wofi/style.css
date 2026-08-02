@@ -3,7 +3,7 @@
  * @theme_selected_bg_color / @theme_selected_fg_color from the wallpaper), so it
  * follows the palette automatically.
  *
- * Look: the WINDOW is a translucent panel that hyprglass frosts (the "wofi"
+ * Look: the WINDOW is a translucent panel that hyprwater frosts (the "wofi"
  * layer namespace is whitelisted), and the search bar + app list sit on it as
  * SOLID colored rounded boxes — "blocks on glass", like the Settings window. */
 
@@ -16,7 +16,7 @@
 }
 
 window {
-    /* near-clear NEUTRAL panel so hyprglass shows UNTINTED glass (a theme-colored
+    /* near-clear NEUTRAL panel so hyprwater shows UNTINTED glass (a theme-colored
      * alpha here tinted the whole launcher). Matches the alt-tab pie's clear disc;
      * the wofi mask threshold in hyprland.conf is lowered to glass this. */
     background-color: rgba(150, 150, 160, 0.06);

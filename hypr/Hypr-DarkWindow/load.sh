@@ -3,7 +3,7 @@
 # "glass" plugin — provides the `darkwindow:shade` windowrule field + the tckey
 # custom shaders). Built against the SYSTEM Hyprland headers (pkg-config
 # hyprland) — no hyprpm, no sudo — so a Hyprland update can't strand it in a
-# root-owned /var/cache that needs a password to rebuild. Mirrors hyprglass/load.sh.
+# root-owned /var/cache that needs a password to rebuild. Mirrors hyprwater/load.sh.
 # Source vendored from github.com/micha4w/Hypr-DarkWindow. Called from the
 # hyprland.lua startup handler.
 #

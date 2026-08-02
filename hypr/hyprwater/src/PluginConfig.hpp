@@ -7,16 +7,16 @@
 #include <typeinfo>
 #include <unordered_map>
 
-inline constexpr std::string_view CONFIG_PREFIX = "plugin:hyprglass:";
+inline constexpr std::string_view CONFIG_PREFIX = "plugin:hyprwater:";
 
 // Window tags for theme and preset selection
-inline constexpr std::string_view TAG_THEME_PREFIX  = "hyprglass_theme_";
-inline constexpr std::string_view TAG_PRESET_PREFIX = "hyprglass_preset_";
+inline constexpr std::string_view TAG_THEME_PREFIX  = "hyprwater_theme_";
+inline constexpr std::string_view TAG_PRESET_PREFIX = "hyprwater_preset_";
 
 // Window tags for per-window enable/disable. Override the global `enabled` setting.
-// `hyprglass_disabled` always wins if both are present.
-inline constexpr std::string_view TAG_ENABLED  = "hyprglass_enabled";
-inline constexpr std::string_view TAG_DISABLED = "hyprglass_disabled";
+// `hyprwater_disabled` always wins if both are present.
+inline constexpr std::string_view TAG_ENABLED  = "hyprwater_enabled";
+inline constexpr std::string_view TAG_DISABLED = "hyprwater_disabled";
 
 // Sentinel: "not set by user, inherit from parent layer"
 inline constexpr Hyprlang::FLOAT SENTINEL_FLOAT = -1.0;
@@ -27,88 +27,88 @@ inline constexpr int MAX_PRESET_INHERITANCE_DEPTH = 8;
 namespace ConfigKeys {
 
 // Global-only
-inline constexpr auto ENABLED        = "plugin:hyprglass:enabled";
-inline constexpr auto DEFAULT_THEME  = "plugin:hyprglass:default_theme";
-inline constexpr auto DEFAULT_PRESET = "plugin:hyprglass:default_preset";
+inline constexpr auto ENABLED        = "plugin:hyprwater:enabled";
+inline constexpr auto DEFAULT_THEME  = "plugin:hyprwater:default_theme";
+inline constexpr auto DEFAULT_PRESET = "plugin:hyprwater:default_preset";
 
 // Preset keyword, registered as unscoped because Hyprlang does not dispatch
 // scoped keyword handlers inside the plugin special category.
 inline constexpr auto PRESET_KEYWORD = "preset";
 
 // Overridable — global level
-inline constexpr auto BLUR_STRENGTH        = "plugin:hyprglass:blur_strength";
-inline constexpr auto BLUR_ITERATIONS      = "plugin:hyprglass:blur_iterations";
-inline constexpr auto REFRACTION_STRENGTH  = "plugin:hyprglass:refraction_strength";
-inline constexpr auto CHROMATIC_ABERRATION = "plugin:hyprglass:chromatic_aberration";
-inline constexpr auto FRESNEL_STRENGTH     = "plugin:hyprglass:fresnel_strength";
-inline constexpr auto SPECULAR_STRENGTH    = "plugin:hyprglass:specular_strength";
-inline constexpr auto GLASS_OPACITY        = "plugin:hyprglass:glass_opacity";
-inline constexpr auto EDGE_THICKNESS       = "plugin:hyprglass:edge_thickness";
-inline constexpr auto TINT_COLOR           = "plugin:hyprglass:tint_color";
-inline constexpr auto LENS_DISTORTION      = "plugin:hyprglass:lens_distortion";
-inline constexpr auto BRIGHTNESS           = "plugin:hyprglass:brightness";
-inline constexpr auto CONTRAST             = "plugin:hyprglass:contrast";
-inline constexpr auto SATURATION           = "plugin:hyprglass:saturation";
-inline constexpr auto VIBRANCY             = "plugin:hyprglass:vibrancy";
-inline constexpr auto VIBRANCY_DARKNESS    = "plugin:hyprglass:vibrancy_darkness";
-inline constexpr auto ADAPTIVE_DIM          = "plugin:hyprglass:adaptive_dim";
-inline constexpr auto ADAPTIVE_BOOST        = "plugin:hyprglass:adaptive_boost";
+inline constexpr auto BLUR_STRENGTH        = "plugin:hyprwater:blur_strength";
+inline constexpr auto BLUR_ITERATIONS      = "plugin:hyprwater:blur_iterations";
+inline constexpr auto REFRACTION_STRENGTH  = "plugin:hyprwater:refraction_strength";
+inline constexpr auto CHROMATIC_ABERRATION = "plugin:hyprwater:chromatic_aberration";
+inline constexpr auto FRESNEL_STRENGTH     = "plugin:hyprwater:fresnel_strength";
+inline constexpr auto SPECULAR_STRENGTH    = "plugin:hyprwater:specular_strength";
+inline constexpr auto GLASS_OPACITY        = "plugin:hyprwater:glass_opacity";
+inline constexpr auto EDGE_THICKNESS       = "plugin:hyprwater:edge_thickness";
+inline constexpr auto TINT_COLOR           = "plugin:hyprwater:tint_color";
+inline constexpr auto LENS_DISTORTION      = "plugin:hyprwater:lens_distortion";
+inline constexpr auto BRIGHTNESS           = "plugin:hyprwater:brightness";
+inline constexpr auto CONTRAST             = "plugin:hyprwater:contrast";
+inline constexpr auto SATURATION           = "plugin:hyprwater:saturation";
+inline constexpr auto VIBRANCY             = "plugin:hyprwater:vibrancy";
+inline constexpr auto VIBRANCY_DARKNESS    = "plugin:hyprwater:vibrancy_darkness";
+inline constexpr auto ADAPTIVE_DIM          = "plugin:hyprwater:adaptive_dim";
+inline constexpr auto ADAPTIVE_BOOST        = "plugin:hyprwater:adaptive_boost";
 
 // Layer surface support
-inline constexpr auto LAYERS_ENABLED            = "plugin:hyprglass:layers:enabled";
-inline constexpr auto SHIMMER_ENABLED           = "plugin:hyprglass:shimmer:enabled";
-inline constexpr auto SHIMMER_INTENSITY         = "plugin:hyprglass:shimmer:intensity";
-inline constexpr auto SHIMMER_SPEED             = "plugin:hyprglass:shimmer:speed";
-inline constexpr auto SHIMMER_SCALE             = "plugin:hyprglass:shimmer:scale";
-inline constexpr auto SHIMMER_LIGHT_BACKDROP    = "plugin:hyprglass:shimmer:light_from_backdrop";
-inline constexpr auto SHIMMER_DEPTH             = "plugin:hyprglass:shimmer:depth";
-inline constexpr auto SHIMMER_AGITATION         = "plugin:hyprglass:shimmer:agitation";
-inline constexpr auto SHIMMER_VISCOSITY         = "plugin:hyprglass:shimmer:viscosity";
-inline constexpr auto SHIMMER_BED               = "plugin:hyprglass:shimmer:bed_variation";
-inline constexpr auto SHIMMER_REFRACT           = "plugin:hyprglass:shimmer:refraction";
-inline constexpr auto LAYERS_NAMESPACES         = "plugin:hyprglass:layers:namespaces";
-inline constexpr auto LAYERS_EXCLUDE_NAMESPACES = "plugin:hyprglass:layers:exclude_namespaces";
-inline constexpr auto LAYERS_PRESET             = "plugin:hyprglass:layers:preset";
-inline constexpr auto LAYERS_NAMESPACE_PRESETS          = "plugin:hyprglass:layers:namespace_presets";
-inline constexpr auto LAYERS_NAMESPACE_MASK_THRESHOLDS  = "plugin:hyprglass:layers:namespace_mask_thresholds";
+inline constexpr auto LAYERS_ENABLED            = "plugin:hyprwater:layers:enabled";
+inline constexpr auto SHIMMER_ENABLED           = "plugin:hyprwater:shimmer:enabled";
+inline constexpr auto SHIMMER_INTENSITY         = "plugin:hyprwater:shimmer:intensity";
+inline constexpr auto SHIMMER_SPEED             = "plugin:hyprwater:shimmer:speed";
+inline constexpr auto SHIMMER_SCALE             = "plugin:hyprwater:shimmer:scale";
+inline constexpr auto SHIMMER_LIGHT_BACKDROP    = "plugin:hyprwater:shimmer:light_from_backdrop";
+inline constexpr auto SHIMMER_DEPTH             = "plugin:hyprwater:shimmer:depth";
+inline constexpr auto SHIMMER_AGITATION         = "plugin:hyprwater:shimmer:agitation";
+inline constexpr auto SHIMMER_VISCOSITY         = "plugin:hyprwater:shimmer:viscosity";
+inline constexpr auto SHIMMER_BED               = "plugin:hyprwater:shimmer:bed_variation";
+inline constexpr auto SHIMMER_REFRACT           = "plugin:hyprwater:shimmer:refraction";
+inline constexpr auto LAYERS_NAMESPACES         = "plugin:hyprwater:layers:namespaces";
+inline constexpr auto LAYERS_EXCLUDE_NAMESPACES = "plugin:hyprwater:layers:exclude_namespaces";
+inline constexpr auto LAYERS_PRESET             = "plugin:hyprwater:layers:preset";
+inline constexpr auto LAYERS_NAMESPACE_PRESETS          = "plugin:hyprwater:layers:namespace_presets";
+inline constexpr auto LAYERS_NAMESPACE_MASK_THRESHOLDS  = "plugin:hyprwater:layers:namespace_mask_thresholds";
 
 // Overridable — dark theme overrides
-inline constexpr auto DARK_BLUR_STRENGTH        = "plugin:hyprglass:dark:blur_strength";
-inline constexpr auto DARK_BLUR_ITERATIONS      = "plugin:hyprglass:dark:blur_iterations";
-inline constexpr auto DARK_REFRACTION_STRENGTH  = "plugin:hyprglass:dark:refraction_strength";
-inline constexpr auto DARK_CHROMATIC_ABERRATION = "plugin:hyprglass:dark:chromatic_aberration";
-inline constexpr auto DARK_FRESNEL_STRENGTH     = "plugin:hyprglass:dark:fresnel_strength";
-inline constexpr auto DARK_SPECULAR_STRENGTH    = "plugin:hyprglass:dark:specular_strength";
-inline constexpr auto DARK_GLASS_OPACITY        = "plugin:hyprglass:dark:glass_opacity";
-inline constexpr auto DARK_EDGE_THICKNESS       = "plugin:hyprglass:dark:edge_thickness";
-inline constexpr auto DARK_TINT_COLOR           = "plugin:hyprglass:dark:tint_color";
-inline constexpr auto DARK_LENS_DISTORTION      = "plugin:hyprglass:dark:lens_distortion";
-inline constexpr auto DARK_BRIGHTNESS           = "plugin:hyprglass:dark:brightness";
-inline constexpr auto DARK_CONTRAST             = "plugin:hyprglass:dark:contrast";
-inline constexpr auto DARK_SATURATION           = "plugin:hyprglass:dark:saturation";
-inline constexpr auto DARK_VIBRANCY             = "plugin:hyprglass:dark:vibrancy";
-inline constexpr auto DARK_VIBRANCY_DARKNESS    = "plugin:hyprglass:dark:vibrancy_darkness";
-inline constexpr auto DARK_ADAPTIVE_DIM          = "plugin:hyprglass:dark:adaptive_dim";
-inline constexpr auto DARK_ADAPTIVE_BOOST        = "plugin:hyprglass:dark:adaptive_boost";
+inline constexpr auto DARK_BLUR_STRENGTH        = "plugin:hyprwater:dark:blur_strength";
+inline constexpr auto DARK_BLUR_ITERATIONS      = "plugin:hyprwater:dark:blur_iterations";
+inline constexpr auto DARK_REFRACTION_STRENGTH  = "plugin:hyprwater:dark:refraction_strength";
+inline constexpr auto DARK_CHROMATIC_ABERRATION = "plugin:hyprwater:dark:chromatic_aberration";
+inline constexpr auto DARK_FRESNEL_STRENGTH     = "plugin:hyprwater:dark:fresnel_strength";
+inline constexpr auto DARK_SPECULAR_STRENGTH    = "plugin:hyprwater:dark:specular_strength";
+inline constexpr auto DARK_GLASS_OPACITY        = "plugin:hyprwater:dark:glass_opacity";
+inline constexpr auto DARK_EDGE_THICKNESS       = "plugin:hyprwater:dark:edge_thickness";
+inline constexpr auto DARK_TINT_COLOR           = "plugin:hyprwater:dark:tint_color";
+inline constexpr auto DARK_LENS_DISTORTION      = "plugin:hyprwater:dark:lens_distortion";
+inline constexpr auto DARK_BRIGHTNESS           = "plugin:hyprwater:dark:brightness";
+inline constexpr auto DARK_CONTRAST             = "plugin:hyprwater:dark:contrast";
+inline constexpr auto DARK_SATURATION           = "plugin:hyprwater:dark:saturation";
+inline constexpr auto DARK_VIBRANCY             = "plugin:hyprwater:dark:vibrancy";
+inline constexpr auto DARK_VIBRANCY_DARKNESS    = "plugin:hyprwater:dark:vibrancy_darkness";
+inline constexpr auto DARK_ADAPTIVE_DIM          = "plugin:hyprwater:dark:adaptive_dim";
+inline constexpr auto DARK_ADAPTIVE_BOOST        = "plugin:hyprwater:dark:adaptive_boost";
 
 // Overridable — light theme overrides
-inline constexpr auto LIGHT_BLUR_STRENGTH        = "plugin:hyprglass:light:blur_strength";
-inline constexpr auto LIGHT_BLUR_ITERATIONS      = "plugin:hyprglass:light:blur_iterations";
-inline constexpr auto LIGHT_REFRACTION_STRENGTH  = "plugin:hyprglass:light:refraction_strength";
-inline constexpr auto LIGHT_CHROMATIC_ABERRATION = "plugin:hyprglass:light:chromatic_aberration";
-inline constexpr auto LIGHT_FRESNEL_STRENGTH     = "plugin:hyprglass:light:fresnel_strength";
-inline constexpr auto LIGHT_SPECULAR_STRENGTH    = "plugin:hyprglass:light:specular_strength";
-inline constexpr auto LIGHT_GLASS_OPACITY        = "plugin:hyprglass:light:glass_opacity";
-inline constexpr auto LIGHT_EDGE_THICKNESS       = "plugin:hyprglass:light:edge_thickness";
-inline constexpr auto LIGHT_TINT_COLOR           = "plugin:hyprglass:light:tint_color";
-inline constexpr auto LIGHT_LENS_DISTORTION      = "plugin:hyprglass:light:lens_distortion";
-inline constexpr auto LIGHT_BRIGHTNESS           = "plugin:hyprglass:light:brightness";
-inline constexpr auto LIGHT_CONTRAST             = "plugin:hyprglass:light:contrast";
-inline constexpr auto LIGHT_SATURATION           = "plugin:hyprglass:light:saturation";
-inline constexpr auto LIGHT_VIBRANCY             = "plugin:hyprglass:light:vibrancy";
-inline constexpr auto LIGHT_VIBRANCY_DARKNESS    = "plugin:hyprglass:light:vibrancy_darkness";
-inline constexpr auto LIGHT_ADAPTIVE_DIM          = "plugin:hyprglass:light:adaptive_dim";
-inline constexpr auto LIGHT_ADAPTIVE_BOOST        = "plugin:hyprglass:light:adaptive_boost";
+inline constexpr auto LIGHT_BLUR_STRENGTH        = "plugin:hyprwater:light:blur_strength";
+inline constexpr auto LIGHT_BLUR_ITERATIONS      = "plugin:hyprwater:light:blur_iterations";
+inline constexpr auto LIGHT_REFRACTION_STRENGTH  = "plugin:hyprwater:light:refraction_strength";
+inline constexpr auto LIGHT_CHROMATIC_ABERRATION = "plugin:hyprwater:light:chromatic_aberration";
+inline constexpr auto LIGHT_FRESNEL_STRENGTH     = "plugin:hyprwater:light:fresnel_strength";
+inline constexpr auto LIGHT_SPECULAR_STRENGTH    = "plugin:hyprwater:light:specular_strength";
+inline constexpr auto LIGHT_GLASS_OPACITY        = "plugin:hyprwater:light:glass_opacity";
+inline constexpr auto LIGHT_EDGE_THICKNESS       = "plugin:hyprwater:light:edge_thickness";
+inline constexpr auto LIGHT_TINT_COLOR           = "plugin:hyprwater:light:tint_color";
+inline constexpr auto LIGHT_LENS_DISTORTION      = "plugin:hyprwater:light:lens_distortion";
+inline constexpr auto LIGHT_BRIGHTNESS           = "plugin:hyprwater:light:brightness";
+inline constexpr auto LIGHT_CONTRAST             = "plugin:hyprwater:light:contrast";
+inline constexpr auto LIGHT_SATURATION           = "plugin:hyprwater:light:saturation";
+inline constexpr auto LIGHT_VIBRANCY             = "plugin:hyprwater:light:vibrancy";
+inline constexpr auto LIGHT_VIBRANCY_DARKNESS    = "plugin:hyprwater:light:vibrancy_darkness";
+inline constexpr auto LIGHT_ADAPTIVE_DIM          = "plugin:hyprwater:light:adaptive_dim";
+inline constexpr auto LIGHT_ADAPTIVE_BOOST        = "plugin:hyprwater:light:adaptive_boost";
 
 } // namespace ConfigKeys
 

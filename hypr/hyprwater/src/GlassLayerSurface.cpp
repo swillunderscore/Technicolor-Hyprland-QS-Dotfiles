@@ -191,7 +191,7 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
     // has only 2-bit alpha, quantizing values below ~0.17 to zero and breaking
     // the mask discard for low-opacity layers.
     if (!m_surfaceTempFramebuffer)
-        m_surfaceTempFramebuffer = g_pHyprRenderer->createFB("hyprglass-layer-temp");
+        m_surfaceTempFramebuffer = g_pHyprRenderer->createFB("hyprwater-layer-temp");
 
     if (m_surfaceTempFramebuffer->m_size.x != monitorWidth || m_surfaceTempFramebuffer->m_size.y != monitorHeight)
         m_surfaceTempFramebuffer->alloc(monitorWidth, monitorHeight, DRM_FORMAT_ARGB8888);

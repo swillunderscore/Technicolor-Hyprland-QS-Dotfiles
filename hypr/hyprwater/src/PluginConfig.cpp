@@ -115,9 +115,9 @@ void registerConfig(HANDLE handle) {
 
     // Legacy config keyword plus Lua-config callbacks for custom presets and layers.
     HyprlandAPI::addConfigKeyword(handle, ConfigKeys::PRESET_KEYWORD, handlePresetKeyword, Hyprlang::SHandlerOptions{});
-    HyprlandAPI::addLuaFunction(handle, "hyprglass", "preset", handleLuaPreset);
-    HyprlandAPI::addLuaFunction(handle, "hyprglass", "layer", handleLuaLayer);
-    HyprlandAPI::addLuaFunction(handle, "hyprglass", "config", handleLuaConfig);
+    HyprlandAPI::addLuaFunction(handle, "hyprwater", "preset", handleLuaPreset);
+    HyprlandAPI::addLuaFunction(handle, "hyprwater", "layer", handleLuaLayer);
+    HyprlandAPI::addLuaFunction(handle, "hyprwater", "config", handleLuaConfig);
 }
 
 // ── Config pointer initialization ────────────────────────────────────────────
@@ -395,8 +395,8 @@ void commitPendingPresets() {
 }
 
 // ── Lua config handler ──────────────────────────────────────────────────────
-// hyprglass.config({ key = val, ... }) wraps hl.config({ plugin = { hyprglass = { ... } } })
-// Recursively walks the table and sets each leaf as "plugin.hyprglass.key.subkey"
+// hyprwater.config({ key = val, ... }) wraps hl.config({ plugin = { hyprwater = { ... } } })
+// Recursively walks the table and sets each leaf as "plugin.hyprwater.key.subkey"
 
 static void walkConfigTable(lua_State* L, int tableIdx, const std::string& prefix) {
     lua_pushnil(L);
@@ -408,7 +408,7 @@ static void walkConfigTable(lua_State* L, int tableIdx, const std::string& prefi
         if (lua_istable(L, -1)) {
             walkConfigTable(L, lua_gettop(L), fullKey + ".");
         } else {
-            // Push: hl.config({ ["plugin.hyprglass.xxx"] = value })
+            // Push: hl.config({ ["plugin.hyprwater.xxx"] = value })
             lua_getglobal(L, "hl");
             lua_getfield(L, -1, "config");
             lua_newtable(L);
@@ -423,9 +423,9 @@ static void walkConfigTable(lua_State* L, int tableIdx, const std::string& prefi
 
 static int handleLuaConfig(lua_State* L) {
     if (lua_gettop(L) < 1 || !lua_istable(L, 1))
-        return luaL_error(L, "hyprglass.config: expected a table");
+        return luaL_error(L, "hyprwater.config: expected a table");
 
-    walkConfigTable(L, 1, "plugin.hyprglass.");
+    walkConfigTable(L, 1, "plugin.hyprwater.");
     return 0;
 }
 
@@ -480,7 +480,7 @@ static int handleLuaPreset(lua_State* L) {
         return 0;
     }
 
-    return luaL_error(L, "hyprglass.preset: expected (string) or (name, table)");
+    return luaL_error(L, "hyprwater.preset: expected (string) or (name, table)");
 }
 
 // ── Lua layer handler ───────────────────────────────────────────────────────
@@ -496,7 +496,7 @@ static std::vector<SPendingLayer> s_pendingLayers;
 
 static int handleLuaLayer(lua_State* L) {
     if (lua_gettop(L) < 1 || !lua_isstring(L, 1))
-        return luaL_error(L, "hyprglass.layer: first argument must be a namespace string");
+        return luaL_error(L, "hyprwater.layer: first argument must be a namespace string");
 
     SPendingLayer entry;
     entry.ns = lua_tostring(L, 1);
@@ -550,7 +550,7 @@ void validateConfig() {
     const auto theme = readStringConfig(config.defaultTheme);
     if (theme != "dark" && theme != "light") {
         HyprlandAPI::addNotificationV2(PHANDLE, {
-            {"text", std::string("[hyprglass] Invalid default_theme '") + std::string(theme) + "', expected 'dark' or 'light'. Falling back to 'dark'."},
+            {"text", std::string("[hyprwater] Invalid default_theme '") + std::string(theme) + "', expected 'dark' or 'light'. Falling back to 'dark'."},
             {"time", (uint64_t)5000},
             {"color", CHyprColor{1.0, 0.8, 0.2, 1.0}},
         });
@@ -561,7 +561,7 @@ void validateConfig() {
         const auto& presets = g_pGlobalState->customPresets;
         if (presets.find(std::string(preset)) == presets.end()) {
             HyprlandAPI::addNotificationV2(PHANDLE, {
-                {"text", std::string("[hyprglass] Unknown default_preset '") + std::string(preset) + "'. Using 'default' resolution chain."},
+                {"text", std::string("[hyprwater] Unknown default_preset '") + std::string(preset) + "'. Using 'default' resolution chain."},
                 {"time", (uint64_t)5000},
                 {"color", CHyprColor{1.0, 0.8, 0.2, 1.0}},
             });

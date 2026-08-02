@@ -3,15 +3,15 @@
 #  Technicolor effects governor — step desktop effects down under load.
 #
 #  ⚠️ THIS CONFIG USES THE LUA PARSER. `hyprctl keyword` DOES NOT WORK:
-#       $ hyprctl keyword plugin:hyprglass:enabled 0
+#       $ hyprctl keyword plugin:hyprwater:enabled 0
 #       keyword can't work with non-legacy parsers. Use eval.
 #     It fails SILENTLY from a script's point of view (exit 0, message on
 #     stdout), so a governor built on `keyword` looks like it works, changes
 #     nothing, and any measurement you take of it is just noise. Everything
 #     here goes through `hyprctl eval hl.config({...})` instead, the same path
-#     Settings → Glass uses (see hyprglass-set.sh).
+#     Settings → Glass uses (see hyprwater-set.sh).
 #
-#  TYPES MATTER in hl.config: the hyprglass keys are INTs (0/1) and Hyprland's
+#  TYPES MATTER in hl.config: the hyprwater keys are INTs (0/1) and Hyprland's
 #  own animations/shadow keys are BOOLs (true/false). Passing 0 where a bool is
 #  expected does not throw — it just does nothing.
 #
@@ -52,7 +52,7 @@ BATTERY_TIER=2
 #   0  everything on
 #   1  shimmer off              (animated glass; key absent until that ships)
 #   2  + layer glass off        (bar/popups plain; windows keep glass)
-#   3  + hyprglass off entirely (per-window shader + blur — the big one)
+#   3  + hyprwater off entirely (per-window shader + blur — the big one)
 #   4  + animations and shadows off (manual only; governor stops at MAX_TIER)
 
 has_key() { hyprctl getoption "$1" -j >/dev/null 2>&1; }
@@ -75,14 +75,14 @@ apply_tier() {
     sh=$([ "$t" -ge 1 ] && echo 0 || echo 1)      # int
     anim=$([ "$t" -ge 4 ] && echo false || echo true)  # BOOL, not 0/1
 
-    # The shimmer key does not exist until animated glass ships, and hyprglass
+    # The shimmer key does not exist until animated glass ships, and hyprwater
     # may not be installed at all. Including an unknown key would make the
     # whole eval fail, taking the tier that actually matters down with it.
     local hg="enabled=${gl},layers={enabled=${lay}}"
-    has_key plugin:hyprglass:shimmer:enabled && hg="${hg},shimmer={enabled=${sh}}"
+    has_key plugin:hyprwater:shimmer:enabled && hg="${hg},shimmer={enabled=${sh}}"
 
     local lua="{"
-    has_key plugin:hyprglass:enabled && lua="${lua}plugin={hyprglass={${hg}}},"
+    has_key plugin:hyprwater:enabled && lua="${lua}plugin={hyprwater={${hg}}},"
     lua="${lua}animations={enabled=${anim}},decoration={shadow={enabled=${anim}}}}"
 
     hyprctl eval "hl.config(${lua}) return 1" >/dev/null 2>&1
@@ -189,7 +189,7 @@ daemon() {
             apply_tier "$tier"
         elif [ "$tier" -gt 0 ]; then
             want=$([ "$tier" -ge 3 ] && echo 0 || echo 1)
-            [ "$(get_key plugin:hyprglass:enabled)" != "$want" ] && apply_tier "$tier"
+            [ "$(get_key plugin:hyprwater:enabled)" != "$want" ] && apply_tier "$tier"
         fi
         sleep "${POLL_SECONDS:-2}"
     done
@@ -207,7 +207,7 @@ case "${1:-status}" in
         b="$(battery_path)"
         if [ -n "$b" ]; then echo "battery:  $(battery_pct)% ($(cat "$b/status" 2>/dev/null))"
         else echo "battery:  none (desktop — battery settings hidden)"; fi
-        for k in plugin:hyprglass:enabled plugin:hyprglass:layers:enabled animations:enabled decoration:shadow:enabled; do
+        for k in plugin:hyprwater:enabled plugin:hyprwater:layers:enabled animations:enabled decoration:shadow:enabled; do
             has_key "$k" && printf '  %-38s = %s\n' "$k" "$(get_key "$k")"
         done
         ;;

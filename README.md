@@ -23,7 +23,7 @@ Follow these top to bottom and you'll have a working setup.
 
 ### 1. Dependencies
 
-Everything needed: `hyprland`, `quickshell`, `mako`, `xdg-desktop-portal-hyprland`, `pipewire` + `wireplumber`, `ddcutil`, `nethogs`, `jq`, `gawk`, `kitty`, `wofi`, `awww`, `imagemagick`, `python-pillow`, `grim`, `slurp`, `satty`, `wl-clipboard`, `playerctl`, `brightnessctl`, `base-devel` (compiles the two bundled glass plugins — skip it and you get ~15 harmless `hyprglass:` config errors and no glass), plus a Nerd Font (JetBrainsMono Nerd Font). Optional: `nwg-look`, `nwg-displays`, `dex`, `wlogout`, `gnome-keyring`.
+Everything needed: `hyprland`, `quickshell`, `mako`, `xdg-desktop-portal-hyprland`, `pipewire` + `wireplumber`, `ddcutil`, `nethogs`, `jq`, `gawk`, `kitty`, `wofi`, `awww`, `imagemagick`, `python-pillow`, `grim`, `slurp`, `satty`, `wl-clipboard`, `playerctl`, `brightnessctl`, `base-devel` (compiles the two bundled glass plugins — skip it and you get ~15 harmless `hyprwater:` config errors and no glass), plus a Nerd Font (JetBrainsMono Nerd Font). Optional: `nwg-look`, `nwg-displays`, `dex`, `wlogout`, `gnome-keyring`.
 
 Most share the same package name across distros. The newer ones to watch are `quickshell`, `awww` (the wallpaper daemon — it's the current name of the project formerly called `swww`, so don't also install `swww`), and `satty`, plus Hyprland itself on older distros. Quickshell's per-distro install page: <https://quickshell.org/docs/master/guide/install-setup/>
 
@@ -46,7 +46,7 @@ Most share the same package name across distros. The newer ones to watch are `qu
   - `grim` + `slurp` + `satty` + `wl-clipboard` — screenshots: capture, region-select, annotate, copy
   - `playerctl` — media keys (play/pause/next)
   - `brightnessctl` — laptop backlight keys
-  - `base-devel` — `make`/`g++`/`pkg-config` to compile the two bundled glass plugins (`hyprglass`, `Hypr-DarkWindow`) on first launch. Without it they can't build, so Hyprland throws ~15 `hyprglass:` config errors on login and you get no glass (everything else still works).
+  - `base-devel` — `make`/`g++`/`pkg-config` to compile the two bundled glass plugins (`hyprwater`, `Hypr-DarkWindow`) on first launch. Without it they can't build, so Hyprland throws ~15 `hyprwater:` config errors on login and you get no glass (everything else still works).
   - a Nerd Font (I use JetBrainsMono Nerd Font) — every icon and glyph in the UI
   - optional: `nwg-look` (GTK theme GUI), `nwg-displays` (monitor-layout GUI — it
   produces `monitor =` lines you can paste into `local.conf`), `dex` (runs XDG autostart entries), `wlogout` (power menu), `gnome-keyring`
@@ -58,8 +58,8 @@ Most share the same package name across distros. The newer ones to watch are `qu
     - `dolphin` + `qt6ct-kde` + `gcc` — the file manager, the Qt color theming, and
       the compiler for the rounded-blocks shim
     - `brave-bin` — the browser
-    - glass transparency: `Hypr-DarkWindow` + `hyprglass` — both ship vendored
-      (`hypr/Hypr-DarkWindow/`, `hypr/hyprglass/`) and build themselves at startup
+    - glass transparency: `Hypr-DarkWindow` + `hyprwater` — both ship vendored
+      (`hypr/Hypr-DarkWindow/`, `hypr/hyprwater/`) and build themselves at startup
 
 **Arch** — the entire core install is in the official repos, so plain `pacman`, no AUR helper needed:
 ```
@@ -73,7 +73,15 @@ Optional — the apps the wallpaper palette can theme, plus their helpers. Insta
 sudo pacman -S dolphin gcc                                 # official repos
 paru -S vesktop spotify spicetify-cli qt6ct-kde brave-bin  # AUR — the only part that needs a helper
 ```
-(The glass transparency uses two Hyprland plugins — `Hypr-DarkWindow` and `hyprglass` — both vendored in this repo (`hypr/Hypr-DarkWindow/`, `hypr/hyprglass/`) and compiled by their own `load.sh` on first launch; no `hyprpm`, no extra packages. See App theming.)
+(The glass transparency uses two Hyprland plugins — `Hypr-DarkWindow` and `hyprwater` — both vendored in this repo (`hypr/Hypr-DarkWindow/`, `hypr/hyprwater/`) and compiled by their own `load.sh` on first launch; no `hyprpm`, no extra packages. See App theming.)
+
+> **`hyprwater` is a fork of [hyprglass](https://github.com/Hyprnux/hyprglass)** by Jeremy
+> Trufier, used under the BSD 3-Clause License (`hypr/hyprwater/LICENSE`). It has diverged
+> enough to warrant its own name: on top of hyprglass's thick-glass refraction it adds a
+> GPU wave-equation simulation — a real height field with propagation, reflection,
+> interference and viscous decay — and derives the surface's refraction and its caustics
+> from that same field. The upstream project is not responsible for this fork and does not
+> endorse it.
 
 **Fedora:** most via `dnf` under the same names (Hyprland is packaged on F39+). quickshell is a COPR:
 ```
@@ -96,13 +104,13 @@ mkdir -p ~/.local/share/applications && cp applications/*.desktop ~/.local/share
 The main config is **`hyprland.lua`** — recent Hyprland (0.55+) loads it automatically, and `hyprland.conf` ships beside it only as a fallback for older versions (Hyprland uses the `.lua` when present, otherwise the `.conf`). It pulls in a few *optional* per-machine fragments; they're gitignored, so copy the examples once and your edits stick across updates:
 ```
 cp ~/.config/hypr/local.conf.example            ~/.config/hypr/local.conf
-cp ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf
+cp ~/.config/hypr/hyprwater-tuning.conf.example ~/.config/hypr/hyprwater-tuning.conf
 cp ~/.config/hypr/terminal.conf.example         ~/.config/hypr/terminal.conf
 cp ~/.config/mako/config.example                ~/.config/mako/config
 ```
 - **Monitors** — one screen works as-is (the shipped `hl.monitor{ output = "", mode = "preferred", … }` line in `hyprland.lua` auto-detects it). For multi-monitor or a specific mode/refresh, the update-safe way is to add `monitor = ` lines to **`local.conf`** (gitignored, and read by `hyprland.lua`), e.g. `monitor = DP-1, 2560x1440@165, 0x0, 1` — run `hyprctl monitors` for names/modes, or use `nwg-displays`. You *can* instead edit the `hl.monitor` block in `hyprland.lua`, but that file is tracked, so an update re-copy overwrites it; `local.conf` is never touched.
 - `local.conf` — machine-specific Hyprland bits: GPU/driver env (a ready-to-uncomment Nvidia block is included), input quirks, and any extra `monitor =` lines. It can otherwise stay empty.
-- `hyprglass-tuning.conf` starts empty (just defaults); the Settings app's Glass tab writes to it. Everything else per-machine (`color-tuning.conf`, `wallpaper-dir.conf`, `launcher-apps.json`, `keybinds.conf`, …) is created by the Settings app on demand — sensible defaults apply when they're absent.
+- `hyprwater-tuning.conf` starts empty (just defaults); the Settings app's Glass tab writes to it. Everything else per-machine (`color-tuning.conf`, `wallpaper-dir.conf`, `launcher-apps.json`, `keybinds.conf`, …) is created by the Settings app on demand — sensible defaults apply when they're absent.
 
 ### 4. Add wallpapers
 Put animated wallpapers in `~/Wallpapers/animated/` (see the Wallpapers section). The bar regenerates its color palette from the current wallpaper automatically.
@@ -126,7 +134,7 @@ cp -r hypr quickshell mako ~/.config/
 ```
 **Your personal settings are NOT touched.** Everything you tune at runtime —
 the [Settings app](#settings-app)'s colors (`color-tuning.conf`), liquid-glass
-sliders (`hyprglass-tuning.conf`), wallpaper folder (`wallpaper-dir.conf`),
+sliders (`hyprwater-tuning.conf`), wallpaper folder (`wallpaper-dir.conf`),
 auto-cycle prefs (`wallpaper-timer.conf`), pinned apps (`launcher-apps.json`) —
 plus your `local.conf` —
 are **gitignored**, so they live only in `~/.config` and aren't in the repo. A
@@ -159,11 +167,11 @@ A real app window (`quickshell/Settings.qml`) — it appears in your app list as
 - **Apps** — edit the launcher's pinned apps (reorder, swap icons, add/remove). Pins are stored in `quickshell/launcher-apps.json`; a built-in default set is used until you customize.
 - **Wallpaper** — set the wallpapers folder, and browse a **cover-flow** of every wallpaper in it: scroll or drag to spin it (a vertical mouse wheel scrolls it horizontally), click the centered cover to set it. Plus shuffle, open-folder, a **transition** picker (the switch animation — a per-pixel reveal ordered by Brightness, Shadows, Radial, Wipe, Dissolve, or Random), and **auto-cycle** controls: how often it rotates the wallpaper, a pause toggle, and pause-while-a-fullscreen-app-is-open — so a game or fullscreen video never gets a transition (or the CPU spike of one) mid-frame.
 - **Colors** — four sliders that retint **every** themed app at once, with live previews and reset buttons: a text **contrast** threshold (where text flips light↔dark — center is the default, full-left forces dark text, full-right forces light), plus **saturation** and **brightness** *ceilings* (full-right = the wallpaper's own colors untouched; lower them to cap how vivid/bright the palette can get, which reins in over-saturated wallpapers while leaving already-muted/dark ones alone) and **hue** rotation. A slider release re-runs the whole palette pipeline, so the bar and all themed apps follow.
-- **Glass** — live sliders for the hyprglass liquid-glass effect (refraction, fresnel, specular, blur, lens distortion, chromatic aberration, brightness/contrast/saturation/vibrancy), each with a reset, plus a write-in box for any value past a slider's range or any option without a slider. Applies instantly via `hyprctl keyword` and persists to `hypr/hyprglass-tuning.conf`.
+- **Glass** — live sliders for the hyprwater liquid-glass effect (refraction, fresnel, specular, blur, lens distortion, chromatic aberration, brightness/contrast/saturation/vibrancy), each with a reset, plus a write-in box for any value past a slider's range or any option without a slider. Applies instantly via `hyprctl keyword` and persists to `hypr/hyprwater-tuning.conf`.
 - **Hotkeys** — a searchable, **editable** list of every keybind, grouped by purpose (apps, windows, focus, workspaces, media…) with the combo shown as keycaps. It's read live from `hyprctl binds`, so it always matches your real config — including anything in `local.conf`. **Click a shortcut's keys to rebind it**: hold your modifiers (they're detected as the "hold" part) and press a key; conflicts are caught and named so you don't clobber an existing bind, and `↺` resets one to its shipped default. Rebinds apply immediately and are saved to `keybinds.conf` (gitignored). Media/volume/mouse binds are shown but fixed.
 - **System** — GUI pickers for the **UI font** (any installed family, previewed in itself), **default file manager**, and **default terminal** (sets Hyprland's Super+Q *and* the file manager's "Open Terminal"); an editor for `local.conf` with Save & reload; and an **Update** section that checks GitHub for new commits, lists them, and pulls + re-copies on a two-click confirm (leaving all your gitignored settings untouched); and **Spotify Liked Songs** tools — *Scan for AI music* (cross-references your likes against the community [soul-over-ai](https://github.com/xoundbyte/soul-over-ai) known-AI-artist list by exact artist ID) and *Back up to CSV* (a full export of your library so you never lose it). Both run **read-only through your open Spotify via the Spicetify session** — no developer app, no extra login — using `spotify-liked.py` (`scan-ai-music.sh` / `export-liked-songs.sh`).
 
-Everything it writes (`color-tuning.conf`, `hyprglass-tuning.conf`, `wallpaper-dir.conf`, `launcher-apps.json`) is per-machine and gitignored; defaults apply when the files are absent.
+Everything it writes (`color-tuning.conf`, `hyprwater-tuning.conf`, `wallpaper-dir.conf`, `launcher-apps.json`) is per-machine and gitignored; defaults apply when the files are absent.
 
 ## App theming (Discord / Spotify / Dolphin / Brave / GTK)
 
@@ -191,11 +199,11 @@ The first loads — and **re-reads** — the theme on every launch, which is wha
 
 **GTK apps:** `gen-gtk-theme.py` writes a Technicolor GTK theme and flips between two copies (`Technicolor-A`/`-B`) on each wallpaper change so GTK apps re-read and recolor immediately (GTK caches by theme *name*, so the rename is what forces the reload). This sets your global GTK theme, so GTK file dialogs etc. follow the wallpaper too; revert any time with `gsettings set org.gnome.desktop.interface gtk-theme Adwaita` (or your previous theme).
 
-**The glass (chromakey) layer:** the gaps between color blocks in Spotify/Dolphin — and Brave's tab-strip — can be made actually transparent (real windows/wallpaper visible behind) using [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) custom shaders, plus [hyprglass](https://github.com/hyprnux/hyprglass) for a refraction/liquid-glass look on those areas. Both plugins are vendored in this repo — Hypr-DarkWindow (MIT) under `hypr/Hypr-DarkWindow/` and a one-line-patched hyprglass (BSD-3) under `hypr/hyprglass/` — and each one's `load.sh` builds + loads it against your system Hyprland headers at startup (force-rebuilding itself when a Hyprland update leaves the binary ABI-stale), so there's no `hyprpm add` for either. (The patch makes glass *layers* re-sample the backdrop every frame: upstream caches it, so the alt-tab pie's liquid glass froze the animated wallpaper it captured when it opened.) The shaders register automatically once the Hypr-DarkWindow plugin is loaded — `hyprland.lua` adds `tckey` / `tckeydolph` / `tckeybrave` with their paths resolved from `$HOME`, so there's nothing to uncomment or hardcode; just run `hypr/tckey-reload.sh` after changing shader args (the plugin caches them across reloads). Browsers were long considered un-keyable — a whole-window key eats matching pixels inside pages (e.g. a teal Twitch stream) — so the Brave variant is **band-limited**: it only keys the top tab-strip band and refuses to touch anything below it, leaving web content alone. Two more gotchas already handled: `decoration:blur:size` doubles as Hyprland's re-render margin for these effects even with blur disabled (keep it at 40 or stacked glass glitters on focus changes), and Dolphin uses a fixed-key shader variant so its dialogs don't get keyed transparent.
+**The glass (chromakey) layer:** the gaps between color blocks in Spotify/Dolphin — and Brave's tab-strip — can be made actually transparent (real windows/wallpaper visible behind) using [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) custom shaders, plus [hyprwater](https://github.com/hyprnux/hyprwater) for a refraction/liquid-glass look on those areas. Both plugins are vendored in this repo — Hypr-DarkWindow (MIT) under `hypr/Hypr-DarkWindow/` and a one-line-patched hyprwater (BSD-3) under `hypr/hyprwater/` — and each one's `load.sh` builds + loads it against your system Hyprland headers at startup (force-rebuilding itself when a Hyprland update leaves the binary ABI-stale), so there's no `hyprpm add` for either. (The patch makes glass *layers* re-sample the backdrop every frame: upstream caches it, so the alt-tab pie's liquid glass froze the animated wallpaper it captured when it opened.) The shaders register automatically once the Hypr-DarkWindow plugin is loaded — `hyprland.lua` adds `tckey` / `tckeydolph` / `tckeybrave` with their paths resolved from `$HOME`, so there's nothing to uncomment or hardcode; just run `hypr/tckey-reload.sh` after changing shader args (the plugin caches them across reloads). Browsers were long considered un-keyable — a whole-window key eats matching pixels inside pages (e.g. a teal Twitch stream) — so the Brave variant is **band-limited**: it only keys the top tab-strip band and refuses to touch anything below it, leaving web content alone. Two more gotchas already handled: `decoration:blur:size` doubles as Hyprland's re-render margin for these effects even with blur disabled (keep it at 40 or stacked glass glitters on focus changes), and Dolphin uses a fixed-key shader variant so its dialogs don't get keyed transparent.
 
 ## What's where
 
-- `hypr/` — Hyprland config and its scripts: the workspace carousel, wallpaper cycling/colors/thumbnails (`wallpaper-*.sh/.py`), taskbar, minimize, alt-tab, the Dolphin-reusing folder opener (`open-folder.sh`), the hyprglass tuning helpers (`hyprglass-get.sh`/`hyprglass-set.sh`), plus the app-theming engine (`gen-*.py`), the chromakey shaders (`technicolor-chromakey*.glsl`), the color server, and the Dolphin launcher/shim.
+- `hypr/` — Hyprland config and its scripts: the workspace carousel, wallpaper cycling/colors/thumbnails (`wallpaper-*.sh/.py`), taskbar, minimize, alt-tab, the Dolphin-reusing folder opener (`open-folder.sh`), the hyprwater tuning helpers (`hyprwater-get.sh`/`hyprwater-set.sh`), plus the app-theming engine (`gen-*.py`), the chromakey shaders (`technicolor-chromakey*.glsl`), the color server, and the Dolphin launcher/shim.
 - `quickshell/` — the bar (`Bar.qml`), the Settings app (`Settings.qml`), the alt-tab pie, notification scripts, system-monitor helpers, shaders.
 - `applications/` — the `.desktop` entry so the Settings app appears in your launcher.
 - `mako/` — notification styling. The bar's tray reads from mako.
@@ -221,7 +229,7 @@ mako is fairly baked in, so this isn't a one-liner. The tray shells out to `mako
 
 ## Portability
 
-- **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and both vendored plugins (`Hypr-DarkWindow`, `hyprglass`) compile against your exact Hyprland version via their own `load.sh` — so you just need `base-devel` (make/g++/pkg-config) plus the Hyprland headers that ship in the `hyprland` package — no cmake. (Miss `base-devel` and the plugins can't build, which shows up as ~15 `hyprglass:` config errors on login.)
+- **Distros:** the bar/compositor side is distro-agnostic — if you can install the step-1 packages, it runs. The app-theming extras are Arch-friendliest: `qt6ct-kde` is an AUR package (elsewhere you'd build it), and both vendored plugins (`Hypr-DarkWindow`, `hyprwater`) compile against your exact Hyprland version via their own `load.sh` — so you just need `base-devel` (make/g++/pkg-config) plus the Hyprland headers that ship in the `hyprland` package — no cmake. (Miss `base-devel` and the plugins can't build, which shows up as ~15 `hyprwater:` config errors on login.)
 - **Resolutions & scale:** nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on a 4K display you'll want a Hyprland monitor scale like any px-based UI; the Qt theming and chromakey shaders are scale-aware.
 - **Hardware:** GPU-agnostic. The bar's GPU usage/VRAM/temp auto-detect: amdgpu sysfs first, then `nvidia-smi` (proprietary/open Nvidia), with graceful zeros otherwise; CPU temp covers AMD/Intel/ARM hwmon names. Nvidia setup (env vars, cursor quirk, driver notes) is a ready-to-uncomment block in `local.conf.example`. The swap widget reads all swap devices and labels itself ZRAM or SWAP automatically. Monitor brightness needs `ddcutil`-compatible displays.
 - **Laptops:** works out of the box — the touchpad drives the 3-finger workspace swipe, and the brightness/volume/media **function keys are bound** (`brightnessctl` for the built-in backlight, `wpctl`/`playerctl` for the rest). Two caveats: the bar's brightness *sliders* drive external DDC/CI monitors via `ddcutil`, not the built-in panel (use the brightness keys for that), and there's **no battery indicator on the bar yet**. GPU auto-detect covers Intel/AMD/Nvidia laptops (for Nvidia, uncomment the block in `local.conf`).

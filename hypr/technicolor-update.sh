@@ -47,7 +47,7 @@ main() {
     cp "$TMP"/applications/*.desktop ~/.local/share/applications/ 2>/dev/null
     # Files with safe defaults that are gitignored (so the copy above doesn't
     # touch the user's): create from the .example ONLY if missing — never clobber.
-    cp -n ~/.config/hypr/hyprglass-tuning.conf.example ~/.config/hypr/hyprglass-tuning.conf 2>/dev/null
+    cp -n ~/.config/hypr/hyprwater-tuning.conf.example ~/.config/hypr/hyprwater-tuning.conf 2>/dev/null
     cp -n ~/.config/mako/config.example ~/.config/mako/config 2>/dev/null
     cp -n ~/.config/hypr/terminal.conf.example ~/.config/hypr/terminal.conf 2>/dev/null
     cp -n ~/.config/hypr/wallpaper-timer.conf.example ~/.config/hypr/wallpaper-timer.conf 2>/dev/null

@@ -4,7 +4,7 @@ hypr/local.conf
 hypr/monitors.conf
 hypr/colors.conf
 hypr/color-tuning.conf
-hypr/hyprglass-tuning.conf
+hypr/hyprwater-tuning.conf
 hypr/wallpaper-dir.conf
 hypr/window-geometry.conf
 hypr/workspaces.conf
@@ -33,22 +33,22 @@ quickshell/__pycache__/
 # Nested theme-repo metadata (the wofi theme is vendored, not a submodule)
 hypr/wofi/repo/.git/
 
-# hyprglass plugin build artifacts (BSD-3 source is vendored; hyprglass/load.sh
+# hyprwater plugin build artifacts (BSD-3 source is vendored; hyprwater/load.sh
 # compiles it locally on first run, so the binary/objects are never committed)
-hypr/hyprglass/hyprglass.so
-hypr/hyprglass/src/*.o
+hypr/hyprwater/hyprwater.so
+hypr/hyprwater/src/*.o
 hypr/wallpaper-timer.conf
 hypr/keybinds.conf
 hypr/keybind-overrides.json
 hypr/transition.conf
 
 # Hypr-DarkWindow plugin build artifacts (MIT source vendored; its load.sh
-# compiles it locally on first run, like hyprglass)
+# compiles it locally on first run, like hyprwater)
 hypr/Hypr-DarkWindow/out/
 
 # Per-machine plugin build state written by hypr/plugin-abi.sh: .abi-stamp records
 # which Hyprland ABI the local .so was built for; build-failed.log is kept only
 # when a rebuild fails so the plugin is skipped instead of crashing the session.
-hypr/hyprglass/.abi-stamp
+hypr/hyprwater/.abi-stamp
 hypr/*/build-failed.log
 hypr/effects-governor.conf

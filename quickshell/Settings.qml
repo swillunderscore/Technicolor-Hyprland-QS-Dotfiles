@@ -17,7 +17,7 @@ FloatingWindow {
     title: "Technicolor Settings"
     implicitWidth: 780
     implicitHeight: 660
-    // Transparent so hyprglass renders live liquid glass in the gaps between the
+    // Transparent so hyprwater renders live liquid glass in the gaps between the
     // solid rounded blocks — same model as the themed app windows (e.g. Dolphin).
     color: "transparent"
 
@@ -967,8 +967,8 @@ FloatingWindow {
         onLoadFailed: win.surfaceTune = ({})
     }
 
-    // ── Glass tab (hyprglass) ── live via hyprglass-set.sh (hyprctl eval under
-    // the Lua config), persisted to hyprglass-tuning.conf. Each spec: key/label/
+    // ── Glass tab (hyprwater) ── live via hyprwater-set.sh (hyprctl eval under
+    // the Lua config), persisted to hyprwater-tuning.conf. Each spec: key/label/
     // range/default. Anything beyond a slider's range goes through the write-in.
     readonly property var glassSpecs: [
         { key: "refraction_strength",  label: "Refraction",          from: 0, to: 3,  def: 1.0,  step: 0 },
@@ -986,7 +986,7 @@ FloatingWindow {
     ]
     // Water shimmer knobs. These ride the SAME path as the Glass tab: glassLive()
     // applies instantly via hyprctl eval, glassSet() persists to
-    // hyprglass-tuning.conf. Nothing new to plumb.
+    // hyprwater-tuning.conf. Nothing new to plumb.
     readonly property var shimmerSpecs: [
         { key: "shimmer:intensity",     label: "Brightness",  hint: "How strongly the caustics show. 0 hides them without stopping the simulation.",           from: 0, to: 3,  def: 0.8,  step: 0 },
         { key: "shimmer:refraction",    label: "Warping",      hint: "How much the water bends what is behind it. This is what makes it read as looking THROUGH water rather than at lines drawn on glass \u2014 your wallpaper, or whatever window is underneath, visibly swims. 0 leaves the backdrop undistorted and only the bright veins move.", from: 0, to: 4, def: 1.0, step: 0 },
@@ -1012,7 +1012,7 @@ FloatingWindow {
     property var glassValues: ({})    // key -> live value, populated by loadGlass()
     Process {
         id: glassGetProc
-        command: ["bash", "-c", "\"$HOME/.config/hypr/hyprglass-get.sh\""]
+        command: ["bash", "-c", "\"$HOME/.config/hypr/hyprwater-get.sh\""]
         stdout: StdioCollector {
             onStreamFinished: {
                 var m = {}
@@ -1028,7 +1028,7 @@ FloatingWindow {
     function loadGlass() { glassGetProc.running = true }
     // Live (cheap, skip-if-busy throttle); persistence happens on release.
     // Under the Lua config manager `hyprctl keyword` is rejected — apply live via
-    // `hyprctl eval hl.config({plugin={hyprglass={<nested>}}})`. Colon keys
+    // `hyprctl eval hl.config({plugin={hyprwater={<nested>}}})`. Colon keys
     // (dark:brightness) nest; tint_color takes a bare hex int (no quotes).
     Process { id: glassLiveProc }
     function glassLive(key, val) {
@@ -1036,12 +1036,12 @@ FloatingWindow {
         var parts = key.split(":")
         var inner = parts[parts.length - 1] + "=" + val
         for (var i = parts.length - 2; i >= 0; i--) inner = parts[i] + "={" + inner + "}"
-        glassLiveProc.command = ["hyprctl", "eval", "hl.config({plugin={hyprglass={" + inner + "}}}) return 1"]
+        glassLiveProc.command = ["hyprctl", "eval", "hl.config({plugin={hyprwater={" + inner + "}}}) return 1"]
         glassLiveProc.running = true
     }
     Process { id: glassSetProc }
     function glassSet(key, val) {
-        glassSetProc.command = ["bash", "-c", "\"$HOME/.config/hypr/hyprglass-set.sh\" '" + key + "' '" + val + "'"]
+        glassSetProc.command = ["bash", "-c", "\"$HOME/.config/hypr/hyprwater-set.sh\" '" + key + "' '" + val + "'"]
         glassSetProc.running = true
     }
     function glassValue(spec) {
@@ -1770,7 +1770,7 @@ FloatingWindow {
                     }
                 }
 
-                // ===== Glass tab (hyprglass) =====
+                // ===== Glass tab (hyprwater) =====
                 Item {
                     anchors.fill: parent
                     visible: win.shell && win.shell.settingsTab === 3
@@ -1780,7 +1780,7 @@ FloatingWindow {
                             id: glassCol
                             width: parent.width; spacing: 10
 
-                            Text { text: "Liquid glass (hyprglass)"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { text: "Liquid glass (hyprwater)"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                             Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
                                 text: "Live tuning of the glass effect on every window — applies instantly and persists. For values past a slider's range, or other options, use the write-in below." }
 

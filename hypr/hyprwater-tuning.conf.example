@@ -1,6 +1,6 @@
 # Written by Settings → Glass (the sliders + write-in). hyprland.conf sources
 # this AFTER the plugin defaults, so any line here overrides them. Empty = defaults.
 # Examples:
-# plugin:hyprglass:refraction_strength = 1.5
-# plugin:hyprglass:blur_strength = 0.4
-# plugin:hyprglass:chromatic_aberration = 0.0
+# plugin:hyprwater:refraction_strength = 1.5
+# plugin:hyprwater:blur_strength = 0.4
+# plugin:hyprwater:chromatic_aberration = 0.0

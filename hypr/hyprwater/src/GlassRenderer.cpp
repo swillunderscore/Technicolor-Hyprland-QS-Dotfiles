@@ -52,7 +52,7 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     int sampleHeight = std::max(1, fullHeight / downscale);
 
     if (!sampleFramebuffer)
-        sampleFramebuffer = g_pHyprRenderer->createFB("hyprglass-sample");
+        sampleFramebuffer = g_pHyprRenderer->createFB("hyprwater-sample");
 
     if (sampleFramebuffer->m_size.x != sampleWidth || sampleFramebuffer->m_size.y != sampleHeight)
         sampleFramebuffer->alloc(sampleWidth, sampleHeight, sourceFramebuffer->m_drmFormat);
@@ -185,8 +185,8 @@ void stepWaveSim() {
 
     auto& fbA = g_pGlobalState->waveFb[0];
     auto& fbB = g_pGlobalState->waveFb[1];
-    if (!fbA) fbA = g_pHyprRenderer->createFB("hyprglass-wave-a");
-    if (!fbB) fbB = g_pHyprRenderer->createFB("hyprglass-wave-b");
+    if (!fbA) fbA = g_pHyprRenderer->createFB("hyprwater-wave-a");
+    if (!fbB) fbB = g_pHyprRenderer->createFB("hyprwater-wave-b");
 
     // HALF FLOAT IS REQUIRED, not a nicety. Wave heights here are ~0.01, and an
     // 8-bit UNORM quantises to 1/255 ~ 0.004 — two or three levels of signal.
@@ -427,7 +427,7 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
 
     auto& blurTempFramebuffer = g_pGlobalState->blurTempFramebuffer;
     if (!blurTempFramebuffer)
-        blurTempFramebuffer = g_pHyprRenderer->createFB("hyprglass-blur-temp");
+        blurTempFramebuffer = g_pHyprRenderer->createFB("hyprwater-blur-temp");
 
     if (blurTempFramebuffer->m_size.x != width || blurTempFramebuffer->m_size.y != height)
         blurTempFramebuffer->alloc(width, height, sampleFramebuffer->m_drmFormat);

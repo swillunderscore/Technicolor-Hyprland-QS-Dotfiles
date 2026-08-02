@@ -64,7 +64,7 @@ ok "configs copied"
 # ── per-machine files + wallpapers dir (cp -n keeps your edits on re-run) ───
 say "Setting up per-machine files…"
 cp -n "$HOME/.config/hypr/local.conf.example"            "$HOME/.config/hypr/local.conf"            2>/dev/null || true
-cp -n "$HOME/.config/hypr/hyprglass-tuning.conf.example" "$HOME/.config/hypr/hyprglass-tuning.conf" 2>/dev/null || true
+cp -n "$HOME/.config/hypr/hyprwater-tuning.conf.example" "$HOME/.config/hypr/hyprwater-tuning.conf" 2>/dev/null || true
 cp -n "$HOME/.config/hypr/terminal.conf.example"         "$HOME/.config/hypr/terminal.conf"         2>/dev/null || true
 cp -n "$HOME/.config/mako/config.example"                "$HOME/.config/mako/config"                2>/dev/null || true
 mkdir -p "$HOME/Wallpapers/animated"

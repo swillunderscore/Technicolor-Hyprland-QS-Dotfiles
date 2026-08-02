@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared ABI guard for the vendored Hyprland plugins (hyprglass, Hypr-DarkWindow).
+# Shared ABI guard for the vendored Hyprland plugins (hyprwater, Hypr-DarkWindow).
 #
 # WHY THIS EXISTS: a plugin .so built against one Hyprland is not loadable by
 # another. Hyprland 0.56.0 did not *reject* the 0.55.4-built Hypr-DarkWindow —

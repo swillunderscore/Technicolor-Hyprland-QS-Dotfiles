@@ -3,7 +3,7 @@
 
 A single horizontal row of 6 OPAQUE palette-colored buttons on a rounded,
 palette-tinted GLASS strip (the GTK `grid` is the box; wlogout's `logout_dialog`
-layer is whitelisted in hyprland.lua so hyprglass refracts the strip — no
+layer is whitelisted in hyprland.lua so hyprwater refracts the strip — no
 chromakey). Sizing/position is handled by lo-wlogout.sh's CLI flags; this file
 is purely colors + shape. Regenerated on every wallpaper change.
 """
@@ -75,11 +75,11 @@ def main():
 window {{ background-color: transparent; }}
 
 /* the glass strip (the box around the buttons). NEAR-CLEAR neutral at low alpha
-   — like the bar/wofi/pie, the hyprglass layer does the glass; a palette tint
+   — like the bar/wofi/pie, the hyprwater layer does the glass; a palette tint
    here would cast a color the other glass surfaces don't have. Low alpha = clear
    refraction, no color. */
 grid {{
-    /* near-clear, matching the wofi glass surface (rgba ~0.06) — hyprglass does
+    /* near-clear, matching the wofi glass surface (rgba ~0.06) — hyprwater does
        the glass; anything heavier reads as a tint the other glass doesn't have. */
     background-color: rgba(150, 150, 160, 0.06);
     border-radius: 26px;

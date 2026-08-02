@@ -205,12 +205,12 @@ Scope {
             }
 
             // Liquid-glass background disc at cursor (target screen only).
-            // hyprglass glasses this layer (plugin:hyprglass:layers, whitelisted
+            // hyprwater glasses this layer (plugin:hyprwater:layers, whitelisted
             // to namespace quickshell:pie in hyprland.conf) and uses the surface
             // ALPHA as a mask. The alpha both triggers the glass AND tints it, so
             // it's kept just above the namespace mask threshold (0.03): enough to
             // trigger full refraction + fresnel edge, but ~no dark tint — clear
-            // glass, not a dim. (hyprglass refraction never shows in grim, so this
+            // glass, not a dim. (hyprwater refraction never shows in grim, so this
             // is judged on the physical display only.)
             Rectangle {
                 visible: pieWindow.isTarget

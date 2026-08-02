@@ -200,7 +200,7 @@ static void hkRenderLayer(Render::IHyprRenderer* thisptr, PHLLS layerSurface, PH
 // ============================================================================
 //  SHIMMER CLOCK
 //
-//  hyprglass is normally damage-driven: it redraws when something changes.
+//  hyprwater is normally damage-driven: it redraws when something changes.
 //  An animated caustic has nothing to change, so without a heartbeat the wave
 //  field would be frozen at whatever t the last unrelated redraw happened to
 //  land on. This timer supplies that heartbeat, and ONLY while the shimmer is
@@ -346,7 +346,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     if (!g_pGlobalState->renderLayerHook) {
         HyprlandAPI::addNotificationV2(PHANDLE, {
-            {"text", std::string("[hyprglass] Could not hook renderLayer — layer glass disabled")},
+            {"text", std::string("[hyprwater] Could not hook renderLayer — layer glass disabled")},
             {"time", (uint64_t)5000},
             {"color", CHyprColor{1.0, 0.8, 0.2, 1.0}},
         });
