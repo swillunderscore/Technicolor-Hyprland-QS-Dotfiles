@@ -665,11 +665,15 @@ void main() {
     // 5-point Laplacian. Sampling with clamped edges makes the boundary behave
     // like a wall, so waves REFLECT instead of vanishing — that reflection is a
     // large part of what makes a real pool look busy in a non-repeating way.
-    float l = (texture(tex, uv + vec2(-texelSize.x, 0.0)).r - 0.5)
-            + (texture(tex, uv + vec2( texelSize.x, 0.0)).r - 0.5)
-            + (texture(tex, uv + vec2(0.0, -texelSize.y)).r - 0.5)
-            + (texture(tex, uv + vec2(0.0,  texelSize.y)).r - 0.5)
-            - 4.0 * h;
+    vec4 nL = texture(tex, uv + vec2(-texelSize.x, 0.0));
+    vec4 nR = texture(tex, uv + vec2( texelSize.x, 0.0));
+    vec4 nD = texture(tex, uv + vec2(0.0, -texelSize.y));
+    vec4 nU = texture(tex, uv + vec2(0.0,  texelSize.y));
+
+    float l  = (nL.r + nR.r + nD.r + nU.r) - 2.0 - 4.0 * h;
+    // The same Laplacian one step back. It rides along in the .g channel of the
+    // four samples already taken, so it costs no extra reads.
+    float lp = (nL.g + nR.g + nD.g + nU.g) - 2.0 - 4.0 * hPrev;
 
     // Explicit second-order integration: h(t+1) = 2h - h(t-1) + c^2 * lap
     // Local propagation speed from the local depth. Clamped well under the
@@ -677,7 +681,19 @@ void main() {
     // water is deepest.
     float localSpeed = clamp(waveSpeed * (1.0 + bedVariation * bedDepth(uv)), 0.02, 0.48);
 
-    float hNext = (2.0 * h - hPrev + localSpeed * l) * damping;
+    // VISCOSITY. A single multiplicative damping factor removes the same
+    // fraction of every wavelength, so the fine chop survives exactly as long
+    // as the long swell does -- the surface keeps a permanent high-frequency
+    // jitter and never resolves into anything, which is why it read as frozen
+    // rather than liquid. Real water dissipates as nu*k^2: short waves lose
+    // energy far faster than long ones, which is precisely why a disturbed pool
+    // settles into smooth slow swells instead of staying grainy.
+    //
+    // nu * laplacian(dh/dt) is that term. It leaves the swell almost untouched
+    // and eats the pixel-scale ripple within a few steps. Kept well under the
+    // 0.25 explicit-diffusion stability bound.
+    const float VISCOSITY = 0.06;
+    float hNext = (2.0 * h - hPrev + localSpeed * l + VISCOSITY * (l - lp)) * damping;
 
     // Occasional localized push — "someone moved at the far end of the pool".
     // Energy arrives later, from a direction, and then fades: the pacing the

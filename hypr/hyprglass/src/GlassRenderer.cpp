@@ -217,6 +217,16 @@ void stepWaveSim() {
     // stored biased so a UNORM target can carry negative amplitude. Clearing to
     // black would mean "h = -0.5 everywhere", i.e. a giant step the first frame
     // would violently ring.
+    // Flipping the master switch should start from still water. Leaving the
+    // textures alone meant re-enabling resumed a surface that had been sloshing
+    // in the dark, so the effect appeared mid-storm with no way to see it begin.
+    static bool wasOn = false;
+    const bool  isOn  = g_pGlobalState->config.shimmerEnabled
+                     && **g_pGlobalState->config.shimmerEnabled != 0;
+    if (isOn && !wasOn)
+        fresh = true;
+    wasOn = isOn;
+
     if (fresh) {
         for (auto* fb : {&fbA, &fbB}) {
             glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
@@ -267,9 +277,12 @@ void stepWaveSim() {
     // Also fixed, for the same reason: decay is part of the physics, and
     // scaling it changed how the water behaved rather than how fast it ran.
     glUniform1f(u.damping, 0.9994f);
-    glUniform1f(u.bedVariation,
-                g_pGlobalState->config.shimmerBed
-                    ? static_cast<float>(**g_pGlobalState->config.shimmerBed) : 0.45f);
+    // Fixed, not exposed. This varies the local wave speed the way an uneven
+    // bottom does, which is what stops wavefronts from staying perfect arcs.
+    // There was a slider for it, but "how fake would you like the floor to be"
+    // is not a real choice -- every floor is uneven, and the clean version it
+    // offered is a thing that does not occur.
+    glUniform1f(u.bedVariation, 1.0f);
 
     // Occasional localized push. Deterministic LCG rather than a random device
     // so behaviour is reproducible when debugging a bad-looking frame.
@@ -311,7 +324,12 @@ void stepWaveSim() {
         // Impulses are decided per STEP, so their rate follows simulated time
         // rather than however many frames happened to get drawn.
         const uint64_t nn = g_pGlobalState->waveStepCount++;
-        if (nn % std::max<uint64_t>(every, 2) == 0) {
+        // Zero means zero. Any nonzero rate, however slow, still eventually
+        // fires, so the bottom of the slider has to be an actual OFF rather
+        // than the slowest available drip -- otherwise there is no way to watch
+        // the water finish settling, which is the only way to judge damping.
+        const bool fire = ag > 0.001f && nn % std::max<uint64_t>(every, 2) == 0;
+        if (fire) {
             uint64_t r = nn * 6364136223846793005ULL + 1442695040888963407ULL;
             auto fr = [&](int sh) { return static_cast<float>((r >> sh) & 0xFFFF) / 65535.0f; };
             // Outer ring only: the shader samples just the middle of the sim, so
