@@ -141,38 +141,44 @@ void stepWaveSim() {
     int steps = 0;
     {
         using namespace std::chrono;
-        static steady_clock::time_point last{};
-        static double accum = 0.0;
-        constexpr double STEP = 1.0 / 120.0;
+        // ANCHORED TO ABSOLUTE TIME, not to "elapsed since I was last called".
+        //
+        // Monitors at different refresh rates render at different moments, so a
+        // window spanning two screens has its halves drawn at different times.
+        // With an elapsed-time accumulator each half could catch a different
+        // simulation state and the seam showed it as flicker. Deriving the state
+        // from a clock instead means any surface, on any monitor, at any moment,
+        // asks for the same answer.
+        static steady_clock::time_point origin{};
+        static double simTime  = 0.0;   // simulated seconds consumed so far
+        static uint64_t done   = 0;     // steps already integrated
+        static double lastReal = 0.0;
+        constexpr double STEP  = 1.0 / 120.0;
 
-        // Speed scales SIMULATED TIME, exactly like multiplying delta time.
-        // The physics constants are untouched, so the water looks identical at
-        // every speed — only the rate at which it advances changes.
+        const auto now = steady_clock::now();
+        if (origin.time_since_epoch().count() == 0) origin = now;
+        const double real = duration<double>(now - origin).count();
+
         const auto& spcfg = g_pGlobalState->config;
         const double speed = spcfg.shimmerSpeed
             ? std::clamp(static_cast<double>(**spcfg.shimmerSpeed), 0.0, 4.0) : 1.0;
 
-        const auto now = steady_clock::now();
-        if (last.time_since_epoch().count() == 0)
-            last = now;
-        double dt = duration<double>(now - last).count();
-        last = now;
+        double dReal = real - lastReal;
+        if (dReal < 0.0)  dReal = 0.0;
+        if (dReal > 0.25) dReal = 0.25;   // swallow stalls rather than replaying them
+        lastReal = real;
+        simTime += dReal * speed;
 
-        // Clamp catch-up. After a stall (VT switch, a heavy frame) accum can be
-        // huge; replaying all of it at once both stutters and can destabilise
-        // the integrator. Dropping the excess is the right trade.
-        if (dt > 0.25) dt = 0.25;
-        accum += dt * speed;
+        const uint64_t want = static_cast<uint64_t>(simTime / STEP);
+        steps = static_cast<int>(std::min<uint64_t>(want > done ? want - done : 0, 4));
+        done += steps;
+        if (steps == 4) done = want;      // caught up after a stall
 
-        steps = static_cast<int>(accum / STEP);
-        if (steps > 4) { accum = 0.0; steps = 4; }
-        else            accum -= steps * STEP;
+        // Phase within the current step, also from the clock, so both halves of
+        // a spanning window blend to the same point between states.
+        g_pGlobalState->waveSubFrac =
+            static_cast<float>(std::clamp(simTime / STEP - static_cast<double>(done), 0.0, 1.0));
 
-        // What is LEFT OVER is how far we are between the last completed step
-        // and the next. The shader blends the two stored states by it, so at
-        // low speed — where a step may take many frames — the water still moves
-        // continuously instead of ticking.
-        g_pGlobalState->waveSubFrac = static_cast<float>(std::clamp(accum / STEP, 0.0, 1.0));
         if (steps <= 0)
             return;
     }
