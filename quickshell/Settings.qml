@@ -991,7 +991,7 @@ FloatingWindow {
         { key: "shimmer:intensity",     label: "Brightness",  hint: "How strongly the caustics show. 0 hides them without stopping the simulation.",           from: 0, to: 3,  def: 0.8,  step: 0 },
         { key: "shimmer:depth",         label: "Water depth",  hint: "Distance from the surface to the floor. Deeper water lets the bent light travel further and converge harder, so the bright lines get thinner and sharper. Shallow spreads them into a soft wash.", from: 0.1, to: 5, def: 1.0, step: 0 },
         { key: "shimmer:scale",         label: "Wave size",    hint: "Size of the waves, and so of the cells between the bright lines. Larger waves also means fewer of them across a window.", from: 0.2, to: 3, def: 1.0, step: 0 },
-        { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. 0 freezes it mid-motion.",                                          from: 0, to: 3,  def: 1.0,  step: 0 },
+        { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. Slow stays smooth \u2014 below 1x each step advances the physics less rather than stepping less often. 0 freezes it mid-motion.", from: 0.01, to: 3, def: 1.0, step: 0 },
         { key: "shimmer:agitation",     label: "How often",    hint: "How frequently something disturbs the water. Low is an occasional ripple crossing a calm surface; high keeps it busy.", from: 0, to: 1,  def: 0.5,  step: 0 },
         { key: "shimmer:chop",          label: "Ripples vs swell", hint: "The SIZE of each disturbance. Left = broad slow swells that stay coherent a long way. Right = small sharp ripples that break up sooner.", from: 0, to: 1,  def: 0.5,  step: 0 },
         { key: "shimmer:bed_variation", label: "Uneven bottom", hint: "Waves travel faster over deep water than shallow, so an uneven floor bends them. At 0 the bottom is flat and wavefronts stay clean arcs until they collide.", from: 0, to: 1,  def: 0.45, step: 0 }
@@ -2349,7 +2349,7 @@ FloatingWindow {
                                 delegate: Item {
                                     id: shRow
                                     required property var modelData
-                                    width: fxCol.width; height: 76
+                                    width: fxCol.width; height: 92
                                     property real val: modelData.def
                                     Connections { target: win; function onGlassValuesChanged() { shRow.val = win.glassValue(shRow.modelData) } }
                                     Item {
@@ -2372,9 +2372,10 @@ FloatingWindow {
                                         onCommitted: (v) => win.glassSet(shRow.modelData.key, shRow.val)
                                     }
                                     Text {
-                                        width: parent.width; y: 38; wrapMode: Text.WordWrap
+                                        width: parent.width; y: 50; wrapMode: Text.WordWrap
                                         text: shRow.modelData.hint || ""
-                                        color: win.fg; opacity: 0.45; font.pixelSize: 10; font.family: win.ff
+                                        color: win.fg; opacity: 0.42; font.pixelSize: 10; font.family: win.ff
+                                        lineHeight: 1.25
                                     }
                                 }
                             }

@@ -145,14 +145,18 @@ void stepWaveSim() {
         static double accum = 0.0;
         constexpr double STEP = 1.0 / 120.0;
 
-        // SPEED scales how much simulated time each real second buys. It used to
-        // multiply uTime, which the analytic surface read — but the surface is a
-        // simulation now and never looks at uTime, so the slider did nothing at
-        // all. Scaling the accumulator is the honest equivalent: the water
-        // genuinely runs faster or slower.
+        // SPEED BELOW 1x MUST NOT REDUCE THE STEP RATE.
+        // Scaling the accumulator was the obvious move and it is wrong: at 0.1x
+        // the simulation only advanced ~12 times a second, so the water was slow
+        // AND choppy. Slow motion has to stay smooth.
+        // Below 1x the step rate is held at the full 120/s and each step simply
+        // advances the physics less (see waveSpeed). Above 1x the per-step speed
+        // is already at the stability ceiling, so extra speed has to come from
+        // running more steps.
         const auto& spcfg = g_pGlobalState->config;
-        const double speedMul = spcfg.shimmerSpeed
+        const double speed = spcfg.shimmerSpeed
             ? std::clamp(static_cast<double>(**spcfg.shimmerSpeed), 0.0, 4.0) : 1.0;
+        const double speedMul = std::max(1.0, speed);
 
         const auto now = steady_clock::now();
         if (last.time_since_epoch().count() == 0)
@@ -239,7 +243,15 @@ void stepWaveSim() {
     // crossed ~22 texels between impulses, so the surface stayed a field of
     // small local dents instead of spread waves that interfere — which read as
     // grain rather than caustics.
-    glUniform1f(u.waveSpeed, 0.45f);
+    // Sub-1x speed lives HERE, as a smaller physical wave speed, so the step
+    // rate — and therefore the smoothness — never drops. Stays under the 0.5
+    // Courant ceiling at all times.
+    {
+        const auto& spc = g_pGlobalState->config;
+        const float sp  = spc.shimmerSpeed
+            ? std::clamp(static_cast<float>(**spc.shimmerSpeed), 0.0f, 4.0f) : 1.0f;
+        glUniform1f(u.waveSpeed, 0.45f * std::min(sp, 1.0f));
+    }
     // Just under 1: energy bleeds away, so agitation SETTLES instead of ringing
     // forever. This is what gives the "everyone got out of the pool" pacing.
     // Closer to 1: energy survives long enough for many disturbances to be in
