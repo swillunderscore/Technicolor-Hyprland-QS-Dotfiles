@@ -991,11 +991,23 @@ FloatingWindow {
         { key: "shimmer:intensity",     label: "Brightness",  hint: "How strongly the caustics show. 0 hides them without stopping the simulation.",           from: 0, to: 3,  def: 0.8,  step: 0 },
         { key: "shimmer:depth",         label: "Water depth",  hint: "Distance from the surface to the floor. Deeper water lets the bent light travel further and converge harder, so the bright lines get thinner and sharper. Shallow spreads them into a soft wash.", from: 0.1, to: 5, def: 1.0, step: 0 },
         { key: "shimmer:scale",         label: "Wave size",    hint: "Size of the waves, and so of the cells between the bright lines. Larger waves also means fewer of them across a window.", from: 0.2, to: 3, def: 1.0, step: 0 },
-        { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. Slow stays smooth \u2014 below 1x each step advances the physics less rather than stepping less often. 0 freezes it mid-motion.", from: 0.01, to: 3, def: 1.0, step: 0 },
+        { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. Logarithmic, so most of the travel is spent down in the barely-moving range. Slow stays smooth: below 1x each step advances the physics less rather than stepping less often.", from: 0.002, to: 3, def: 1.0, step: 0, log: true },
         { key: "shimmer:agitation",     label: "How often",    hint: "How frequently something disturbs the water. Low is an occasional ripple crossing a calm surface; high keeps it busy.", from: 0, to: 1,  def: 0.5,  step: 0 },
         { key: "shimmer:chop",          label: "Ripples vs swell", hint: "The SIZE of each disturbance. Left = broad slow swells that stay coherent a long way. Right = small sharp ripples that break up sooner.", from: 0, to: 1,  def: 0.5,  step: 0 },
         { key: "shimmer:bed_variation", label: "Uneven bottom", hint: "Waves travel faster over deep water than shallow, so an uneven floor bends them. At 0 the bottom is flat and wavefronts stay clean arcs until they collide.", from: 0, to: 1,  def: 0.45, step: 0 }
     ]
+
+    // Log-scaled sliders. A linear 0.002..3 track spends ~99% of its travel
+    // above 0.05, which is exactly the part nobody wants — so the SLIDER carries
+    // a 0..1 position and the value is exponential in it. Fine control lands
+    // where the useful settings actually are.
+    function logPosToVal(spec, pos) {
+        return spec.from * Math.pow(spec.to / spec.from, Math.max(0, Math.min(1, pos)))
+    }
+    function logValToPos(spec, v) {
+        if (!(v > 0)) return 0
+        return Math.log(v / spec.from) / Math.log(spec.to / spec.from)
+    }
 
     property var glassValues: ({})    // key -> live value, populated by loadGlass()
     Process {
@@ -2349,7 +2361,7 @@ FloatingWindow {
                                 delegate: Item {
                                     id: shRow
                                     required property var modelData
-                                    width: fxCol.width; height: 92
+                                    width: fxCol.width; height: 78
                                     property real val: modelData.def
                                     Connections { target: win; function onGlassValuesChanged() { shRow.val = win.glassValue(shRow.modelData) } }
                                     Item {
@@ -2357,7 +2369,8 @@ FloatingWindow {
                                         Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
                                                text: shRow.modelData.label; color: win.fg; font.pixelSize: 12; font.family: win.ff }
                                         Text { anchors.right: shReset.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
-                                               text: shRow.val.toFixed(2); color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                                               text: shRow.val < 0.1 ? shRow.val.toFixed(3) : shRow.val.toFixed(2)
+                                               color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
                                         Rectangle { id: shReset; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                                             width: 48; height: 20; radius: 6; color: shRm.containsMouse ? win.rowHover : win.rowBg
                                             Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 10; font.family: win.ff }
@@ -2366,16 +2379,22 @@ FloatingWindow {
                                         }
                                     }
                                     TcSlider {
-                                        width: parent.width; y: 24
-                                        from: shRow.modelData.from; to: shRow.modelData.to; value: shRow.val
-                                        onMoved: (v) => { shRow.val = v; win.glassLive(shRow.modelData.key, v) }
+                                        width: parent.width; y: 22
+                                        from: shRow.modelData.log ? 0 : shRow.modelData.from
+                                        to:   shRow.modelData.log ? 1 : shRow.modelData.to
+                                        value: shRow.modelData.log ? win.logValToPos(shRow.modelData, shRow.val) : shRow.val
+                                        onMoved: (v) => {
+                                            var vv = shRow.modelData.log ? win.logPosToVal(shRow.modelData, v) : v
+                                            shRow.val = vv
+                                            win.glassLive(shRow.modelData.key, vv)
+                                        }
                                         onCommitted: (v) => win.glassSet(shRow.modelData.key, shRow.val)
                                     }
                                     Text {
-                                        width: parent.width; y: 50; wrapMode: Text.WordWrap
+                                        width: parent.width; y: 44; wrapMode: Text.WordWrap
                                         text: shRow.modelData.hint || ""
                                         color: win.fg; opacity: 0.42; font.pixelSize: 10; font.family: win.ff
-                                        lineHeight: 1.25
+                                        lineHeight: 1.15
                                     }
                                 }
                             }
