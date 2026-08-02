@@ -22,10 +22,11 @@ all: $(TARGET)
 
 $(TARGET): $(OBJ)
 	@echo "Linking $(TARGET)..."
-	@$(CXX) $(LDFLAGS) $(OBJ) -o $@ $(LIBS)
+	@$(CXX) $(LDFLAGS) $(OBJ) -o $@.tmp $(LIBS)
+	@mv -f $@.tmp $@
 	@echo "Done!"
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) $(TARGET) $(TARGET).tmp
 
 .PHONY: all clean

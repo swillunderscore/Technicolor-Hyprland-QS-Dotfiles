@@ -276,8 +276,20 @@ void stepWaveSim() {
     const auto& scfg = g_pGlobalState->config;
     const float agit = scfg.shimmerAgitation ? static_cast<float>(**scfg.shimmerAgitation) : 0.5f;
     const float chop = scfg.shimmerChop      ? static_cast<float>(**scfg.shimmerChop)      : 0.5f;
-    // agitation 0..1 -> an event every 90..8 steps of SIMULATED time
-    uint64_t every = static_cast<uint64_t>(90.0f - 82.0f * std::clamp(agit, 0.0f, 1.0f));
+    // agitation 0..1 -> an event every 900..6 steps, GEOMETRICALLY.
+    // The old mapping was linear from 90 down to 8, which had two faults. The
+    // bottom of the slider still fired 120/90 = 1.3 disturbances per SECOND --
+    // that is not calm water, that is rain, and it is why the surface stayed
+    // chaotic no matter how far the control came down. And a linear ramp on a
+    // RATE spends most of its travel in the busy half: 90 to 8 is one order of
+    // magnitude crammed into the last third of the slider. Rates are perceived
+    // in ratios, so interpolate the logarithm and the whole range is usable.
+    // At 0 this is one disturbance every 7.5 s of simulated time; damping only
+    // removes about 40% of the energy over that gap, so the surface glides
+    // rather than going flat.
+    const float ag  = std::clamp(agit, 0.0f, 1.0f);
+    uint64_t every = static_cast<uint64_t>(
+        std::exp(std::log(900.0f) + (std::log(6.0f) - std::log(900.0f)) * ag) + 0.5f);
     // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
     // in physics and wrong in use: at speed 0.002 it worked out to one
     // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is
@@ -307,8 +319,12 @@ void stepWaveSim() {
             const float ang = fr(16) * 6.2831853f;
             const float rr  = 0.40f + 0.09f * fr(32);
             const float rad = 0.075f - 0.050f * std::clamp(chop, 0.0f, 1.0f) + 0.020f * fr(40);
+            // Calm water is not just disturbed less often, it is disturbed more
+            // GENTLY -- a lake gets a stray ripple, not a cannonball every ten
+            // seconds. Without this the low end read as rare violent splashes.
+            const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag);
             glUniform4f(u.impulse, 0.5f + std::cos(ang) * rr, 0.5f + std::sin(ang) * rr,
-                        rad, 0.10f + 0.16f * fr(48));
+                        rad, amp);
         } else {
             glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
         }

@@ -215,37 +215,53 @@ vec3 waveHessian(vec2 q, float e) {
 // One caustic layer: brightness = 1/|det(Jacobian)| of the refraction map
 // p -> p + k*grad(h). det crosses zero on a CURVE, which is why caustics are
 // thin filaments and not blobs.
-float causticLayer(vec2 q, float e, float lens) {
-    // lens here is the SAME displacement coefficient the warp uses, expressed
-    // in the wave field's own coordinates. det(I + lens*H) is then literally the
-    // area change of the mapping that is bending the image — so a bright vein
-    // appears exactly where the warp is squeezing the picture together, instead
-    // of being an independent pattern that merely looks similar.
-    vec3  H   = waveHessian(q, e);
-    float det = (1.0 + lens * H.x) * (1.0 + lens * H.y) - (lens * H.z) * (lens * H.z);
-    float ad  = abs(det);
-    // Thin bright core inside a soft halo — a single floor gives either a hard
-    // wire or a fat smudge; sunlit caustics are both at once.
+// Brightness from one area-change factor. Split out so the three wavelengths
+// can share a Hessian: the texture reads are the whole cost here, the
+// arithmetic is nearly free, so dispersion is close to no extra work at all.
+float causticShape(float det) {
+    float ad = abs(det);
     // 1/|det| - 1 is the change in brightness. It is POSITIVE where the surface
     // folds light together and NEGATIVE where it pulls light apart, and both
     // halves are real: a caustic does not manufacture light, it moves it, so
     // every bright vein is paid for by the water around it going dim. Keeping
-    // only the positive half — which is what clamping at zero did — leaves
-    // bright lines sitting on an untouched background, and that reads as a
-    // pattern laid over the image rather than light passing through it. The
-    // missing shadow is what the veins need in order to look like they are
-    // cast by something.
+    // only the positive half leaves bright lines sitting on an untouched
+    // background, which reads as a pattern laid over the image rather than
+    // light passing through it.
     float f    = 1.0 / max(ad, 0.016) - 1.0;
+    // Thin bright core inside a soft halo — a single floor gives either a hard
+    // wire or a fat smudge; sunlit caustics are both at once.
     float core = clamp(f, 0.0, 18.0) / 18.0;
     float halo = clamp(1.0 / max(ad, 0.110) - 1.0, 0.0, 5.0) / 5.0;
     // Spreading saturates: |det| -> infinity can only ever remove the light
     // that was there, so this side is bounded at 1 by physics, not by taste.
     float dim  = clamp(-f, 0.0, 1.0);
-    // Weighted well below its true share. The focused side was normalised down
-    // by 18 to keep the veins from blowing out, so an honest 1:1 shadow would
-    // swamp them and turn every window muddy; this is the largest value that
-    // still just gives the veins something to sit against.
+    // Weighted well below its true share, because the focused side was
+    // normalised down by 18 to keep the veins from blowing out and an honest
+    // 1:1 shadow would swamp them.
     return core * 0.85 + halo * 0.10 - dim * 0.16;
+}
+
+// DISPERSION. Water's refractive index is not one number: it bends short
+// wavelengths harder than long ones, so blue converges at a shorter distance
+// than red. The three colours therefore focus onto slightly DIFFERENT curves,
+// and because the veins are thin, curves that miss each other by a few percent
+// separate visibly — which is why real caustics carry colour along their edges
+// instead of being white lines. Deriving it from the same surface is what keeps
+// the fringes on the correct side of every vein; tinting the edges by hand puts
+// them on whichever side the tint happened to be pushed.
+const float DISPERSION = 0.05;
+
+vec3 causticLayer(vec2 q, float e, float lens) {
+    // lens here is the SAME displacement coefficient the warp uses, expressed
+    // in the wave field's own coordinates. det(I + lens*H) is then literally the
+    // area change of the mapping that is bending the image — so a bright vein
+    // appears exactly where the warp is squeezing the picture together, instead
+    // of being an independent pattern that merely looks similar.
+    vec3 H = waveHessian(q, e);
+    // Longer wavelength bends less, so red carries the smaller coefficient.
+    vec3 k = lens * vec3(1.0 - DISPERSION, 1.0, 1.0 + DISPERSION);
+    vec3 det = (1.0 + k * H.x) * (1.0 + k * H.y) - (k * H.z) * (k * H.z);
+    return vec3(causticShape(det.r), causticShape(det.g), causticShape(det.b));
 }
 
 // THREE SUPERIMPOSED LAYERS.
@@ -259,7 +275,7 @@ float causticLayer(vec2 q, float e, float lens) {
 // Two taps at different finite-difference widths read the SAME simulated
 // surface at two scales — the long swell and the fine chop — which is what
 // produced the overlapping net in the reference photo.
-float caustic(vec2 q, float lensK) {
+vec3 caustic(vec2 q, float lensK) {
     // Converted from screen-uv into wave-field units, because the Hessian is
     // measured in the latter. Without this the two effects would agree in
     // principle and disagree in practice.
@@ -386,7 +402,7 @@ void main() {
     // Depth is the physical distance, so it alone sets the coefficient. The
     // warping slider then chooses how much of that bend is actually shown,
     // which is why it can sit at zero without the light going out.
-    float lensK    = max(shimmerDepth, 0.02) * 0.200;
+    float lensK    = max(shimmerDepth, 0.10) * 0.020;
     if (shimmerIntensity > 0.001) {
         wpBase = (uvG - 0.5) * (fullSize / max(fullSize.x, 1.0))
                * (0.85 * shimmerScale) + 0.5;
@@ -497,7 +513,7 @@ void main() {
         // toward that corner instead of growing in place.
         vec2 wp = (causticUV - 0.5) * (fullSize / max(fullSize.x, 1.0))
                 * (0.85 * shimmerScale) + 0.5;
-        float c = caustic(wp, lensK);
+        vec3 c = caustic(wp, lensK);
 
         if (shimmerLightFromBackdrop != 0) {
             // THE BACKDROP IS THE LIGHT SOURCE — the WARPED backdrop.
@@ -530,8 +546,8 @@ void main() {
             // light that is already in the image, so the dim half scales the
             // pixel instead of subtracting a white, which would drive dark
             // backdrops negative.
-            color += vec3(1.0, 0.985, 0.95) * max(c, 0.0) * shimmerIntensity * 0.35 * headroom;
-            color *= 1.0 + min(c, 0.0) * shimmerIntensity * 0.5;
+            color += vec3(1.0, 0.985, 0.95) * max(c, vec3(0.0)) * shimmerIntensity * 0.35 * headroom;
+            color *= 1.0 + min(c, vec3(0.0)) * shimmerIntensity * 0.5;
         }
     }
 
