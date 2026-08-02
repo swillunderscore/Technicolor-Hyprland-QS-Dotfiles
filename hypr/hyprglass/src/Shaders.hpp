@@ -68,6 +68,7 @@ uniform int   shimmerLightFromBackdrop;
 uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
+uniform float shimmerRefract; // how far the water bends what is behind it
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -336,6 +337,39 @@ void main() {
     vec2 uvR = uv + offsetR + domeUV;
     vec2 uvG = uv + offsetG + domeUV;
     vec2 uvB = uv + offsetB + domeUV;
+
+    // ========================================
+    // LOOKING THROUGH THE WATER
+    //
+    // The caustics alone are just light drawn on top — bright lines that move.
+    // What makes it read as water is that the surface also BENDS what is behind
+    // it: a sloped patch of surface displaces the view, so the wallpaper (or
+    // whatever window is under this one) visibly warps and swims.
+    //
+    // Snell's law to first order: the apparent shift is proportional to the
+    // surface gradient. Same wave field the caustics come from, so the bright
+    // veins and the warping agree with each other rather than being two
+    // unrelated effects stacked up.
+    //
+    // Applied to the SAMPLE positions, before anything is read, so it warps the
+    // real backdrop rather than smearing an already-sampled colour.
+    // ========================================
+    vec2 waveWarp = vec2(0.0);
+    vec2 wpBase   = vec2(0.0);
+    if (shimmerIntensity > 0.001) {
+        wpBase = (uvG - 0.5) * (fullSize / max(fullSize.x, 1.0))
+               * (0.85 * shimmerScale) + 0.5;
+        if (shimmerRefract > 0.001) {
+            // Divided by the window's pixel size so the shift is a constant
+            // number of PIXELS: a small popup and a maximised window then warp
+            // by the same visible amount instead of the big one barely moving.
+            waveWarp = waveSlope(wpBase, 0.0150) * shimmerRefract * 0.020
+                     / max(fullSize / max(fullSize.x, 1.0), vec2(0.001));
+        }
+    }
+    uvR += waveWarp;
+    uvG += waveWarp;
+    uvB += waveWarp;
 
     if (chromaticAberration > 0.001 && edgeProximity > 0.01) {
         color.r = sampleBlurred(uvR).r;

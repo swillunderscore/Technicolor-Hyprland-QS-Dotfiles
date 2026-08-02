@@ -989,6 +989,7 @@ FloatingWindow {
     // hyprglass-tuning.conf. Nothing new to plumb.
     readonly property var shimmerSpecs: [
         { key: "shimmer:intensity",     label: "Brightness",  hint: "How strongly the caustics show. 0 hides them without stopping the simulation.",           from: 0, to: 3,  def: 0.8,  step: 0 },
+        { key: "shimmer:refraction",    label: "Warping",      hint: "How much the water bends what is behind it. This is what makes it read as looking THROUGH water rather than at lines drawn on glass \u2014 your wallpaper, or whatever window is underneath, visibly swims. 0 leaves the backdrop undistorted and only the bright veins move.", from: 0, to: 4, def: 1.0, step: 0 },
         { key: "shimmer:depth",         label: "Water depth",  hint: "Distance from the surface to the floor. Deeper water lets the bent light travel further and converge harder, so the bright lines get thinner and sharper. Shallow spreads them into a soft wash.", from: 0.1, to: 5, def: 1.0, step: 0 },
         { key: "shimmer:scale",         label: "Wave size",    hint: "Size of the waves, and so of the cells between the bright lines. Larger waves also means fewer of them across a window.", from: 0.2, to: 3, def: 1.0, step: 0 },
         { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. Logarithmic, so most of the travel is spent down in the barely-moving range. Slow stays smooth: below 1x each step advances the physics less rather than stepping less often.", from: 0.002, to: 3, def: 1.0, step: 0, log: true },
