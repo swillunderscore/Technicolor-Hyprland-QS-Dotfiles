@@ -68,6 +68,7 @@ uniform int   shimmerLightFromBackdrop;
 uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
+uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float waveBias;       // storage offset used by the simulation
 
 in vec2 v_texcoord;
@@ -557,6 +558,43 @@ void main() {
             color += vec3(1.0, 0.985, 0.95) * max(c, vec3(0.0)) * shimmerIntensity * 0.35 * headroom;
             color *= 1.0 + min(c, vec3(0.0)) * shimmerIntensity * 0.5;
         }
+    }
+
+    // ========================================
+    // BEER-LAMBERT: WHAT THE WATER ITSELF TAKES OUT
+    //
+    // Water is not colourless. Pure water absorbs strongly in the red and
+    // barely at all in the blue, so light does not just dim with depth, it
+    // turns blue -- which is the actual reason the deep ocean is that colour,
+    // not the sky reflecting off it. Distilled water in a long enough tube does
+    // this with no particles involved at all.
+    //
+    // Coefficients are Pope & Fry (1997) for pure water at 650/550/450nm, in
+    // inverse metres, which is what finally makes DEPTH A REAL UNIT: the slider
+    // is now metres, and 1.0 means one metre of water. Light goes down to the
+    // floor and comes back up to you, so the path is twice the depth.
+    //
+    // No slider. The absorption of water is not an artistic parameter, and the
+    // only honest default for a coefficient is its measured value.
+    // ========================================
+    if (shimmerIntensity > 0.001) {
+        const vec3 ABSORB = vec3(0.340, 0.0565, 0.0092);
+        float path = 2.0 * max(shimmerDepth, 0.0);
+
+        // MURK is scattering rather than absorption, and the two do different
+        // things: absorption removes light, scattering REDIRECTS it. Particles
+        // both block what is behind them and kick stray light back at you, so
+        // murky water loses contrast toward a bright haze instead of just going
+        // dark. Large particles scatter every wavelength about equally -- which
+        // is why fog and milk are white, not blue -- so the veil is neutral at
+        // source and only picks up colour from the water it then travels
+        // through.
+        float b = shimmerMurk * 0.9;
+        vec3  trans = exp(-(ABSORB + vec3(b)) * path);
+        // Scattered light averages about half the path before reaching you.
+        vec3  veil  = exp(-ABSORB * path * 0.5) * (1.0 - exp(-b * path));
+
+        color = color * trans + veil;
     }
 
     // ========================================
