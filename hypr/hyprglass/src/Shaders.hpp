@@ -69,6 +69,7 @@ uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
 uniform float shimmerRefract; // how far the water bends what is behind it
+uniform float waveBias;       // storage offset used by the simulation
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -189,7 +190,7 @@ float waveH(vec2 q) {
     // between them makes the motion continuous even when a simulation step
     // spans many frames — which is exactly the case at low speed. Without this,
     // slowing the water down would make it tick between discrete states.
-    vec2 hh = texture(waveTex, uv).rg - 0.5;
+    vec2 hh = texture(waveTex, uv).rg - waveBias;
     return mix(hh.y, hh.x, waveSubFrac);
 }
 
@@ -635,6 +636,16 @@ uniform float damping;        // per-step energy retention, slightly below 1
 uniform vec4  impulse;        // xy = position (uv), z = radius, w = strength
 uniform float bedVariation;   // 0 = flat bottom, 1 = strongly uneven
 uniform float viscosity;      // how fast SHORT waves die relative to long ones
+uniform float maxSpeed;       // largest stable speed for THIS viscosity
+// Storage offset. Half float is SIGNED, so on that target this is 0 and the
+// height is written raw. Biasing it to sit near 0.5 was costing six bits of
+// mantissa: fp16 spacing at 0.5 is 4.9e-4, but at the amplitudes actually being
+// stored it is 1.5e-5. The caustic divides its finite differences by e^2, which
+// multiplies whatever is in the texture by about 4400 -- so the offset alone
+// was manufacturing order-1 curvature out of rounding error and printing it as
+// a pixel-scale dither. Only the UNORM fallback, which cannot hold a negative
+// number at all, still needs the offset.
+uniform float hBias;
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -660,8 +671,8 @@ float bedDepth(vec2 p) {
 void main() {
     vec2 uv = v_texcoord;
     vec4 c  = texture(tex, uv);
-    float h      = c.r - 0.5;
-    float hPrev  = c.g - 0.5;
+    float h      = c.r - hBias;
+    float hPrev  = c.g - hBias;
 
     // 5-point Laplacian. Sampling with clamped edges makes the boundary behave
     // like a wall, so waves REFLECT instead of vanishing — that reflection is a
@@ -671,10 +682,10 @@ void main() {
     vec4 nD = texture(tex, uv + vec2(0.0, -texelSize.y));
     vec4 nU = texture(tex, uv + vec2(0.0,  texelSize.y));
 
-    float l  = (nL.r + nR.r + nD.r + nU.r) - 2.0 - 4.0 * h;
+    float l  = (nL.r + nR.r + nD.r + nU.r) - 4.0 * hBias - 4.0 * h;
     // The same Laplacian one step back. It rides along in the .g channel of the
     // four samples already taken, so it costs no extra reads.
-    float lp = (nL.g + nR.g + nD.g + nU.g) - 2.0 - 4.0 * hPrev;
+    float lp = (nL.g + nR.g + nD.g + nU.g) - 4.0 * hBias - 4.0 * hPrev;
 
     // Explicit second-order integration: h(t+1) = 2h - h(t-1) + c^2 * lap
     // Local propagation speed from the local depth. Clamped well under the
@@ -687,8 +698,17 @@ void main() {
     // ceiling, and adding viscosity on top of that tipped it over: the shortest
     // wavelengths then amplify instead of decaying, which shows up as growing
     // blobs in the corners where reflections pile up.
-    float maxC = 0.44 - viscosity;
-    float localSpeed = clamp(waveSpeed * (1.0 + bedVariation * bedDepth(uv)), 0.02, maxC);
+    // Ceiling solved on the CPU from the viscosity: the two are bound by
+    // s + v < sqrt(s/2), which is far stricter than the familiar s < 0.5.
+    // Expressed as a FRACTION of the ceiling rather than an absolute speed that
+    // then gets clipped. Written the old way, most of the surface sat pinned at
+    // exactly the maximum, so the uneven bottom stopped varying anything over
+    // the majority of the area -- and an uneven bottom that is uniform in
+    // practice is what lets wavefronts stay perfect arcs. This way the whole
+    // range lives under the limit no matter how thick the water is set.
+    float localSpeed = maxSpeed * waveSpeed
+                     * (0.65 + 0.35 * bedVariation * bedDepth(uv));
+    localSpeed = clamp(localSpeed, 0.01, maxSpeed);
 
     // VISCOSITY. A single multiplicative damping factor removes the same
     // fraction of every wavelength, so the fine chop survives exactly as long
@@ -712,7 +732,7 @@ void main() {
     }
 
     hNext = clamp(hNext, -0.49, 0.49);
-    fragColor = vec4(hNext + 0.5, h + 0.5, 0.0, 1.0);
+    fragColor = vec4(hNext + hBias, h + hBias, 0.0, 1.0);
 }
 )GLSL"},
 

@@ -34,6 +34,9 @@ struct SGlobalState {
     int      waveCurrent   = 0;
     uint64_t waveStepCount = 0;
     float    waveSubFrac   = 0.0f;   // 0..1 between the last two sim states
+    // Height offset used when storing the surface. Zero on a signed float
+    // target; 0.5 only on the UNORM fallback, which cannot hold a negative.
+    float    waveBias      = 0.0f;
 
     // Layer surface glass state (one per tracked layer, keyed by raw pointer).
     // shared_ptr so CGlassLayerPassElement can hold a copy that survives map erasure mid-frame.

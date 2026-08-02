@@ -15,6 +15,7 @@ struct SGlassUniforms {
     GLint shimmerDepth             = -1;
     GLint waveSubFrac              = -1;
     GLint shimmerRefract           = -1;
+    GLint waveBias                 = -1;
     GLint chromaticAberration = -1;
     GLint fresnelStrength = -1;
     GLint specularStrength = -1;
@@ -49,6 +50,8 @@ struct SWaveSimUniforms {
     GLint impulse      = -1;
     GLint bedVariation = -1;
     GLint viscosity    = -1;
+    GLint maxSpeed     = -1;
+    GLint hBias        = -1;
 };
 
 class CShaderManager {

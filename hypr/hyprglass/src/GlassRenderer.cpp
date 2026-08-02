@@ -205,6 +205,7 @@ void stepWaveSim() {
     if (fresh && fmt == DRM_FORMAT_ABGR16161616F &&
         (!fbA->getTexture() || !fbB->getTexture() || fbId(fbA) == 0 || fbId(fbB) == 0)) {
         fmt = DRM_FORMAT_ABGR8888;
+        g_pGlobalState->waveBias = 0.5f;
         fbA->alloc(SIM, SIM, fmt);
         fbB->alloc(SIM, SIM, fmt);
     }
@@ -230,7 +231,7 @@ void stepWaveSim() {
     if (fresh) {
         for (auto* fb : {&fbA, &fbB}) {
             glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
-            glClearColor(0.5f, 0.5f, 0.0f, 1.0f);
+            glClearColor(g_pGlobalState->waveBias, g_pGlobalState->waveBias, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
         }
         g_pGlobalState->waveStepCount = 0;
@@ -268,7 +269,9 @@ void stepWaveSim() {
     // a different effect rather than the same one slowed down.
     // Time is scaled by running the simulation less often instead, and the gap
     // between steps is interpolated so it still looks smooth.
-    glUniform1f(u.waveSpeed, 0.45f);
+    // Now a plain multiplier on the stability ceiling, not an absolute Courant
+    // number -- the ceiling itself moves with viscosity.
+    glUniform1f(u.waveSpeed, 1.0f);
     // Just under 1: energy bleeds away, so agitation SETTLES instead of ringing
     // forever. This is what gives the "everyone got out of the pool" pacing.
     // Closer to 1: energy survives long enough for many disturbances to be in
@@ -305,17 +308,35 @@ void stepWaveSim() {
     uint64_t every = static_cast<uint64_t>(
         std::exp(std::log(900.0f) + (std::log(6.0f) - std::log(900.0f)) * ag) + 0.5f);
 
-    // "Ripples vs swell" IS viscosity, so it now sets viscosity directly rather
-    // than only choosing how big each splash is. Sizing the disturbance decided
-    // what got PUT IN; viscosity decides what SURVIVES, and the second is what
-    // the words on the slider actually describe. Toward swell, short waves are
-    // eaten quickly and only long smooth ones are left running; toward ripples,
-    // fine structure persists and the surface stays busy. Impulse size still
-    // follows along, so both ends are fed the scale they are going to keep.
-    // Bounded at 0.12: it shares the c^2 + nu < 0.5 stability budget with the
-    // wave speed, and past that the water is more molasses than water anyway.
-    const float visc = 0.12f - 0.10f * std::clamp(chop, 0.0f, 1.0f);
+    // "Ripples vs swell" IS viscosity: impulse size only chooses what goes IN,
+    // viscosity chooses what SURVIVES, and the latter is what the label means.
+    //
+    // STABILITY. The usual Courant limit s < 0.5 does NOT survive the viscous
+    // term. Writing one mode as h+ = d[(2 + (s+v)L)h - (1 + vL)h-] with L the
+    // Laplacian eigenvalue on [-8,0], bounded roots need A^2 < 4B, and the
+    // (1 + vL) term is what viscosity attacks: it drives B toward zero, the
+    // roots go real, and one of them leaves the unit circle. Working it out at
+    // L = -8 gives
+    //
+    //     s + v < sqrt(s / 2)
+    //
+    // which collapses to s < 0.5 only when v = 0. Assuming the two simply
+    // shared a 0.5 budget was wrong and diverged at every setting except the
+    // thinnest -- the Nyquist mode amplifying every step, which is the
+    // pixel-checkerboard that ate the window.
+    //
+    // Solving s + v = K*sqrt(s/2) for s, in u = sqrt(s):
+    //     u^2 - (K/sqrt2) u + v = 0
+    // and taking the larger root gives the fastest speed this viscosity allows.
+    // K is the fraction of the boundary used; 0.78 keeps the worst-case
+    // per-step gain at 0.9996 instead of sitting on 1.0.
+    const float visc = 0.065f - 0.060f * std::clamp(chop, 0.0f, 1.0f);
+    constexpr float K = 0.78f;
+    const float disc = std::max(K * K * 0.5f - 4.0f * visc, 0.0f);
+    const float uRoot = (K / std::sqrt(2.0f) + std::sqrt(disc)) * 0.5f;
+    glUniform1f(u.hBias, g_pGlobalState->waveBias);
     glUniform1f(u.viscosity, visc);
+    glUniform1f(u.maxSpeed, uRoot * uRoot);
     // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
     // in physics and wrong in use: at speed 0.002 it worked out to one
     // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is
@@ -366,6 +387,18 @@ void stepWaveSim() {
         // height as if it were the wallpaper (observed: windows went flat grey).
         glActiveTexture(GL_TEXTURE3);
         s0->getTexture()->bind();
+        // The wave texture is read at roughly one texel per five screen
+        // pixels, so its filtering is not a detail: on NEAREST the height
+        // field is piecewise constant and its finite-difference curvature is
+        // either zero or enormous exactly on texel boundaries, which prints
+        // the simulation grid onto the window as blocky steps. Nothing ever
+        // set these, so they were whatever the framebuffer allocation left
+        // behind. CLAMP matters as much: the reflecting boundary needs
+        // samples past the edge to repeat the edge, not wrap to the far side.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         g_pGlobalState->waveCurrent = 1 - g_pGlobalState->waveCurrent;
     }
@@ -529,6 +562,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glUniform1f(uniforms.waveSubFrac, g_pGlobalState->waveSubFrac);
         glUniform1f(uniforms.shimmerRefract,
                     cfg.shimmerRefract ? static_cast<float>(**cfg.shimmerRefract) : 1.0f);
+        glUniform1f(uniforms.waveBias, g_pGlobalState->waveBias);
         glUniform1i(uniforms.shimmerLightFromBackdrop,
                     (cfg.shimmerLightFromBackdrop && **cfg.shimmerLightFromBackdrop != 0) ? 1 : 0);
 
@@ -541,6 +575,10 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             if (wfb && wfb->getTexture()) {
                 glActiveTexture(GL_TEXTURE2);
                 wfb->getTexture()->bind();
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
                 glActiveTexture(GL_TEXTURE0);
                 glUniform1i(uniforms.waveTex, 2);
             }
