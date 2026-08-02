@@ -63,7 +63,7 @@ inline constexpr auto SHIMMER_SCALE             = "plugin:hyprglass:shimmer:scal
 inline constexpr auto SHIMMER_LIGHT_BACKDROP    = "plugin:hyprglass:shimmer:light_from_backdrop";
 inline constexpr auto SHIMMER_DEPTH             = "plugin:hyprglass:shimmer:depth";
 inline constexpr auto SHIMMER_AGITATION         = "plugin:hyprglass:shimmer:agitation";
-inline constexpr auto SHIMMER_CHOP              = "plugin:hyprglass:shimmer:chop";
+inline constexpr auto SHIMMER_VISCOSITY         = "plugin:hyprglass:shimmer:viscosity";
 inline constexpr auto SHIMMER_BED               = "plugin:hyprglass:shimmer:bed_variation";
 inline constexpr auto SHIMMER_REFRACT           = "plugin:hyprglass:shimmer:refraction";
 inline constexpr auto LAYERS_NAMESPACES         = "plugin:hyprglass:layers:namespaces";
@@ -197,7 +197,7 @@ struct SPluginConfig {
     Hyprlang::INT* const*   shimmerLightFromBackdrop   = nullptr;
     Hyprlang::FLOAT* const* shimmerDepth               = nullptr;
     Hyprlang::FLOAT* const* shimmerAgitation           = nullptr;
-    Hyprlang::FLOAT* const* shimmerChop                = nullptr;
+    Hyprlang::FLOAT* const* shimmerViscosity           = nullptr;
     Hyprlang::FLOAT* const* shimmerBed                 = nullptr;
     Hyprlang::FLOAT* const* shimmerRefract             = nullptr;
     StringConfigPtr       layersNamespaces;

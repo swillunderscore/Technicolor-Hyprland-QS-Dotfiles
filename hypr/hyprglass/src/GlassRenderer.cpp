@@ -292,7 +292,7 @@ void stepWaveSim() {
     // so behaviour is reproducible when debugging a bad-looking frame.
     const auto& scfg = g_pGlobalState->config;
     const float agit = scfg.shimmerAgitation ? static_cast<float>(**scfg.shimmerAgitation) : 0.5f;
-    const float chop = scfg.shimmerChop      ? static_cast<float>(**scfg.shimmerChop)      : 0.5f;
+    const float thick = scfg.shimmerViscosity ? static_cast<float>(**scfg.shimmerViscosity) : 0.6f;
     // agitation 0..1 -> an event every 900..6 steps, GEOMETRICALLY.
     // The old mapping was linear from 90 down to 8, which had two faults. The
     // bottom of the slider still fired 120/90 = 1.3 disturbances per SECOND --
@@ -330,7 +330,8 @@ void stepWaveSim() {
     // and taking the larger root gives the fastest speed this viscosity allows.
     // K is the fraction of the boundary used; 0.78 keeps the worst-case
     // per-step gain at 0.9996 instead of sitting on 1.0.
-    const float visc = 0.065f - 0.060f * std::clamp(chop, 0.0f, 1.0f);
+    // Reads in the same direction as its name: right is thicker.
+    const float visc = 0.005f + 0.060f * std::clamp(thick, 0.0f, 1.0f);
     constexpr float K = 0.78f;
     const float disc = std::max(K * K * 0.5f - 4.0f * visc, 0.0f);
     const float uRoot = (K / std::sqrt(2.0f) + std::sqrt(disc)) * 0.5f;
@@ -370,7 +371,7 @@ void stepWaveSim() {
             // these are genuinely off-screen and their waves travel inward.
             const float ang = fr(16) * 6.2831853f;
             const float rr  = 0.40f + 0.09f * fr(32);
-            const float rad = 0.075f - 0.050f * std::clamp(chop, 0.0f, 1.0f) + 0.020f * fr(40);
+            const float rad = 0.025f + 0.050f * std::clamp(thick, 0.0f, 1.0f) + 0.020f * fr(40);
             // Calm water is not just disturbed less often, it is disturbed more
             // GENTLY -- a lake gets a stray ripple, not a cannonball every ten
             // seconds. Without this the low end read as rare violent splashes.

@@ -46,7 +46,7 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::SHIMMER_LIGHT_BACKDROP, Config::INTEGER{1});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_DEPTH, Config::FLOAT{1.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_AGITATION, Config::FLOAT{0.5f});
-    addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_CHOP, Config::FLOAT{0.5f});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_VISCOSITY, Config::FLOAT{0.6f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_BED, Config::FLOAT{0.45f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_REFRACT, Config::FLOAT{1.0f});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::LAYERS_NAMESPACES, Config::STRING{});
@@ -174,7 +174,7 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.shimmerLightFromBackdrop = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SHIMMER_LIGHT_BACKDROP);
     config.shimmerDepth            = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_DEPTH);
     config.shimmerAgitation        = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_AGITATION);
-    config.shimmerChop             = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_CHOP);
+    config.shimmerViscosity        = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_VISCOSITY);
     config.shimmerBed              = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_BED);
     config.shimmerRefract          = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_REFRACT);
     config.layersNamespaces        = getStringPtr(handle, ConfigKeys::LAYERS_NAMESPACES);
