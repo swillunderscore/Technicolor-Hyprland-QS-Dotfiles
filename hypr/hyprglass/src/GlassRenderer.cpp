@@ -284,6 +284,7 @@ void stepWaveSim() {
     // offered is a thing that does not occur.
     glUniform1f(u.bedVariation, 1.0f);
 
+
     // Occasional localized push. Deterministic LCG rather than a random device
     // so behaviour is reproducible when debugging a bad-looking frame.
     const auto& scfg = g_pGlobalState->config;
@@ -303,6 +304,18 @@ void stepWaveSim() {
     const float ag  = std::clamp(agit, 0.0f, 1.0f);
     uint64_t every = static_cast<uint64_t>(
         std::exp(std::log(900.0f) + (std::log(6.0f) - std::log(900.0f)) * ag) + 0.5f);
+
+    // "Ripples vs swell" IS viscosity, so it now sets viscosity directly rather
+    // than only choosing how big each splash is. Sizing the disturbance decided
+    // what got PUT IN; viscosity decides what SURVIVES, and the second is what
+    // the words on the slider actually describe. Toward swell, short waves are
+    // eaten quickly and only long smooth ones are left running; toward ripples,
+    // fine structure persists and the surface stays busy. Impulse size still
+    // follows along, so both ends are fed the scale they are going to keep.
+    // Bounded at 0.12: it shares the c^2 + nu < 0.5 stability budget with the
+    // wave speed, and past that the water is more molasses than water anyway.
+    const float visc = 0.12f - 0.10f * std::clamp(chop, 0.0f, 1.0f);
+    glUniform1f(u.viscosity, visc);
     // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
     // in physics and wrong in use: at speed 0.002 it worked out to one
     // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is

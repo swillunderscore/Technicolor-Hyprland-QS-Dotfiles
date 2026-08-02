@@ -634,6 +634,7 @@ uniform float waveSpeed;      // (c*dt/dx)^2 — MUST stay < 0.5 or it explodes
 uniform float damping;        // per-step energy retention, slightly below 1
 uniform vec4  impulse;        // xy = position (uv), z = radius, w = strength
 uniform float bedVariation;   // 0 = flat bottom, 1 = strongly uneven
+uniform float viscosity;      // how fast SHORT waves die relative to long ones
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -679,7 +680,15 @@ void main() {
     // Local propagation speed from the local depth. Clamped well under the
     // Courant limit (0.5) at the FAST end, or the scheme diverges wherever the
     // water is deepest.
-    float localSpeed = clamp(waveSpeed * (1.0 + bedVariation * bedDepth(uv)), 0.02, 0.48);
+    // STABILITY. The explicit scheme needs c^2 + nu < 0.5 at the highest
+    // representable frequency, so the ceiling on the local speed has to come
+    // DOWN as viscosity goes up -- they share one budget. Pinning the bed to
+    // fully uneven already pushed far more of the surface up against this
+    // ceiling, and adding viscosity on top of that tipped it over: the shortest
+    // wavelengths then amplify instead of decaying, which shows up as growing
+    // blobs in the corners where reflections pile up.
+    float maxC = 0.44 - viscosity;
+    float localSpeed = clamp(waveSpeed * (1.0 + bedVariation * bedDepth(uv)), 0.02, maxC);
 
     // VISCOSITY. A single multiplicative damping factor removes the same
     // fraction of every wavelength, so the fine chop survives exactly as long
@@ -692,8 +701,7 @@ void main() {
     // nu * laplacian(dh/dt) is that term. It leaves the swell almost untouched
     // and eats the pixel-scale ripple within a few steps. Kept well under the
     // 0.25 explicit-diffusion stability bound.
-    const float VISCOSITY = 0.06;
-    float hNext = (2.0 * h - hPrev + localSpeed * l + VISCOSITY * (l - lp)) * damping;
+    float hNext = (2.0 * h - hPrev + localSpeed * l + viscosity * (l - lp)) * damping;
 
     // Occasional localized push — "someone moved at the far end of the pool".
     // Energy arrives later, from a direction, and then fades: the pacing the

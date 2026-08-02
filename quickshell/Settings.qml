@@ -994,7 +994,7 @@ FloatingWindow {
         { key: "shimmer:scale",         label: "Wave size",    hint: "Size of the waves, and so of the cells between the bright lines. Larger waves also means fewer of them across a window.", from: 0.2, to: 3, def: 1.0, step: 0 },
         { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. Logarithmic, so most of the travel is spent down in the barely-moving range. Slow stays smooth: below 1x each step advances the physics less rather than stepping less often.", from: 0.002, to: 3, def: 1.0, step: 0, log: true },
         { key: "shimmer:agitation",     label: "Activity",     hint: "How busy the water is \u2014 how often something disturbs it, and how hard. Far left is a still pool crossed by a stray ripple every several seconds; far right is a crowded one. The scale is geometric, so the calm end has as much travel as the busy end.", from: 0, to: 1,  def: 0.5,  step: 0 },
-        { key: "shimmer:chop",          label: "Ripples vs swell", hint: "The SIZE of each disturbance. Left = broad slow swells that stay coherent a long way. Right = small sharp ripples that break up sooner.", from: 0, to: 1,  def: 0.5,  step: 0 },
+        { key: "shimmer:chop",          label: "Ripples vs swell", hint: "How thick the water is. Toward swell it is viscous: short waves are eaten within moments of appearing, so only long smooth rollers survive and the surface stays glassy between them. Toward ripples it is thin, fine structure persists once it is there, and the water keeps a busy chop. The size of each disturbance follows along so both ends are fed the scale they will keep.", from: 0, to: 1,  def: 0.4,  step: 0 },
     ]
 
     // Log-scaled sliders. A linear 0.002..3 track spends ~99% of its travel

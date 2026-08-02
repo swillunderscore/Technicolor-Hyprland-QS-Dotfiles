@@ -101,6 +101,7 @@ bool CShaderManager::compileWaveSimShader() {
     waveSimUniforms.damping   = glGetUniformLocation(program, "damping");
     waveSimUniforms.impulse   = glGetUniformLocation(program, "impulse");
     waveSimUniforms.bedVariation = glGetUniformLocation(program, "bedVariation");
+    waveSimUniforms.viscosity    = glGetUniformLocation(program, "viscosity");
 
     return true;
 }
