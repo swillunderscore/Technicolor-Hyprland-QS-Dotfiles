@@ -6,6 +6,13 @@
 
 struct SGlassUniforms {
     GLint refractionStrength = -1;
+    GLint uTime             = -1;
+    GLint shimmerIntensity  = -1;
+    GLint shimmerSpeed      = -1;
+    GLint shimmerScale      = -1;
+    GLint shimmerLightFromBackdrop = -1;
+    GLint waveTex                  = -1;
+    GLint shimmerDepth             = -1;
     GLint chromaticAberration = -1;
     GLint fresnelStrength = -1;
     GLint specularStrength = -1;
@@ -33,6 +40,14 @@ struct SBlurUniforms {
     GLint radius    = -1;
 };
 
+struct SWaveSimUniforms {
+    GLint texelSize = -1;
+    GLint waveSpeed = -1;
+    GLint damping   = -1;
+    GLint impulse      = -1;
+    GLint bedVariation = -1;
+};
+
 class CShaderManager {
   public:
     [[nodiscard]] bool isInitialized() const noexcept { return m_initialized; }
@@ -46,10 +61,14 @@ class CShaderManager {
     SP<CShader>    blurShader = makeShared<CShader>();
     SBlurUniforms  blurUniforms;
 
+    SP<CShader>      waveSimShader = makeShared<CShader>();
+    SWaveSimUniforms waveSimUniforms;
+
   private:
     bool m_initialized = false;
 
     [[nodiscard]] static std::string loadShaderSource(const char* fileName);
     [[nodiscard]] bool compileGlassShader();
     [[nodiscard]] bool compileBlurShader();
+    [[nodiscard]] bool compileWaveSimShader();
 };

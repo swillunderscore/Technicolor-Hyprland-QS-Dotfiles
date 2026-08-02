@@ -56,6 +56,15 @@ inline constexpr auto ADAPTIVE_BOOST        = "plugin:hyprglass:adaptive_boost";
 
 // Layer surface support
 inline constexpr auto LAYERS_ENABLED            = "plugin:hyprglass:layers:enabled";
+inline constexpr auto SHIMMER_ENABLED           = "plugin:hyprglass:shimmer:enabled";
+inline constexpr auto SHIMMER_INTENSITY         = "plugin:hyprglass:shimmer:intensity";
+inline constexpr auto SHIMMER_SPEED             = "plugin:hyprglass:shimmer:speed";
+inline constexpr auto SHIMMER_SCALE             = "plugin:hyprglass:shimmer:scale";
+inline constexpr auto SHIMMER_LIGHT_BACKDROP    = "plugin:hyprglass:shimmer:light_from_backdrop";
+inline constexpr auto SHIMMER_DEPTH             = "plugin:hyprglass:shimmer:depth";
+inline constexpr auto SHIMMER_AGITATION         = "plugin:hyprglass:shimmer:agitation";
+inline constexpr auto SHIMMER_CHOP              = "plugin:hyprglass:shimmer:chop";
+inline constexpr auto SHIMMER_BED               = "plugin:hyprglass:shimmer:bed_variation";
 inline constexpr auto LAYERS_NAMESPACES         = "plugin:hyprglass:layers:namespaces";
 inline constexpr auto LAYERS_EXCLUDE_NAMESPACES = "plugin:hyprglass:layers:exclude_namespaces";
 inline constexpr auto LAYERS_PRESET             = "plugin:hyprglass:layers:preset";
@@ -180,6 +189,15 @@ struct SPluginConfig {
     StringConfigPtr      defaultPreset;
 
     Hyprlang::INT* const* layersEnabled                  = nullptr;
+    Hyprlang::INT* const*   shimmerEnabled              = nullptr;
+    Hyprlang::FLOAT* const* shimmerIntensity            = nullptr;
+    Hyprlang::FLOAT* const* shimmerSpeed                = nullptr;
+    Hyprlang::FLOAT* const* shimmerScale                = nullptr;
+    Hyprlang::INT* const*   shimmerLightFromBackdrop   = nullptr;
+    Hyprlang::FLOAT* const* shimmerDepth               = nullptr;
+    Hyprlang::FLOAT* const* shimmerAgitation           = nullptr;
+    Hyprlang::FLOAT* const* shimmerChop                = nullptr;
+    Hyprlang::FLOAT* const* shimmerBed                 = nullptr;
     StringConfigPtr       layersNamespaces;
     StringConfigPtr       layersExcludeNamespaces;
     StringConfigPtr       layersPreset;

@@ -27,6 +27,13 @@ struct SGlobalState {
     // Shared blur temp framebuffer (reused across all decorations since they render sequentially)
     SP<Render::IFramebuffer> blurTempFramebuffer;
 
+    // Wave simulation state. Two framebuffers ping-ponged one step per frame;
+    // this is the whole reason the surface can be non-stationary — the field
+    // has HISTORY, which no closed-form sum of oscillators has.
+    SP<Render::IFramebuffer> waveFb[2];
+    int      waveCurrent   = 0;
+    uint64_t waveStepCount = 0;
+
     // Layer surface glass state (one per tracked layer, keyed by raw pointer).
     // shared_ptr so CGlassLayerPassElement can hold a copy that survives map erasure mid-frame.
     std::unordered_map<Desktop::View::CLayerSurface*, std::shared_ptr<CGlassLayerSurface>> layerSurfaces;

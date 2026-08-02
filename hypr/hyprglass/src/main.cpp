@@ -17,6 +17,9 @@
 #include <hyprland/src/debug/log/Logger.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 
+#include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <sstream>
 
 static void clearLayerGlassOnClose(PHLLS layerSurface) {
@@ -193,6 +196,49 @@ static void hkRenderLayer(Render::IHyprRenderer* thisptr, PHLLS layerSurface, PH
 }
 
 
+
+// ============================================================================
+//  SHIMMER CLOCK
+//
+//  hyprglass is normally damage-driven: it redraws when something changes.
+//  An animated caustic has nothing to change, so without a heartbeat the wave
+//  field would be frozen at whatever t the last unrelated redraw happened to
+//  land on. This timer supplies that heartbeat, and ONLY while the shimmer is
+//  actually on — when it is off the timer idles at half-second granularity and
+//  damages nothing, so a user who never enables it pays for two wakeups a
+//  second and no rendering at all.
+//
+//  This is also precisely why the effects governor exists: while this is
+//  running the compositor is drawing continuously rather than on demand, which
+//  is exactly the cost a game does not want to share.
+// ============================================================================
+static SP<CEventLoopTimer> g_shimmerTimer;
+
+static void shimmerTick(SP<CEventLoopTimer> self, void*) {
+    if (!g_pGlobalState) {
+        self->updateTimeout(std::chrono::milliseconds(500));
+        return;
+    }
+
+    const auto& cfg = g_pGlobalState->config;
+    const bool  on  = cfg.shimmerEnabled && **cfg.shimmerEnabled != 0
+                   && cfg.shimmerIntensity && **cfg.shimmerIntensity > 0.0;
+
+    if (on && g_pCompositor && g_pHyprRenderer) {
+        // 0.56 moved the monitor list off CCompositor into the state tracker;
+        // g_pCompositor->m_monitors no longer exists.
+        for (const auto& monitor : State::monitorState()->monitors()) {
+            // Only monitors that are actually presenting. Damaging a DPMS-off
+            // or unplugged output would keep it awake for an effect nobody can
+            // see, and on a laptop that is a battery leak with no visible cause.
+            if (monitor && monitor->m_enabled)
+                g_pHyprRenderer->damageMonitor(monitor);
+        }
+    }
+
+    self->updateTimeout(std::chrono::milliseconds(on ? 16 : 500));
+}
+
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
@@ -293,12 +339,41 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     commitPendingLayers();
     validateConfig();
 
+    g_shimmerTimer = makeShared<CEventLoopTimer>(std::chrono::milliseconds(500), shimmerTick, nullptr);
+    g_pEventLoopManager->addTimer(g_shimmerTimer);
+
     return {std::string(PLUGIN_NAME), std::string(PLUGIN_DESCRIPTION), std::string(PLUGIN_AUTHOR), std::string(PLUGIN_VERSION)};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    // Cancel BEFORE the early return: the timer holds a callback into this
+    // shared object, so leaving it armed while the .so unloads means the event
+    // loop eventually calls into freed code. That is a compositor crash on
+    // plugin unload, and it would happen whether or not global state exists.
+    if (g_shimmerTimer) {
+        // cancel() only disarms it — the event loop manager STILL HOLDS the
+        // shared pointer, so the timer (and its callback into this .so) survives
+        // the unload and the loop eventually calls into freed code. It must be
+        // removed from the manager as well. Verified: with cancel() alone,
+        // `hyprctl plugin unload` SIGSEGVs the compositor every time.
+        if (g_pEventLoopManager)
+            g_pEventLoopManager->removeTimer(g_shimmerTimer);
+        g_shimmerTimer->cancel();
+        g_shimmerTimer.reset();
+    }
+
     if (!g_pGlobalState)
         return;
+
+    // Release the wave-simulation framebuffers explicitly. They are GPU
+    // resources created by the renderer and held in this plugin's global state;
+    // dropping the .so without releasing them leaves the compositor holding
+    // framebuffers whose owning code is gone. Reloading the plugin is exactly
+    // when that bites, and a reload is what preceded the SIGSEGV on 2026-08-02.
+    g_pGlobalState->waveFb[0].reset();
+    g_pGlobalState->waveFb[1].reset();
+    g_pGlobalState->waveCurrent   = 0;
+    g_pGlobalState->waveStepCount = 0;
 
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassPassElement");
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerPassElement");

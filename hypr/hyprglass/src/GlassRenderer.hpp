@@ -11,6 +11,8 @@
 // Callers own their sample framebuffers; these functions operate on passed-in state.
 namespace GlassRenderer {
 
+void stepWaveSim();
+
 inline constexpr int SAMPLE_PADDING_PX = 60;
 
 // Maximum downscale factor for blur sampling. Half-res (2) is 4x cheaper

@@ -3,6 +3,10 @@
 #include "Globals.hpp"
 
 #include <array>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <drm_fourcc.h>
 #include <GLES3/gl32.h>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -92,6 +96,161 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
+// ============================================================================
+//  WAVE SIMULATION STEP
+//
+//  One explicit integration of d2h/dt2 = c^2*lap(h) per frame, ping-ponged
+//  between two framebuffers. This is the state that makes the surface a
+//  DYNAMICAL SYSTEM rather than a formula: a disturbance spreads at finite
+//  speed, bounces off the edges, interferes with its own reflections, and dies
+//  out. Sums of sines cannot do any of that, which is why every analytic
+//  variant read as "patterned" no matter how it was tuned.
+//
+//  Small grid on purpose: 512x512 costs ~260k texels x 5 taps once per frame,
+//  which is nothing beside the caustic pass running over every glass pixel.
+// ============================================================================
+void stepWaveSim() {
+    static constexpr int SIM = 512;
+
+    auto& shaderManager = g_pGlobalState->shaderManager;
+    if (!shaderManager.isInitialized())
+        return;
+
+    // Called from the glass pass, which runs once PER GLASSED SURFACE — with
+    // several glass windows up that would advance the simulation several times
+    // per frame, so the water would speed up as you opened windows. Rate-limit
+    // to one step per ~8ms so the surface evolves at the same pace regardless
+    // of how much glass is on screen.
+    {
+        using namespace std::chrono;
+        static steady_clock::time_point last{};
+        const auto now = steady_clock::now();
+        if (duration_cast<milliseconds>(now - last).count() < 8)
+            return;
+        last = now;
+    }
+
+    auto& fbA = g_pGlobalState->waveFb[0];
+    auto& fbB = g_pGlobalState->waveFb[1];
+    if (!fbA) fbA = g_pHyprRenderer->createFB("hyprglass-wave-a");
+    if (!fbB) fbB = g_pHyprRenderer->createFB("hyprglass-wave-b");
+
+    // HALF FLOAT IS REQUIRED, not a nicety. Wave heights here are ~0.01, and an
+    // 8-bit UNORM quantises to 1/255 ~ 0.004 — two or three levels of signal.
+    // The finite-difference Hessian then reads almost pure quantisation noise,
+    // which showed up as isolated white specks instead of caustic filaments.
+    const auto fmt = DRM_FORMAT_ABGR16161616F;
+    bool fresh = false;
+    if (fbA->m_size.x != SIM || fbA->m_size.y != SIM) { fbA->alloc(SIM, SIM, fmt); fresh = true; }
+    if (fbB->m_size.x != SIM || fbB->m_size.y != SIM) { fbB->alloc(SIM, SIM, fmt); fresh = true; }
+
+    // A flat surface encodes as 0.5 in both channels, NOT zero: the height is
+    // stored biased so a UNORM target can carry negative amplitude. Clearing to
+    // black would mean "h = -0.5 everywhere", i.e. a giant step the first frame
+    // would violently ring.
+    if (fresh) {
+        for (auto* fb : {&fbA, &fbB}) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
+            glClearColor(0.5f, 0.5f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+        g_pGlobalState->waveStepCount = 0;
+    }
+
+    GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+
+    const int  cur  = g_pGlobalState->waveCurrent;
+    auto&      src  = g_pGlobalState->waveFb[cur];
+    auto&      dst  = g_pGlobalState->waveFb[1 - cur];
+
+    static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
+        2.0f, 0.0f, 0.0f,
+        0.0f, 2.0f, 0.0f,
+       -1.0f,-1.0f, 1.0f,
+    };
+
+    const auto& u = shaderManager.waveSimUniforms;
+    auto shader = g_pHyprOpenGL->useShader(shaderManager.waveSimShader);
+    shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+    shader->setUniformInt(SHADER_TEX, 3);
+
+    glUniform2f(u.texelSize, 1.0f / SIM, 1.0f / SIM);
+    // Courant condition: (c*dt/dx)^2 must stay below 0.5 or the explicit scheme
+    // diverges into NaN within a few frames. 0.22 leaves comfortable margin.
+    // Close to the 0.5 stability ceiling on purpose. At 0.22 a wavefront only
+    // crossed ~22 texels between impulses, so the surface stayed a field of
+    // small local dents instead of spread waves that interfere — which read as
+    // grain rather than caustics.
+    glUniform1f(u.waveSpeed, 0.45f);
+    // Just under 1: energy bleeds away, so agitation SETTLES instead of ringing
+    // forever. This is what gives the "everyone got out of the pool" pacing.
+    // Closer to 1: energy survives long enough for many disturbances to be in
+    // flight at once and interfere, instead of one lonely wavefront at a time.
+    // Still below 1, so agitation genuinely settles when impulses pause.
+    glUniform1f(u.damping, 0.9994f);
+    glUniform1f(u.bedVariation,
+                g_pGlobalState->config.shimmerBed
+                    ? static_cast<float>(**g_pGlobalState->config.shimmerBed) : 0.45f);
+
+    // Occasional localized push. Deterministic LCG rather than a random device
+    // so behaviour is reproducible when debugging a bad-looking frame.
+    const auto& scfg = g_pGlobalState->config;
+    const float agit = scfg.shimmerAgitation ? static_cast<float>(**scfg.shimmerAgitation) : 0.5f;
+    const float chop = scfg.shimmerChop      ? static_cast<float>(**scfg.shimmerChop)      : 0.5f;
+    // agitation 0..1 -> an event every 90..8 steps
+    const uint64_t every = static_cast<uint64_t>(90.0f - 82.0f * std::clamp(agit, 0.0f, 1.0f));
+
+    const uint64_t n = g_pGlobalState->waveStepCount++;
+    if (n % std::max<uint64_t>(every, 2) == 0) {
+
+        uint64_t r = n * 6364136223846793005ULL + 1442695040888963407ULL;
+        auto frac = [&](int shift) {
+            return static_cast<float>((r >> shift) & 0xFFFF) / 65535.0f;
+        };
+        // Wider and stronger: a small sharp poke injects mostly high-frequency
+        // energy, which is exactly what the finite-difference Hessian turns into
+        // speckle. Broad disturbances make long waves that survive to interfere.
+        // SPAWN IN THE OUTER RING ONLY. The shader samples just the middle of
+        // the sim, so a disturbance placed here is genuinely off-screen and its
+        // wave travels inward — arriving from somewhere, which is the whole
+        // point. Placing them anywhere made them pop into existence on top of a
+        // window, which was the most obviously fake thing left.
+        const float ang = frac(16) * 6.2831853f;
+        const float rr  = 0.40f + 0.09f * frac(32);      // outside VIS (0.34)
+        const float px  = 0.5f + std::cos(ang) * rr;
+        const float py  = 0.5f + std::sin(ang) * rr;
+        // chop: small sharp ripples vs broad slow swell
+        const float rad = 0.075f - 0.050f * std::clamp(chop, 0.0f, 1.0f) + 0.020f * frac(40);
+        glUniform4f(u.impulse, px, py, rad, 0.10f + 0.16f * frac(48));
+    } else {
+        glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, fbId(dst));
+    glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+    g_pHyprOpenGL->setViewport(0, 0, SIM, SIM);
+    // Unit 3, NOT unit 0: unit 0 is the glass shader's backdrop sampler, and
+    // leaving the sim texture bound there makes the glass sample the water
+    // height as if it were the wallpaper (observed: windows went flat grey).
+    glActiveTexture(GL_TEXTURE3);
+    src->getTexture()->bind();
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);   // leave the active unit as the caller expects
+
+    // Restore the caller's target and viewport. blurBackground() does the same;
+    // leaving the sim's 512x512 viewport bound would scissor the glass pass down
+    // to a corner of the screen.
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
+
+    g_pGlobalState->waveCurrent = 1 - cur;
+}
+
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,
                     GLuint callerFramebufferID, int viewportWidth, int viewportHeight) {
     auto& shaderManager = g_pGlobalState->shaderManager;
@@ -178,6 +337,17 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glActiveTexture(GL_TEXTURE0);
     }
 
+    // Advance the water BEFORE binding the glass program: stepWaveSim binds its
+    // own shader/FBO/viewport, so it must not run between useShader() and the
+    // glass uniform uploads.
+    {
+        const auto& wcfg = g_pGlobalState->config;
+        const bool wOn = wcfg.shimmerEnabled && **wcfg.shimmerEnabled != 0
+                      && wcfg.shimmerIntensity && **wcfg.shimmerIntensity > 0.0;
+        if (wOn)
+            stepWaveSim();
+    }
+
     auto shader = g_pHyprOpenGL->useShader(shaderManager.glassShader);
 
     shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, glMatrix.getMatrix());
@@ -194,6 +364,54 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     glUniform1f(uniforms.glassOpacity,        resolvePresetFloat(resolveContext, &SPresetValues::glassOpacity, &SOverridableConfig::glassOpacity) * alpha);
     glUniform1f(uniforms.edgeThickness,       resolvePresetFloat(resolveContext, &SPresetValues::edgeThickness, &SOverridableConfig::edgeThickness));
     glUniform1f(uniforms.lensDistortion,      resolvePresetFloat(resolveContext, &SPresetValues::lensDistortion, &SOverridableConfig::lensDistortion));
+
+    // ── Animated caustics ───────────────────────────────────────────────────
+    // Global rather than per-preset on purpose: this is a "does the desktop
+    // move" decision, not a per-window look, and the effects governor toggles
+    // it as one switch. Intensity is forced to exactly 0 when disabled so the
+    // shader's early-out skips the wave sum entirely — a disabled shimmer must
+    // cost nothing, not merely a little.
+    //
+    // The clock is monotonic seconds, wrapped at 3600 before reaching the GPU.
+    // A float32 holding uptime-in-seconds loses sub-frame resolution after a
+    // few days of uptime (mantissa runs out), and the wave field would visibly
+    // quantise on a machine that is never rebooted — which is this one.
+    {
+        const auto& cfg = g_pGlobalState->config;
+        const bool  on  = cfg.shimmerEnabled && **cfg.shimmerEnabled != 0;
+        const float intensity = on && cfg.shimmerIntensity ? static_cast<float>(**cfg.shimmerIntensity) : 0.0f;
+        const float speed     = cfg.shimmerSpeed ? static_cast<float>(**cfg.shimmerSpeed) : 0.35f;
+        const float scale     = cfg.shimmerScale ? static_cast<float>(**cfg.shimmerScale) : 1.0f;
+
+        float t = 0.0f;
+        if (intensity > 0.0f) {
+            const auto now = std::chrono::steady_clock::now().time_since_epoch();
+            const auto ms  = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+            t = static_cast<float>(ms % 3600000LL) / 1000.0f;
+        }
+        glUniform1f(uniforms.uTime,            t);
+        glUniform1f(uniforms.shimmerIntensity, intensity);
+        glUniform1f(uniforms.shimmerSpeed,     speed);
+        glUniform1f(uniforms.shimmerScale,     scale);
+        glUniform1f(uniforms.shimmerDepth,
+                    cfg.shimmerDepth ? static_cast<float>(**cfg.shimmerDepth) : 1.0f);
+        glUniform1i(uniforms.shimmerLightFromBackdrop,
+                    (cfg.shimmerLightFromBackdrop && **cfg.shimmerLightFromBackdrop != 0) ? 1 : 0);
+
+        // Bind the CURRENT surface. The simulation itself is stepped before the
+        // glass shader is bound (see above) — stepping it here would switch the
+        // active program mid-uniform-upload and every glass uniform after this
+        // point would be written to the wrong program.
+        if (intensity > 0.0f) {
+            auto& wfb = g_pGlobalState->waveFb[g_pGlobalState->waveCurrent];
+            if (wfb) {
+                glActiveTexture(GL_TEXTURE2);
+                wfb->getTexture()->bind();
+                glActiveTexture(GL_TEXTURE0);
+                glUniform1i(uniforms.waveTex, 2);
+            }
+        }
+    }
 
     uploadThemeUniforms(resolveContext);
 

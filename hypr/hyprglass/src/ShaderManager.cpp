@@ -31,6 +31,13 @@ bool CShaderManager::compileGlassShader() {
     const auto program = glassShader->program();
 
     glassUniforms.refractionStrength  = glGetUniformLocation(program, "refractionStrength");
+    glassUniforms.uTime               = glGetUniformLocation(program, "uTime");
+    glassUniforms.shimmerIntensity    = glGetUniformLocation(program, "shimmerIntensity");
+    glassUniforms.shimmerSpeed        = glGetUniformLocation(program, "shimmerSpeed");
+    glassUniforms.shimmerScale        = glGetUniformLocation(program, "shimmerScale");
+    glassUniforms.shimmerLightFromBackdrop = glGetUniformLocation(program, "shimmerLightFromBackdrop");
+    glassUniforms.waveTex                  = glGetUniformLocation(program, "waveTex");
+    glassUniforms.shimmerDepth             = glGetUniformLocation(program, "shimmerDepth");
     glassUniforms.chromaticAberration = glGetUniformLocation(program, "chromaticAberration");
     glassUniforms.fresnelStrength     = glGetUniformLocation(program, "fresnelStrength");
     glassUniforms.specularStrength    = glGetUniformLocation(program, "specularStrength");
@@ -73,6 +80,29 @@ bool CShaderManager::compileBlurShader() {
     return true;
 }
 
+bool CShaderManager::compileWaveSimShader() {
+    if (!waveSimShader->createProgram(
+            g_pHyprOpenGL->m_shaders->TEXVERTSRC,
+            loadShaderSource("wavesim.frag"),
+            true
+        )) {
+        HyprlandAPI::addNotification(PHANDLE,
+            std::format("[{}] Failed to compile wave sim shader", PLUGIN_NAME),
+            CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        return false;
+    }
+
+    const auto program = waveSimShader->program();
+
+    waveSimUniforms.texelSize = glGetUniformLocation(program, "texelSize");
+    waveSimUniforms.waveSpeed = glGetUniformLocation(program, "waveSpeed");
+    waveSimUniforms.damping   = glGetUniformLocation(program, "damping");
+    waveSimUniforms.impulse   = glGetUniformLocation(program, "impulse");
+    waveSimUniforms.bedVariation = glGetUniformLocation(program, "bedVariation");
+
+    return true;
+}
+
 void CShaderManager::initializeIfNeeded() {
     if (m_initialized)
         return;
@@ -81,6 +111,9 @@ void CShaderManager::initializeIfNeeded() {
         return;
 
     if (!compileBlurShader())
+        return;
+
+    if (!compileWaveSimShader())
         return;
 
     m_initialized = true;
