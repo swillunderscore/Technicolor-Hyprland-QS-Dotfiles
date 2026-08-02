@@ -365,6 +365,32 @@ void main() {
             // by the same visible amount instead of the big one barely moving.
             waveWarp = waveSlope(wpBase, 0.0150) * shimmerRefract * 0.020
                      / max(fullSize / max(fullSize.x, 1.0), vec2(0.001));
+
+            // ── STAY INSIDE THE CAPTURED BACKDROP ──────────────────────────
+            // hyprglass only samples a padded region around the window, so
+            // there is a hard limit on how far a sample may reach. Past it the
+            // sampler clamps, and because the wave keeps moving, the clamped
+            // band moves with it — which is what the flicker at the top edge
+            // and along a monitor seam actually was. It scaled with warping
+            // because the warp is what pushes samples out there.
+            //
+            // uvPadding is that margin in texture space; convert to window-uv
+            // and spend at most part of it, leaving room for the edge
+            // refraction that is already using some.
+            vec2 margin = uvPadding / max(1.0 - 2.0 * uvPadding, vec2(0.001));
+            vec2 budget = max(margin * 0.6, vec2(0.0));
+            waveWarp = clamp(waveWarp, -budget, budget);
+
+            // Fade the warp out approaching the border. Even inside the budget,
+            // a sample near the edge reaches content the neighbouring monitor
+            // captured differently, so the two halves of a spanning window
+            // disagree right where they meet. Going to zero at the rim removes
+            // the disagreement, and is physically reasonable — the glass is
+            // thickest there, and that zone is already dominated by the edge
+            // refraction.
+            vec2 d = min(uv, 1.0 - uv);                     // distance to nearest edge
+            float fade = smoothstep(0.0, 0.10, min(d.x, d.y));
+            waveWarp *= fade;
         }
     }
     uvR += waveWarp;
