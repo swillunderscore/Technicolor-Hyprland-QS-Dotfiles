@@ -14,7 +14,13 @@
 namespace GlassRenderer {
 
 static GLuint fbId(const SP<Render::IFramebuffer>& framebuffer) {
-    return dynamic_cast<Render::GL::CGLFramebuffer*>(framebuffer.get())->getFBID();
+    // dynamic_cast returns null for anything that is not a GL framebuffer, and
+    // calling ->getFBID() on that jumps through a garbage vtable — which shows
+    // up in a crash report as a bare unresolved address with no symbol.
+    if (!framebuffer)
+        return 0;
+    auto* gl = dynamic_cast<Render::GL::CGLFramebuffer*>(framebuffer.get());
+    return gl ? gl->getFBID() : 0;
 }
 
 static void uploadThemeUniforms(const SResolveContext& ctx) {
@@ -139,10 +145,26 @@ void stepWaveSim() {
     // 8-bit UNORM quantises to 1/255 ~ 0.004 — two or three levels of signal.
     // The finite-difference Hessian then reads almost pure quantisation noise,
     // which showed up as isolated white specks instead of caustic filaments.
-    const auto fmt = DRM_FORMAT_ABGR16161616F;
+    // Half float is strongly preferred (8-bit quantises the wave to noise), but
+    // it is NOT guaranteed to be a valid render target everywhere. If the alloc
+    // does not produce a usable texture, fall back rather than sailing on with
+    // null framebuffers — that is what turned a driver limitation into a
+    // compositor SIGSEGV during ordinary rendering.
+    static uint32_t fmt = DRM_FORMAT_ABGR16161616F;
     bool fresh = false;
     if (fbA->m_size.x != SIM || fbA->m_size.y != SIM) { fbA->alloc(SIM, SIM, fmt); fresh = true; }
     if (fbB->m_size.x != SIM || fbB->m_size.y != SIM) { fbB->alloc(SIM, SIM, fmt); fresh = true; }
+
+    if (fresh && fmt == DRM_FORMAT_ABGR16161616F &&
+        (!fbA->getTexture() || !fbB->getTexture() || fbId(fbA) == 0 || fbId(fbB) == 0)) {
+        fmt = DRM_FORMAT_ABGR8888;
+        fbA->alloc(SIM, SIM, fmt);
+        fbB->alloc(SIM, SIM, fmt);
+    }
+
+    // Whatever happened above, refuse to proceed with an unusable target.
+    if (!fbA->getTexture() || !fbB->getTexture() || fbId(fbA) == 0 || fbId(fbB) == 0)
+        return;
 
     // A flat surface encodes as 0.5 in both channels, NOT zero: the height is
     // stored biased so a UNORM target can carry negative amplitude. Clearing to
@@ -235,6 +257,10 @@ void stepWaveSim() {
     // leaving the sim texture bound there makes the glass sample the water
     // height as if it were the wallpaper (observed: windows went flat grey).
     glActiveTexture(GL_TEXTURE3);
+    if (!src || !src->getTexture()) {
+        glActiveTexture(GL_TEXTURE0);
+        return;
+    }
     src->getTexture()->bind();
     g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -404,7 +430,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         // point would be written to the wrong program.
         if (intensity > 0.0f) {
             auto& wfb = g_pGlobalState->waveFb[g_pGlobalState->waveCurrent];
-            if (wfb) {
+            if (wfb && wfb->getTexture()) {
                 glActiveTexture(GL_TEXTURE2);
                 wfb->getTexture()->bind();
                 glActiveTexture(GL_TEXTURE0);

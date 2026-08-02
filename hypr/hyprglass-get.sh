@@ -4,10 +4,12 @@
 # value via hyprctl (which already reflects hyprland.conf + hyprglass-tuning.conf).
 set -u
 
-INT_KEYS=" blur_iterations "
+INT_KEYS=" blur_iterations shimmer:enabled "
 for k in refraction_strength fresnel_strength specular_strength lens_distortion \
          edge_thickness chromatic_aberration blur_strength blur_iterations \
-         brightness contrast saturation vibrancy; do
+           brightness contrast saturation vibrancy \
+           shimmer:enabled shimmer:intensity shimmer:depth shimmer:scale \
+           shimmer:speed shimmer:agitation shimmer:chop shimmer:bed_variation; do
     field=float
     case "$INT_KEYS" in *" $k "*) field=int ;; esac
     v=$(hyprctl getoption -j "plugin:hyprglass:$k" 2>/dev/null | jq -r ".$field // empty" 2>/dev/null)

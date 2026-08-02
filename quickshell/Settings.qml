@@ -984,6 +984,19 @@ FloatingWindow {
         { key: "saturation",           label: "Saturation",           from: 0, to: 2,  def: 1.0,  step: 0 },
         { key: "vibrancy",             label: "Vibrancy",             from: 0, to: 2,  def: 1.0,  step: 0 }
     ]
+    // Water shimmer knobs. These ride the SAME path as the Glass tab: glassLive()
+    // applies instantly via hyprctl eval, glassSet() persists to
+    // hyprglass-tuning.conf. Nothing new to plumb.
+    readonly property var shimmerSpecs: [
+        { key: "shimmer:intensity",     label: "Visibility",        from: 0, to: 3,  def: 0.8,  step: 0 },
+        { key: "shimmer:depth",         label: "Water depth",       from: 0.1, to: 5, def: 1.0, step: 0 },
+        { key: "shimmer:scale",         label: "Cell size",         from: 0.2, to: 3, def: 1.0, step: 0 },
+        { key: "shimmer:speed",         label: "Speed",             from: 0, to: 3,  def: 1.0,  step: 0 },
+        { key: "shimmer:agitation",     label: "Agitation",         from: 0, to: 1,  def: 0.5,  step: 0 },
+        { key: "shimmer:chop",          label: "Chop vs swell",     from: 0, to: 1,  def: 0.5,  step: 0 },
+        { key: "shimmer:bed_variation", label: "Uneven bottom",     from: 0, to: 1,  def: 0.45, step: 0 }
+    ]
+
     property var glassValues: ({})    // key -> live value, populated by loadGlass()
     Process {
         id: glassGetProc
@@ -2303,6 +2316,60 @@ FloatingWindow {
                                             else                                 win.govBatteryTier = vv
                                         }
                                         onCommitted: (v) => win.writeGovernorConf()
+                                    }
+                                }
+                            }
+
+                            // ── water shimmer ──────────────────────────────────────
+                            Text { text: "Water"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                                text: "Caustics on the glass, from a real wave simulation — disturbances arrive from off-screen, spread, reflect and die down. The light comes from whatever is actually behind the window, so it takes on those colours." }
+
+                            Rectangle {
+                                width: parent.width; height: Math.max(50, shCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                                Column {
+                                    id: shCol
+                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    anchors.right: shTg.left; anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                    Text { text: "Moving water"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                    Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                           text: "Off means the simulation never runs at all, not merely that it is invisible. The governor also switches this off first when the GPU gets busy." }
+                                }
+                                TcToggle {
+                                    id: shTg
+                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    on: win.glassValue({ key: "shimmer:enabled", def: 0 }) >= 0.5
+                                    onToggled: (v) => { win.glassSet("shimmer:enabled", v ? 1 : 0); win.loadGlass() }
+                                }
+                            }
+
+                            Repeater {
+                                model: win.shimmerSpecs
+                                delegate: Item {
+                                    id: shRow
+                                    required property var modelData
+                                    width: fxCol.width; height: 50
+                                    property real val: modelData.def
+                                    Connections { target: win; function onGlassValuesChanged() { shRow.val = win.glassValue(shRow.modelData) } }
+                                    Item {
+                                        width: parent.width; height: 20
+                                        Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                               text: shRow.modelData.label; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                        Text { anchors.right: shReset.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                                               text: shRow.val.toFixed(2); color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                                        Rectangle { id: shReset; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                            width: 48; height: 20; radius: 6; color: shRm.containsMouse ? win.rowHover : win.rowBg
+                                            Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 10; font.family: win.ff }
+                                            MouseArea { id: shRm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                                onClicked: { shRow.val = shRow.modelData.def; win.glassSet(shRow.modelData.key, shRow.modelData.def) } }
+                                        }
+                                    }
+                                    TcSlider {
+                                        width: parent.width; y: 24
+                                        from: shRow.modelData.from; to: shRow.modelData.to; value: shRow.val
+                                        onMoved: (v) => { shRow.val = v; win.glassLive(shRow.modelData.key, v) }
+                                        onCommitted: (v) => win.glassSet(shRow.modelData.key, shRow.val)
                                     }
                                 }
                             }

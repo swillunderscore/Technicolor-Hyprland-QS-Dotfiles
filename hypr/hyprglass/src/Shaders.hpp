@@ -167,7 +167,17 @@ const float PHI = 1.61803398875;
 const float VIS = 0.34;   // half-width of the visible window into the sim
 
 float waveH(vec2 q) {
-    vec2 uv = 0.5 + (fract(q) - 0.5) * (2.0 * VIS);
+    // NEITHER fract() NOR clamp(). fract() wrapped, putting a hard seam wherever
+    // the coordinate crossed 0/1 — which the edge-refraction zone then stretched
+    // into blocky banding along the border. clamp() would instead freeze the
+    // value out there, i.e. a flat dead band at the edge: a different artifact,
+    // not a fix.
+    // The mapping is simply continuous. VIS=0.34 means q in [0,1] uses only the
+    // middle third of the texture, so q can wander well outside [0,1] — which is
+    // exactly what refraction does to it near an edge — and still land inside
+    // real simulated water. GL_CLAMP_TO_EDGE only ever engages far outside the
+    // window, where nothing is drawn.
+    vec2 uv = 0.5 + (q - 0.5) * (2.0 * VIS);
     return texture(waveTex, uv).r - 0.5;
 }
 
@@ -370,9 +380,14 @@ void main() {
     // popup looking like a close-up.
     // ========================================
     if (shimmerIntensity > 0.001) {
-        // Map the window onto the sim in a size-independent way, so a popup
-        // and a maximised window show the same size of cell.
-        vec2 wp = uv * (fullSize / max(fullSize.x, 1.0)) * (0.85 * shimmerScale);
+        // Sample the water at the REFRACTED coordinate, not the raw one. The
+        // glass bends what is behind it; the caustics live in that same water,
+        // so they must bend with it. Using plain uv made the pattern ignore the
+        // edge entirely and meet the border as a hard line.
+        vec2 causticUV = uvG + domeUV;
+        // Size-independent mapping, so a popup and a maximised window show the
+        // same size of cell rather than one looking like a close-up.
+        vec2 wp = causticUV * (fullSize / max(fullSize.x, 1.0)) * (0.85 * shimmerScale);
         float c = caustic(wp);
 
         if (shimmerLightFromBackdrop != 0) {
