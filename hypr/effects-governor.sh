@@ -113,6 +113,26 @@ battery_path() {
         echo "$d"; return
     done
 }
+# Is a real fullscreen app (a game, usually) on screen?
+#
+# WHY THIS EXISTS ALONGSIDE THE GPU CHECK: gpu_busy_percent only trips the
+# governor if a game actually pushes past GPU_HIGH. A frame-capped or CPU-bound
+# game can sit at 40-60% and never trigger it, which is the exact case people
+# most want handled. Fullscreen is deterministic — a game going fullscreen is
+# not a heuristic, it is the event itself.
+#
+# `fullscreen` is 0 none / 1 maximized / 2 real fullscreen. Only 2 counts:
+# maximized is just a big window (a browser, an editor) and must NOT strip
+# someone's desktop effects while they work.
+fullscreen_app() {
+    [ "${FULLSCREEN_ENABLED:-1}" = "1" ] || return 1
+    hyprctl clients -j 2>/dev/null | python3 -c '
+import sys, json
+try: cs = json.load(sys.stdin)
+except Exception: sys.exit(1)
+sys.exit(0 if any(c.get("fullscreen") == 2 for c in cs) else 1)' 2>/dev/null
+}
+
 on_battery()  { local d; d="$(battery_path)"; [ -n "$d" ] && [ "$(cat "$d/status" 2>/dev/null)" = "Discharging" ]; }
 battery_pct() { local d; d="$(battery_path)"; [ -n "$d" ] && cat "$d/capacity" 2>/dev/null || echo 100; }
 
@@ -144,10 +164,18 @@ daemon() {
             [ "$GPU_LOW" -lt 0 ] && GPU_LOW=0
         fi
 
-        busy="$(gpu_busy)"
-        if [ "$busy" -ge 0 ] 2>/dev/null; then
-            if   [ "$busy" -ge "$GPU_HIGH" ] && [ "$tier" -lt "$MAX_TIER" ]; then tier=$((tier+1))
-            elif [ "$busy" -le "$GPU_LOW"  ] && [ "$tier" -gt 0 ];            then tier=$((tier-1))
+        # A fullscreen app pins the tier immediately — no ramp, no waiting for a
+        # threshold that a frame-capped game might never cross. Dropping straight
+        # to the floor also means the effects are gone BEFORE the game finishes
+        # loading, rather than stepping down over six seconds while it stutters.
+        if fullscreen_app; then
+            tier="$MAX_TIER"
+        else
+            busy="$(gpu_busy)"
+            if [ "$busy" -ge 0 ] 2>/dev/null; then
+                if   [ "$busy" -ge "$GPU_HIGH" ] && [ "$tier" -lt "$MAX_TIER" ]; then tier=$((tier+1))
+                elif [ "$busy" -le "$GPU_LOW"  ] && [ "$tier" -gt 0 ];            then tier=$((tier-1))
+                fi
             fi
         fi
 

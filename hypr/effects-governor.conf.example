@@ -9,6 +9,13 @@
 # them, however heavy). Leave this off if you WANT a flashy idle desktop.
 ENABLED=1
 
+# Drop straight to the furthest step the moment a real fullscreen app (a game)
+# appears, instead of waiting for the GPU to cross a threshold. This is the
+# reliable trigger: a frame-capped or CPU-bound game can sit at 40-60% GPU and
+# never trip GPU_HIGH, which is exactly the case you most want handled. Only
+# TRUE fullscreen counts — a merely maximized browser or editor is left alone.
+FULLSCREEN_ENABLED=1
+
 # Step down above GPU_HIGH % busy, step back up below GPU_LOW %.
 # The GAP between them is hysteresis — it stops a workload sitting near one
 # number from flapping the desktop between two looks every couple of seconds.

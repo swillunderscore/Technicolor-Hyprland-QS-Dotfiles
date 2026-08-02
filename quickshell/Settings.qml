@@ -242,6 +242,7 @@ FloatingWindow {
     property real  govGpuHigh: 70
     property real  govGpuLow: 45
     property real  govMaxTier: 3
+    property bool  govFullscreen: true
     property bool  govBatteryEnabled: true
     property real  govBatteryLow: 25
     property real  govBatteryTier: 2
@@ -258,6 +259,7 @@ FloatingWindow {
             var t = this.text()
             function num(k, d) { var m = t.match(new RegExp(k + "\\s*=\\s*([0-9]+)")); return m ? parseInt(m[1]) : d }
             win.govEnabled        = num("ENABLED", 1) === 1
+            win.govFullscreen     = num("FULLSCREEN_ENABLED", 1) === 1
             win.govGpuHigh        = num("GPU_HIGH", 70)
             win.govGpuLow         = num("GPU_LOW", 45)
             win.govMaxTier        = num("MAX_TIER", 3)
@@ -273,6 +275,7 @@ FloatingWindow {
         // looks every poll. Clamped here so the sliders cannot express it.
         var lo = Math.min(win.govGpuLow, win.govGpuHigh - 5)
         var body = "ENABLED=" + (win.govEnabled ? 1 : 0) +
+                   "\nFULLSCREEN_ENABLED=" + (win.govFullscreen ? 1 : 0) +
                    "\nGPU_HIGH=" + Math.round(win.govGpuHigh) +
                    "\nGPU_LOW=" + Math.round(lo) +
                    "\nPOLL_SECONDS=2" +
@@ -2181,6 +2184,27 @@ FloatingWindow {
                                     anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
                                     on: win.govEnabled
                                     onToggled: (v) => { win.govEnabled = v; win.writeGovernorConf() }
+                                }
+                            }
+
+                            // fullscreen trigger — the reliable one
+                            Rectangle {
+                                width: parent.width; height: Math.max(50, fsgCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                                opacity: win.govEnabled ? 1 : 0.4
+                                Column {
+                                    id: fsgCol
+                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    anchors.right: fsgTg.left; anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                    Text { text: "Cut effects for fullscreen apps"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                    Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                           text: "Drops straight to the furthest step the moment a game goes fullscreen, rather than waiting for the GPU to cross the threshold below — a frame-capped game can sit at half load and never trip it. A merely maximised window is left alone." }
+                                }
+                                TcToggle {
+                                    id: fsgTg
+                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    on: win.govFullscreen
+                                    onToggled: (v) => { win.govFullscreen = v; win.writeGovernorConf() }
                                 }
                             }
 
