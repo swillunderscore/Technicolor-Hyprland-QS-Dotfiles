@@ -14,7 +14,6 @@ struct SGlassUniforms {
     GLint waveTex                  = -1;
     GLint shimmerDepth             = -1;
     GLint waveSubFrac              = -1;
-    GLint shimmerRefract           = -1;
     GLint waveBias                 = -1;
     GLint chromaticAberration = -1;
     GLint fresnelStrength = -1;

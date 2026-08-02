@@ -116,7 +116,7 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
 //  which is nothing beside the caustic pass running over every glass pixel.
 // ============================================================================
 void stepWaveSim() {
-    static constexpr int SIM = 512;
+    static constexpr int SIM = 1024;
 
     auto& shaderManager = g_pGlobalState->shaderManager;
     if (!shaderManager.isInitialized())
@@ -271,7 +271,14 @@ void stepWaveSim() {
     // between steps is interpolated so it still looks smooth.
     // Now a plain multiplier on the stability ceiling, not an absolute Courant
     // number -- the ceiling itself moves with viscosity.
-    glUniform1f(u.waveSpeed, 1.0f);
+    // Shallow-water waves travel at sqrt(g*h): DEEPER WATER IS FASTER, which is
+    // why swell slows and piles up as it reaches a beach. Depth already sets the
+    // refraction and the focusing, so this is the third thing it should do.
+    // Capped at 1 because the stability ceiling is the real limit past that
+    // point -- deeper than nominal cannot actually run faster here.
+    const float dep = g_pGlobalState->config.shimmerDepth
+                    ? static_cast<float>(**g_pGlobalState->config.shimmerDepth) : 1.0f;
+    glUniform1f(u.waveSpeed, std::min(std::sqrt(std::max(dep, 0.01f)), 1.0f));
     // Just under 1: energy bleeds away, so agitation SETTLES instead of ringing
     // forever. This is what gives the "everyone got out of the pool" pacing.
     // Closer to 1: energy survives long enough for many disturbances to be in
@@ -561,8 +568,6 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glUniform1f(uniforms.shimmerDepth,
                     cfg.shimmerDepth ? static_cast<float>(**cfg.shimmerDepth) : 1.0f);
         glUniform1f(uniforms.waveSubFrac, g_pGlobalState->waveSubFrac);
-        glUniform1f(uniforms.shimmerRefract,
-                    cfg.shimmerRefract ? static_cast<float>(**cfg.shimmerRefract) : 1.0f);
         glUniform1f(uniforms.waveBias, g_pGlobalState->waveBias);
         glUniform1i(uniforms.shimmerLightFromBackdrop,
                     (cfg.shimmerLightFromBackdrop && **cfg.shimmerLightFromBackdrop != 0) ? 1 : 0);

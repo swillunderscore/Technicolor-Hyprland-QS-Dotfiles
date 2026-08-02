@@ -68,7 +68,6 @@ uniform int   shimmerLightFromBackdrop;
 uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
-uniform float shimmerRefract; // how far the water bends what is behind it
 uniform float waveBias;       // storage offset used by the simulation
 
 in vec2 v_texcoord;
@@ -172,7 +171,7 @@ const float PHI = 1.61803398875;
 // more water to cross before it arrives. At 0.34 the ring (radius 0.40-0.49)
 // landed only just past the visible edge and the "smash" was still catchable in
 // the corner of your eye.
-const float VIS = 0.21;
+const float VIS = 0.105;
 
 float waveH(vec2 q) {
     // NEITHER fract() NOR clamp(). fract() wrapped, putting a hard seam wherever
@@ -403,18 +402,26 @@ void main() {
     // Depth is the physical distance, so it alone sets the coefficient. The
     // warping slider then chooses how much of that bend is actually shown,
     // which is why it can sit at zero without the light going out.
-    float lensK    = max(shimmerDepth, 0.10) * 0.020;
+    // Snell's law fixes this; it is not a taste knob. Light leaving water at
+    // angle t is bent to n*sin(t), so a surface tilted by a slope shifts what
+    // is behind it by depth * (1 - 1/n) * slope. n = 1.333 for water, so the
+    // factor is 0.25 and the only free quantity is the depth. There used to be
+    // a "warping" slider multiplying this, which amounted to letting you pick
+    // the refractive index of water.
+    const float WATER_N = 1.333;
+    const float SNELL   = 1.0 - 1.0 / WATER_N;
+    float lensK    = max(shimmerDepth, 0.10) * SNELL * 0.080;
     if (shimmerIntensity > 0.001) {
         wpBase = (uvG - 0.5) * (fullSize / max(fullSize.x, 1.0))
                * (0.85 * shimmerScale) + 0.5;
-        if (shimmerRefract > 0.001) {
+        {
             // Divided by the window's pixel size so the shift is a constant
             // number of PIXELS: a small popup and a maximised window then warp
             // by the same visible amount instead of the big one barely moving.
             // Warping scales the whole optical effect; depth is the physical
             // distance. Their product is the displacement coefficient, and the
             // caustics below use the very same number.
-            waveWarp = waveSlope(wpBase, 0.0150) * lensK * shimmerRefract
+            waveWarp = waveSlope(wpBase, 0.0150) * lensK
                      / max(fullSize / max(fullSize.x, 1.0), vec2(0.001));
 
             // ── STAY INSIDE THE CAPTURED BACKDROP ──────────────────────────
