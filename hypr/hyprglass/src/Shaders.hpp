@@ -440,19 +440,26 @@ void main() {
         float c = caustic(wp);
 
         if (shimmerLightFromBackdrop != 0) {
-            // THE BACKDROP IS THE LIGHT SOURCE.
+            // THE BACKDROP IS THE LIGHT SOURCE — the WARPED backdrop.
             // A caustic does not add light, it REDISTRIBUTES light that is
-            // already there: the bright parts of whatever is behind the glass
-            // get focused into the veins. So sample the backdrop again, pulled
-            // along the wave slope, and weight it by the focus term. A dark
-            // wallpaper therefore stays dark instead of growing white worms,
-            // and a bright one lights its own caustics in its own colours.
-            vec2 slope = waveSlope(wp, 0.0150);
-            vec2 pull  = slope * (0.012 * shimmerScale);
-            vec3 lit   = sampleBlurred(uv + pull).rgb;
-            // Bias toward the brighter side of the backdrop: focused light comes
-            // from the highlights, not the average.
-            float lum  = dot(lit, vec3(0.2126, 0.7152, 0.0722));
+            // already there, so the veins must brighten exactly the thing you
+            // can see through the water. `color` is already that: the backdrop
+            // sampled through the warp, so reusing it guarantees the two agree
+            // and costs no extra texture read.
+            //
+            // Sampling at a separate, unwarped position was subtly wrong in a
+            // way that was easy to see once the warping existed: a railing bent
+            // by the water still lit the caustics along its STRAIGHT original
+            // path, so the light and the image disagreed about where the railing
+            // was.
+            //
+            // Because the source is the pixel itself, this is multiplicative —
+            // which is also the more honest model. Focused light scales what is
+            // there; it does not paste a second copy on top.
+            vec3  lit = color;
+            float lum = dot(lit, vec3(0.2126, 0.7152, 0.0722));
+            // Still biased toward highlights: focused light comes from the
+            // bright parts, not the average.
             color += lit * c * shimmerIntensity * (0.35 + 1.15 * lum);
         } else {
             // Independent light: a plain warm source, for when the backdrop is
