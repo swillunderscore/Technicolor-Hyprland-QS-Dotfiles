@@ -250,7 +250,15 @@ void stepWaveSim() {
         const auto& spc = g_pGlobalState->config;
         const float sp  = spc.shimmerSpeed
             ? std::clamp(static_cast<float>(**spc.shimmerSpeed), 0.0f, 4.0f) : 1.0f;
-        glUniform1f(u.waveSpeed, 0.45f * std::min(sp, 1.0f));
+        // SQUARED, and that is not a fudge.
+        // The uniform is c^2 * dt^2 in the discrete scheme
+        //     h_next = 2h - h_prev + (c^2 dt^2) * laplacian(h)
+        // so scaling it by k scales dt by sqrt(k). Scaling linearly therefore
+        // made 0.002 and 0.02 differ by only ~3.2x instead of 10x — the slider
+        // felt like it stopped slowing down. Squaring makes dt scale linearly
+        // with the slider, which is what "half speed" should mean.
+        const float sub = std::min(sp, 1.0f);
+        glUniform1f(u.waveSpeed, 0.45f * sub * sub);
     }
     // Just under 1: energy bleeds away, so agitation SETTLES instead of ringing
     // forever. This is what gives the "everyone got out of the pool" pacing.

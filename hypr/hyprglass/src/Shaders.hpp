@@ -392,7 +392,11 @@ void main() {
         vec2 causticUV = uvG + domeUV;
         // Size-independent mapping, so a popup and a maximised window show the
         // same size of cell rather than one looking like a close-up.
-        vec2 wp = causticUV * (fullSize / max(fullSize.x, 1.0)) * (0.85 * shimmerScale);
+        // Zoom about the CENTRE. Scaling the uv directly scales about (0,0),
+        // i.e. the top-left corner, so changing wave size slid the whole pattern
+        // toward that corner instead of growing in place.
+        vec2 wp = (causticUV - 0.5) * (fullSize / max(fullSize.x, 1.0))
+                * (0.85 * shimmerScale) + 0.5;
         float c = caustic(wp);
 
         if (shimmerLightFromBackdrop != 0) {
