@@ -145,18 +145,12 @@ void stepWaveSim() {
         static double accum = 0.0;
         constexpr double STEP = 1.0 / 120.0;
 
-        // SPEED BELOW 1x MUST NOT REDUCE THE STEP RATE.
-        // Scaling the accumulator was the obvious move and it is wrong: at 0.1x
-        // the simulation only advanced ~12 times a second, so the water was slow
-        // AND choppy. Slow motion has to stay smooth.
-        // Below 1x the step rate is held at the full 120/s and each step simply
-        // advances the physics less (see waveSpeed). Above 1x the per-step speed
-        // is already at the stability ceiling, so extra speed has to come from
-        // running more steps.
+        // Speed scales SIMULATED TIME, exactly like multiplying delta time.
+        // The physics constants are untouched, so the water looks identical at
+        // every speed — only the rate at which it advances changes.
         const auto& spcfg = g_pGlobalState->config;
         const double speed = spcfg.shimmerSpeed
             ? std::clamp(static_cast<double>(**spcfg.shimmerSpeed), 0.0, 4.0) : 1.0;
-        const double speedMul = std::max(1.0, speed);
 
         const auto now = steady_clock::now();
         if (last.time_since_epoch().count() == 0)
@@ -168,13 +162,19 @@ void stepWaveSim() {
         // huge; replaying all of it at once both stutters and can destabilise
         // the integrator. Dropping the excess is the right trade.
         if (dt > 0.25) dt = 0.25;
-        accum += dt * speedMul;
+        accum += dt * speed;
 
         steps = static_cast<int>(accum / STEP);
+        if (steps > 4) { accum = 0.0; steps = 4; }
+        else            accum -= steps * STEP;
+
+        // What is LEFT OVER is how far we are between the last completed step
+        // and the next. The shader blends the two stored states by it, so at
+        // low speed — where a step may take many frames — the water still moves
+        // continuously instead of ticking.
+        g_pGlobalState->waveSubFrac = static_cast<float>(std::clamp(accum / STEP, 0.0, 1.0));
         if (steps <= 0)
             return;
-        if (steps > 4) steps = 4;
-        accum -= steps * STEP;
     }
 
     auto& fbA = g_pGlobalState->waveFb[0];
@@ -243,42 +243,24 @@ void stepWaveSim() {
     // crossed ~22 texels between impulses, so the surface stayed a field of
     // small local dents instead of spread waves that interfere — which read as
     // grain rather than caustics.
-    // Sub-1x speed lives HERE, as a smaller physical wave speed, so the step
-    // rate — and therefore the smoothness — never drops. Stays under the 0.5
-    // Courant ceiling at all times.
-    {
-        const auto& spc = g_pGlobalState->config;
-        const float sp  = spc.shimmerSpeed
-            ? std::clamp(static_cast<float>(**spc.shimmerSpeed), 0.0f, 4.0f) : 1.0f;
-        // SQUARED, and that is not a fudge.
-        // The uniform is c^2 * dt^2 in the discrete scheme
-        //     h_next = 2h - h_prev + (c^2 dt^2) * laplacian(h)
-        // so scaling it by k scales dt by sqrt(k). Scaling linearly therefore
-        // made 0.002 and 0.02 differ by only ~3.2x instead of 10x — the slider
-        // felt like it stopped slowing down. Squaring makes dt scale linearly
-        // with the slider, which is what "half speed" should mean.
-        const float sub = std::min(sp, 1.0f);
-        glUniform1f(u.waveSpeed, 0.45f * sub * sub);
-    }
+    // FIXED. Speed must not touch the physics.
+    // Scaling c^2 dt^2 was wrong twice over. Linearly it scaled dt by sqrt();
+    // squared it scaled dt correctly but drove the constant to ~1.8e-6 at the
+    // low end, where the laplacian's contribution per step falls BELOW HALF
+    // FLOAT PRECISION and vanishes into rounding — the simulation stopped
+    // behaving like a wave equation at all, which is why slow water looked like
+    // a different effect rather than the same one slowed down.
+    // Time is scaled by running the simulation less often instead, and the gap
+    // between steps is interpolated so it still looks smooth.
+    glUniform1f(u.waveSpeed, 0.45f);
     // Just under 1: energy bleeds away, so agitation SETTLES instead of ringing
     // forever. This is what gives the "everyone got out of the pool" pacing.
     // Closer to 1: energy survives long enough for many disturbances to be in
     // flight at once and interfere, instead of one lonely wavefront at a time.
     // Still below 1, so agitation genuinely settles when impulses pause.
-    // DAMPING MUST SCALE WITH SPEED TOO.
-    // Below 1x the step rate is held constant (so slow stays smooth), which
-    // means a step of wall-clock time buys less simulated time. Leaving damping
-    // per-step therefore decays energy at the SAME real rate while the waves
-    // crawl — at 0.002 they died essentially where they were born instead of
-    // travelling slowly. Scaling the loss per step keeps decay tied to simulated
-    // time, so slow water is slow in every respect rather than just sluggish.
-    {
-        const auto& dpc = g_pGlobalState->config;
-        const float dsp = dpc.shimmerSpeed
-            ? std::clamp(static_cast<float>(**dpc.shimmerSpeed), 0.0f, 4.0f) : 1.0f;
-        const float sub = std::min(dsp, 1.0f);
-        glUniform1f(u.damping, 1.0f - (1.0f - 0.9994f) * sub);
-    }
+    // Also fixed, for the same reason: decay is part of the physics, and
+    // scaling it changed how the water behaved rather than how fast it ran.
+    glUniform1f(u.damping, 0.9994f);
     glUniform1f(u.bedVariation,
                 g_pGlobalState->config.shimmerBed
                     ? static_cast<float>(**g_pGlobalState->config.shimmerBed) : 0.45f);
@@ -491,6 +473,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glUniform1f(uniforms.shimmerScale,     scale);
         glUniform1f(uniforms.shimmerDepth,
                     cfg.shimmerDepth ? static_cast<float>(**cfg.shimmerDepth) : 1.0f);
+        glUniform1f(uniforms.waveSubFrac, g_pGlobalState->waveSubFrac);
         glUniform1i(uniforms.shimmerLightFromBackdrop,
                     (cfg.shimmerLightFromBackdrop && **cfg.shimmerLightFromBackdrop != 0) ? 1 : 0);
 

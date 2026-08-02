@@ -38,6 +38,7 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.shimmerLightFromBackdrop = glGetUniformLocation(program, "shimmerLightFromBackdrop");
     glassUniforms.waveTex                  = glGetUniformLocation(program, "waveTex");
     glassUniforms.shimmerDepth             = glGetUniformLocation(program, "shimmerDepth");
+    glassUniforms.waveSubFrac              = glGetUniformLocation(program, "waveSubFrac");
     glassUniforms.chromaticAberration = glGetUniformLocation(program, "chromaticAberration");
     glassUniforms.fresnelStrength     = glGetUniformLocation(program, "fresnelStrength");
     glassUniforms.specularStrength    = glGetUniformLocation(program, "specularStrength");

@@ -67,6 +67,7 @@ uniform float shimmerScale;
 uniform int   shimmerLightFromBackdrop;
 uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
+uniform float waveSubFrac;   // 0..1 between the two stored sim states
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -183,7 +184,12 @@ float waveH(vec2 q) {
     // real simulated water. GL_CLAMP_TO_EDGE only ever engages far outside the
     // window, where nothing is drawn.
     vec2 uv = 0.5 + (q - 0.5) * (2.0 * VIS);
-    return texture(waveTex, uv).r - 0.5;
+    // R is the newest state, G the one before it. Blending by how far we are
+    // between them makes the motion continuous even when a simulation step
+    // spans many frames — which is exactly the case at low speed. Without this,
+    // slowing the water down would make it tick between discrete states.
+    vec2 hh = texture(waveTex, uv).rg - 0.5;
+    return mix(hh.y, hh.x, waveSubFrac);
 }
 
 // Slope, for pulling the backdrop sample along the surface normal.

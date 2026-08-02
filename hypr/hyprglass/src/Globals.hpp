@@ -33,6 +33,7 @@ struct SGlobalState {
     SP<Render::IFramebuffer> waveFb[2];
     int      waveCurrent   = 0;
     uint64_t waveStepCount = 0;
+    float    waveSubFrac   = 0.0f;   // 0..1 between the last two sim states
 
     // Layer surface glass state (one per tracked layer, keyed by raw pointer).
     // shared_ptr so CGlassLayerPassElement can hold a copy that survives map erasure mid-frame.
