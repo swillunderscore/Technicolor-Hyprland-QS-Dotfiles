@@ -127,13 +127,41 @@ void stepWaveSim() {
     // per frame, so the water would speed up as you opened windows. Rate-limit
     // to one step per ~8ms so the surface evolves at the same pace regardless
     // of how much glass is on screen.
+    // FIXED TIMESTEP, not a "has 8ms passed yet" gate.
+    //
+    // The old gate compared against a fixed 8ms while frames arrive every ~6ms
+    // at 165Hz, so it ran on every other frame — and because frame timing
+    // jitters, sometimes two frames in a row were skipped and sometimes two ran
+    // back to back. The water genuinely sped up and slowed down: the "pulsing in
+    // and out of full framerate", with no GPU load behind it.
+    //
+    // Instead accumulate real elapsed time and run however many WHOLE steps it
+    // buys, so the simulation advances at a constant rate no matter how the
+    // frames land — which also makes wave speed independent of refresh rate.
+    int steps = 0;
     {
         using namespace std::chrono;
         static steady_clock::time_point last{};
+        static double accum = 0.0;
+        constexpr double STEP = 1.0 / 120.0;
+
         const auto now = steady_clock::now();
-        if (duration_cast<milliseconds>(now - last).count() < 8)
-            return;
+        if (last.time_since_epoch().count() == 0)
+            last = now;
+        double dt = duration<double>(now - last).count();
         last = now;
+
+        // Clamp catch-up. After a stall (VT switch, a heavy frame) accum can be
+        // huge; replaying all of it at once both stutters and can destabilise
+        // the integrator. Dropping the excess is the right trade.
+        if (dt > 0.25) dt = 0.25;
+        accum += dt;
+
+        steps = static_cast<int>(accum / STEP);
+        if (steps <= 0)
+            return;
+        if (steps > 4) steps = 4;
+        accum -= steps * STEP;
     }
 
     auto& fbA = g_pGlobalState->waveFb[0];
@@ -183,9 +211,6 @@ void stepWaveSim() {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevVp);
 
-    const int  cur  = g_pGlobalState->waveCurrent;
-    auto&      src  = g_pGlobalState->waveFb[cur];
-    auto&      dst  = g_pGlobalState->waveFb[1 - cur];
 
     static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
         2.0f, 0.0f, 0.0f,
@@ -224,46 +249,44 @@ void stepWaveSim() {
     // agitation 0..1 -> an event every 90..8 steps
     const uint64_t every = static_cast<uint64_t>(90.0f - 82.0f * std::clamp(agit, 0.0f, 1.0f));
 
-    const uint64_t n = g_pGlobalState->waveStepCount++;
-    if (n % std::max<uint64_t>(every, 2) == 0) {
 
-        uint64_t r = n * 6364136223846793005ULL + 1442695040888963407ULL;
-        auto frac = [&](int shift) {
-            return static_cast<float>((r >> shift) & 0xFFFF) / 65535.0f;
-        };
-        // Wider and stronger: a small sharp poke injects mostly high-frequency
-        // energy, which is exactly what the finite-difference Hessian turns into
-        // speckle. Broad disturbances make long waves that survive to interfere.
-        // SPAWN IN THE OUTER RING ONLY. The shader samples just the middle of
-        // the sim, so a disturbance placed here is genuinely off-screen and its
-        // wave travels inward — arriving from somewhere, which is the whole
-        // point. Placing them anywhere made them pop into existence on top of a
-        // window, which was the most obviously fake thing left.
-        const float ang = frac(16) * 6.2831853f;
-        const float rr  = 0.40f + 0.09f * frac(32);      // outside VIS (0.34)
-        const float px  = 0.5f + std::cos(ang) * rr;
-        const float py  = 0.5f + std::sin(ang) * rr;
-        // chop: small sharp ripples vs broad slow swell
-        const float rad = 0.075f - 0.050f * std::clamp(chop, 0.0f, 1.0f) + 0.020f * frac(40);
-        glUniform4f(u.impulse, px, py, rad, 0.10f + 0.16f * frac(48));
-    } else {
-        glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
-    }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, fbId(dst));
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
     g_pHyprOpenGL->setViewport(0, 0, SIM, SIM);
-    // Unit 3, NOT unit 0: unit 0 is the glass shader's backdrop sampler, and
-    // leaving the sim texture bound there makes the glass sample the water
-    // height as if it were the wallpaper (observed: windows went flat grey).
-    glActiveTexture(GL_TEXTURE3);
-    if (!src || !src->getTexture()) {
-        glActiveTexture(GL_TEXTURE0);
-        return;
-    }
-    src->getTexture()->bind();
     g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    for (int i = 0; i < steps; i++) {
+        auto& s0 = g_pGlobalState->waveFb[g_pGlobalState->waveCurrent];
+        auto& d0 = g_pGlobalState->waveFb[1 - g_pGlobalState->waveCurrent];
+        if (!s0 || !s0->getTexture() || fbId(d0) == 0)
+            break;
+
+        // Impulses are decided per STEP, so their rate follows simulated time
+        // rather than however many frames happened to get drawn.
+        const uint64_t nn = g_pGlobalState->waveStepCount++;
+        if (nn % std::max<uint64_t>(every, 2) == 0) {
+            uint64_t r = nn * 6364136223846793005ULL + 1442695040888963407ULL;
+            auto fr = [&](int sh) { return static_cast<float>((r >> sh) & 0xFFFF) / 65535.0f; };
+            // Outer ring only: the shader samples just the middle of the sim, so
+            // these are genuinely off-screen and their waves travel inward.
+            const float ang = fr(16) * 6.2831853f;
+            const float rr  = 0.40f + 0.09f * fr(32);
+            const float rad = 0.075f - 0.050f * std::clamp(chop, 0.0f, 1.0f) + 0.020f * fr(40);
+            glUniform4f(u.impulse, 0.5f + std::cos(ang) * rr, 0.5f + std::sin(ang) * rr,
+                        rad, 0.10f + 0.16f * fr(48));
+        } else {
+            glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(d0));
+        // Unit 3, NOT unit 0: unit 0 is the glass shader's backdrop sampler, and
+        // leaving the sim texture bound there makes the glass sample the water
+        // height as if it were the wallpaper (observed: windows went flat grey).
+        glActiveTexture(GL_TEXTURE3);
+        s0->getTexture()->bind();
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        g_pGlobalState->waveCurrent = 1 - g_pGlobalState->waveCurrent;
+    }
+
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);   // leave the active unit as the caller expects
@@ -274,7 +297,6 @@ void stepWaveSim() {
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
 
-    g_pGlobalState->waveCurrent = 1 - cur;
 }
 
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,

@@ -225,6 +225,26 @@ static void shimmerTick(SP<CEventLoopTimer> self, void*) {
                    && cfg.shimmerIntensity && **cfg.shimmerIntensity > 0.0;
 
     if (on && g_pCompositor && g_pHyprRenderer) {
+        // FORCE-DAMAGE EVERY GLASSED WINDOW, not just the monitors.
+        //
+        // Hyprland re-renders only what changed. Damaging the monitor schedules a
+        // frame, but each window still redraws only its own damaged region — so
+        // while the water advances every tick, one window last redrew at step 100
+        // and its neighbour at step 150, and a small box around some updating
+        // text redrew this instant. The result is several different moments of
+        // the same simulation on screen at once: the "multiple layers", the hard
+        // cut-offs, and the invisible boxes around text that move when you resize
+        // (they are damage rectangles, and resizing redraws different ones).
+        //
+        // forceFull=true makes each glassed window redraw whole, so every surface
+        // shows the same instant of water.
+        for (auto& deco : g_pGlobalState->decorations) {
+            if (!deco) continue;
+            auto w = deco->getOwner();
+            if (w && w->m_isMapped)
+                g_pHyprRenderer->damageWindow(w, true);
+        }
+
         // 0.56 moved the monitor list off CCompositor into the state tracker;
         // g_pCompositor->m_monitors no longer exists.
         for (const auto& monitor : State::monitorState()->monitors()) {
