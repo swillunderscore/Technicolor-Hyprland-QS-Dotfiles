@@ -87,6 +87,11 @@ SDecorationPositioningInfo CGlassDecoration::getPositioningInfo() {
 void CGlassDecoration::onPositioningReply(const SDecorationPositioningReply& reply) {}
 
 void CGlassDecoration::draw(PHLMONITOR monitor, float const& alpha) {
+    if (const auto w = m_window.lock())
+        GlassRenderer::DBG_LOG("DRAWCALL win=%lx x=%.0f y=%.0f\n",
+                               reinterpret_cast<uintptr_t>(w.get()),
+                               w->positionAnimation()->value().x,
+                               w->positionAnimation()->value().y);
     if (!g_pGlobalState || !resolveEnabled())
         return;
 

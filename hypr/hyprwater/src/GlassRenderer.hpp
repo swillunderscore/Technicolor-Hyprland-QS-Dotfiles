@@ -15,6 +15,9 @@ void stepWaveSim();
 void renderTrailTex();
 void queueClickSplash();
 
+// Temporary tick-hunt instrumentation (no-op unless the debug log is armed).
+void DBG_LOG(const char* fmt, ...);
+
 inline constexpr int SAMPLE_PADDING_PX = 60;
 
 // Maximum downscale factor for blur sampling. Half-res (2) is 4x cheaper

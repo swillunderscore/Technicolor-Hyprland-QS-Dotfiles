@@ -9,12 +9,50 @@
 #include <chrono>
 #include <cmath>
 #include <drm_fourcc.h>
+#include <cstdarg>
+#include <unistd.h>
 #include <GLES3/gl32.h>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 
 namespace GlassRenderer {
+
+// TEMPORARY diagnostic logging (enabled by HYPRWATER_DEBUG_LOG in the
+// environment): timestamps of glass renders, window positions, sim steps and
+// trail renders, to correlate against frame captures. Remove after the
+// low-speed tick hunt.
+static FILE* dbgLog() {
+    static FILE* f = [] {
+        if (const char* p = getenv("HYPRWATER_DEBUG_LOG"))
+            return fopen(p, "w");
+        // A live session cannot be handed a new environment variable, so a
+        // trigger file works too: touch /tmp/hyprwater-debug, reload the
+        // plugin, read /tmp/hyprwater-debug.log.
+        if (access("/tmp/hyprwater-debug", F_OK) == 0)
+            return fopen("/tmp/hyprwater-debug.log", "w");
+        return static_cast<FILE*>(nullptr);
+    }();
+    return f;
+}
+static double dbgNow() {
+    using namespace std::chrono;
+    return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
+#define DBG(...) do { if (FILE* _f = dbgLog()) { fprintf(_f, __VA_ARGS__); fflush(_f); } } while (0)
+
+// Same sink, callable from the other translation units (timestamp prefixed).
+void DBG_LOG(const char* fmt, ...) {
+    FILE* f = dbgLog();
+    if (!f)
+        return;
+    fprintf(f, "%.4f ", dbgNow());
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fflush(f);
+}
 
 static GLuint fbId(const SP<Render::IFramebuffer>& framebuffer) {
     // dynamic_cast returns null for anything that is not a GL framebuffer, and
@@ -191,7 +229,7 @@ static void bindSimTexture(int unit, const SP<Render::IFramebuffer>& fb) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res, const float dt) {
+static void stepFluidAdvect(const SGlobalState::SDrag& dragNow, const int res, const float dt) {
     auto& st = *g_pGlobalState;
     const auto& fu = st.shaderManager.fluidUniforms;
     const float texel = 1.0f / res;
@@ -244,9 +282,32 @@ static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res, con
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 
-    // 3) Relax lap(q) = div. q is warm-started from the previous step, so the
-    //    iterations compound across frames instead of starting from scratch.
-    {
+    // 3+4) The pressure solve is QUEUED, not run. The 24 Jacobi iterations +
+    // gradient are a burst of GPU work that, injected into one frame on top
+    // of an already-heavy glass pass, blew the frame deadline on the real
+    // desktop — one dropped frame per sim step, which at low sim speed reads
+    // as the render ticking at exactly the step rate (and currents-off being
+    // perfectly smooth, since only currents carry the burst). runFluidSolve
+    // spends the queue: inline when steps arrive at frame rate, a few
+    // iterations per frame when steps are slower than frames.
+    st.fluidJacobiLeft = FLUID_JACOBI;
+    st.fluidNeedGrad   = true;
+}
+
+// Spend up to maxIters of the queued pressure solve, finishing with the
+// gradient subtraction when the last iteration lands. q is warm-started from
+// the previous step, so iterations compound instead of starting over. Until
+// the gradient fires, fluidVelCurrent holds the post-advect velocity —
+// slightly divergent, but fresher than the previous projected field and only
+// on screen for the few frames a spread solve takes. Assumes blend is off.
+static void runFluidSolve(const int res, const int maxIters) {
+    auto& st = *g_pGlobalState;
+    const auto& fu = st.shaderManager.fluidUniforms;
+    const float texel = 1.0f / res;
+
+    g_pHyprOpenGL->setViewport(0, 0, res, res);
+
+    if (st.fluidJacobiLeft > 0) {
         auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidJacobiShader);
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
         sh->setUniformInt(SHADER_TEX, 3);
@@ -254,16 +315,18 @@ static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res, con
         glUniform2f(fu.jTexelSize, texel, texel);
         glUniform1i(fu.jDivTex, 4);
         bindSimTexture(4, st.fluidDivFb);
-        for (int j = 0; j < FLUID_JACOBI; j++) {
+        const int n = std::min(st.fluidJacobiLeft, maxIters);
+        for (int j = 0; j < n; j++) {
             glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidPrsFb[1 - st.fluidPrsCurrent]));
             bindSimTexture(3, st.fluidPrsFb[st.fluidPrsCurrent]);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             st.fluidPrsCurrent = 1 - st.fluidPrsCurrent;
         }
+        st.fluidJacobiLeft -= n;
     }
 
-    // 4) Keep only the swirl.
-    {
+    // Keep only the swirl — once the iterations are all spent.
+    if (st.fluidJacobiLeft == 0 && st.fluidNeedGrad) {
         auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidGradientShader);
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
         sh->setUniformInt(SHADER_TEX, 3);
@@ -275,7 +338,43 @@ static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res, con
         bindSimTexture(4, st.fluidPrsFb[st.fluidPrsCurrent]);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         st.fluidVelCurrent = 1 - st.fluidVelCurrent;
+        st.fluidNeedGrad = false;
     }
+}
+
+// Per-FRAME slice of a spread-out solve, called from the glass pass next to
+// the trail render. 6 iterations a frame retires a step's 24 in ~4 frames —
+// far inside the ≥1 s between steps at the speeds where spreading engages.
+static void runFluidBudgetFrame() {
+    if (!g_pGlobalState)
+        return;
+    auto& st = *g_pGlobalState;
+    if (st.fluidJacobiLeft <= 0 && !st.fluidNeedGrad)
+        return;
+    if (!st.fluidDivFb || !st.fluidVelFb[0] || !st.fluidVelFb[1]
+        || !st.fluidPrsFb[0] || !st.fluidPrsFb[1] || fbId(st.fluidDivFb) == 0)
+        return;
+    // One slice per frame, not per glassed surface — same guard as the trail.
+    static std::chrono::steady_clock::time_point lastSlice{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastSlice < std::chrono::milliseconds(3))
+        return;
+    lastSlice = now;
+
+    GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
+
+    runFluidSolve(static_cast<int>(st.fluidDivFb->m_size.x), 6);
+    DBG("%.4f FLUIDB left=%d grad=%d\n", dbgNow(), st.fluidJacobiLeft,
+        static_cast<int>(st.fluidNeedGrad));
+
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
 }
 
 // A click is a TAP on the surface: a small round press-in at the cursor,
@@ -372,6 +471,7 @@ void renderTrailTex() {
     for (int i = 0; i < st.lastAbsCount; i++)
         put(st.lastAbs[i], 1.0f - st.waveSubFrac);
 
+    DBG("%.4f TRAIL n(pending)=%d subFrac=%.3f\n", dbgNow(), st.pendLen, st.waveSubFrac);
     auto sh = g_pHyprOpenGL->useShader(sm.trailShader);
     sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
     glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
@@ -416,6 +516,9 @@ void stepWaveSim() {
     // buys, so the simulation advances at a constant rate no matter how the
     // frames land — which also makes wave speed independent of refresh rate.
     int steps = 0;
+    // Steps per real second, hoisted for the fluid-solve scheduling below:
+    // steps slower than frames leave idle frames to spread the solve into.
+    double stepHz = 480.0;
     {
         using namespace std::chrono;
         // ANCHORED TO ABSOLUTE TIME, not to "elapsed since I was last called".
@@ -460,6 +563,7 @@ void stepWaveSim() {
         // dt" approach died exactly there.
         SUB = speed >= 0.4 ? 1 : (speed >= 0.15 ? 2 : 4);
         const double sub = STEP / SUB;
+        stepHz = 120.0 * SUB * speed;
 
         double pending = simTime - simDone;
         int n = static_cast<int>(pending / sub);
@@ -473,6 +577,8 @@ void stepWaveSim() {
         g_pGlobalState->waveSubFrac =
             static_cast<float>(std::clamp((simTime - simDone) / sub, 0.0, 1.0));
 
+        if (steps > 0)
+            DBG("%.4f STEP-BEGIN n=%d SUB=%d\n", dbgNow(), steps, SUB);
         if (steps <= 0)
             return;
     }
@@ -630,6 +736,9 @@ void stepWaveSim() {
                     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
                     glClear(GL_COLOR_BUFFER_BIT);
                 }
+                // Any solve queued against the old field is now moot.
+                st.fluidJacobiLeft = 0;
+                st.fluidNeedGrad   = false;
             }
         }
     }
@@ -770,12 +879,23 @@ void stepWaveSim() {
         // flat — momentum alone cannot raise water here, so without the dipole
         // a drag across calm water would be invisible.
         if (fluidOn) {
+            const int res = fluidRes();
+            // A solve still spreading from the previous step must land before
+            // this step advects through its field.
+            if (g_pGlobalState->fluidJacobiLeft > 0 || g_pGlobalState->fluidNeedGrad)
+                runFluidSolve(res, FLUID_JACOBI);
             // One force slot per step; the window's momentum outranks the
             // fingertip's. Whichever is skipped keeps its accumulation for a
             // later step.
-            stepFluidOnce(g_pGlobalState->drag.amount > 1e-5f
-                              ? g_pGlobalState->drag : g_pGlobalState->mouse,
-                          fluidRes(), 1.0f / (120.0f * SUB));
+            stepFluidAdvect(g_pGlobalState->drag.amount > 1e-5f
+                                ? g_pGlobalState->drag : g_pGlobalState->mouse,
+                            res, 1.0f / (120.0f * SUB));
+            // Steps at frame rate keep the pressure solve inline (spreading
+            // could never catch up); steps slower than frames leave it queued
+            // for the per-frame budget slice instead of bursting 25 draws
+            // into this frame — that burst was the low-speed tick.
+            if (stepHz >= 45.0)
+                runFluidSolve(res, FLUID_JACOBI);
             // The fluid passes bound their own programs; the wave uniforms set
             // above still live in the wave program's state, so rebinding is
             // all that is needed.
@@ -910,6 +1030,7 @@ void stepWaveSim() {
         g_pGlobalState->waveCurrent = 1 - g_pGlobalState->waveCurrent;
     }
 
+    DBG("%.4f STEP-DRAWS-DONE\n", dbgNow());
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);   // leave the active unit as the caller expects
@@ -1018,7 +1139,10 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         if (wOn) {
             stepWaveSim();
             // The trail pass renders per FRAME even when the sim does not
-            // step — that independence is the whole point.
+            // step — that independence is the whole point. Same for the
+            // fluid budget: it retires a queued pressure solve a slice per
+            // frame on the frames BETWEEN steps.
+            runFluidBudgetFrame();
             renderTrailTex();
         }
     }
@@ -1081,6 +1205,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         // Smoothed per-window velocity for the real-time bow wave. Rises fast
         // while dragging, decays over a few frames when the window stops, so
         // the crest melts back instead of vanishing.
+        DBG("%.4f GLASS fb=%lx x=%.1f y=%.1f mag=%.2f pend=%d\n",
+            dbgNow(), (unsigned long)id, here.x, here.y, mag, g_pGlobalState->pendLen);
         tr.smooth.x = tr.smooth.x * 0.75 + vel.x * 0.25;
         tr.smooth.y = tr.smooth.y * 0.75 + vel.y * 0.25;
         const double smag = std::sqrt(tr.smooth.x * tr.smooth.x + tr.smooth.y * tr.smooth.y);

@@ -89,6 +89,14 @@ struct SGlobalState {
     // interpolation between states (0 while currents are off).
     float flowDt = 0.0f;
 
+    // Deferred pressure solve: at low step rates the 24 Jacobi iterations +
+    // gradient are spread over frames instead of bursting into the step's
+    // frame — the burst was blowing the frame deadline on the real desktop
+    // (heavy caustics, two monitors, 1024²+ fluid) and dropping one frame per
+    // sim step: a tick at exactly the step rate, gone when currents are off.
+    int  fluidJacobiLeft = 0;
+    bool fluidNeedGrad   = false;
+
     // Logical desktop bounds, accumulated as monitors render (no compositor-
     // wide list is in scope here). Shared by the window-drag mapping and the
     // mouse-wake mapping so both live on the same sheet of water.
