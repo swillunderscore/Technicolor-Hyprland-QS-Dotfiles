@@ -3650,7 +3650,11 @@ PanelWindow {
                                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                         onPressed: function(mouse) { brDelegate.liveBrightness = Math.max(5, Math.min(100, Math.round(mouse.x / parent.width * 100))) }
                                         onPositionChanged: function(mouse) { if (pressed) { brDelegate.liveBrightness = Math.max(5, Math.min(100, Math.round(mouse.x / parent.width * 100))) } }
-                                        onReleased: { Quickshell.execDetached(["sh", "-c", "ddcutil setvcp 10 " + brDelegate.liveBrightness + " --bus " + brDelegate.monBus]); if (bar.ddcMonitors[index]) bar.ddcMonitors[index].brightness = brDelegate.liveBrightness }
+                                        // Also persist per-connector: some monitors forget
+                                        // their DDC brightness when the DP link dies with a
+                                        // crashed compositor, so the bar re-asserts the saved
+                                        // value at startup (see ddcDetectProc).
+                                        onReleased: { Quickshell.execDetached(["sh", "-c", "ddcutil setvcp 10 " + brDelegate.liveBrightness + " --bus " + brDelegate.monBus + "; printf %s " + brDelegate.liveBrightness + " > \"$HOME/.config/hypr/.ddc-brightness-" + modelData.name + "\""]); if (bar.ddcMonitors[index]) bar.ddcMonitors[index].brightness = brDelegate.liveBrightness }
                                     }
                                 }
                                 Text { text: brDelegate.liveBrightness + "%"; color: launcherShape.fg; font.pixelSize: isPrimary ? 10 : 8; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
@@ -5115,6 +5119,8 @@ PanelWindow {
     // Each entry: { name: "DP-1", bus: 7, brightness: 50 }. No hardcoded buses,
     // so this works on any machine with any number of DDC-capable monitors.
     property var ddcMonitors: []
+    property bool ddcRestored: false
+    Process { id: ddcRestoreProc; onRunningChanged: if (!running) bar.readAllBrightness() }
 
     function readAllBrightness() {
         if (!ddcMonitors.length) return
@@ -5158,6 +5164,23 @@ PanelWindow {
                     }
                 }
                 bar.ddcMonitors = mons
+                // First discovery of the session: re-assert each monitor's saved
+                // brightness before reading values back. Some monitors reset DDC
+                // brightness to 100 when the DP link drops uncleanly (compositor
+                // crash); the bar restarts with the session, so this restores the
+                // last slider value the user actually chose. Later re-detects
+                // (menu opens) skip this and just read, so OSD changes made
+                // mid-session aren't fought.
+                if (!bar.ddcRestored && mons.length) {
+                    bar.ddcRestored = true
+                    var cmd = ""
+                    for (var r = 0; r < mons.length; r++)
+                        cmd += "f=\"$HOME/.config/hypr/.ddc-brightness-" + mons[r].name + "\"; " +
+                               "if [ -f \"$f\" ]; then ddcutil setvcp 10 \"$(cat \"$f\")\" --bus " + mons[r].bus + "; fi; "
+                    ddcRestoreProc.command = ["bash", "-c", cmd]
+                    ddcRestoreProc.running = true
+                    return   // readAllBrightness runs when the restore finishes
+                }
                 bar.readAllBrightness()
             }
         }

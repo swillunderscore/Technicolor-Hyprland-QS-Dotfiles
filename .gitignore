@@ -16,6 +16,7 @@ quickshell/colors.env
 quickshell/colors-bar.env
 quickshell/launcher-apps.json
 hypr/.technicolor-version
+hypr/.ddc-brightness-*
 mako/config
 
 # Runtime state
