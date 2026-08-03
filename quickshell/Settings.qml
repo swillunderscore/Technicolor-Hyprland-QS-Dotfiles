@@ -996,6 +996,7 @@ FloatingWindow {
         { key: "shimmer:viscosity",     label: "Viscosity",    hint: "How thick the water is. LOW = thin: ripples persist, the surface stays busy, waves travel fast. HIGH = syrup: short waves die within moments, only long rollers survive, waves travel slower.", from: 0, to: 1,  def: 0.6,  step: 0 },
         { key: "shimmer:absorption",    label: "Water color", hint: "How much the water itself absorbs. 1.0 is the measured spectrum for pure water \u2014 strong in red, almost none in blue, which is why depth turns things blue. 0 makes the water colourless, which no real water is, but it is your desktop.", from: 0, to: 1,  def: 1.0,  step: 0 },
         { key: "shimmer:murk",          label: "Murk",         hint: "Suspended silt. Particles block what is behind them AND scatter stray light at you, so murky water washes toward a pale haze rather than going dark. Colourless at source \u2014 large particles scatter all wavelengths equally, same reason fog is white.", from: 0, to: 1,  def: 0.0,  step: 0 },
+        { key: "shimmer:drag",          label: "Drag force",   hint: "How much water a window shoves aside as you move it. The disturbance is a dipole as wide as the window \u2014 water piles against the advancing face and a trough behind it fills back in \u2014 and what it deposits follows the distance dragged, not how fast you dragged it. Zero leaves the surface alone.", from: 0, to: 1,  def: 0.35, step: 0 },
     ]
 
     // Log-scaled sliders. A linear 0.002..3 track spends ~99% of its travel

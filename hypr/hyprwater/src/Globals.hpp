@@ -45,7 +45,7 @@ struct SGlobalState {
     // or fall behind. This accumulates how far an edge has swept since the last
     // step and spends the lot in one go, which also makes the total depend on
     // DISTANCE covered rather than on how long the drag took.
-    struct SDrag { float x = 0, y = 0, dx = 0, dy = 0, amount = 0; };
+    struct SDrag { float x = 0, y = 0, dx = 0, dy = 0, amount = 0, r = 0; };
     SDrag drag;
 
     // Layer surface glass state (one per tracked layer, keyed by raw pointer).

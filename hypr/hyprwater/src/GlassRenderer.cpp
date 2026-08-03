@@ -392,7 +392,7 @@ void stepWaveSim() {
             // Spend everything the drag has built up, as one dipole.
             auto& dg = g_pGlobalState->drag;
             glUniform2f(u.impulseDir, dg.dx, dg.dy);
-            glUniform4f(u.impulse, dg.x, dg.y, 0.045f, dg.amount);
+            glUniform4f(u.impulse, dg.x, dg.y, dg.r > 0.0f ? dg.r : 0.045f, dg.amount);
             dg.amount = 0.0f;
         } else {
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
@@ -595,7 +595,17 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             dg.y  = static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105);
             dg.dx = static_cast<float>(vel.x / mag);
             dg.dy = static_cast<float>(vel.y / mag);
-            dg.amount = std::min(dg.amount + static_cast<float>(mag) * 0.00035f, 0.05f);
+            // The disturbance is as wide as the window, because the whole
+            // advancing face is what pushes the water. A fixed small radius put
+            // a blob in the middle of the window instead of a front along its
+            // edge, which is why it looked like it came from the wrong place.
+            const double halfW = rawBox.width / std::max(desk.x, 1.0)
+                               * 0.85 * sc * 2.0 * 0.105 * 0.5;
+            dg.r = static_cast<float>(std::clamp(halfW * 0.9, 0.02, 0.16));
+            const float force = g_pGlobalState->config.shimmerDrag
+                              ? static_cast<float>(**g_pGlobalState->config.shimmerDrag) : 0.35f;
+            dg.amount = std::min(dg.amount + static_cast<float>(mag) * 0.00035f * force,
+                                 0.05f * std::max(force, 0.05f));
         }
     }
 
