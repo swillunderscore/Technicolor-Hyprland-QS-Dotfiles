@@ -569,6 +569,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                     cfg.shimmerDepth ? static_cast<float>(**cfg.shimmerDepth) : 1.0f);
         glUniform1f(uniforms.waveSubFrac, g_pGlobalState->waveSubFrac);
         glUniform1f(uniforms.waveBias, g_pGlobalState->waveBias);
+        glUniform1f(uniforms.shimmerAbsorption,
+                    cfg.shimmerAbsorption ? static_cast<float>(**cfg.shimmerAbsorption) : 1.0f);
         glUniform1f(uniforms.shimmerMurk,
                     cfg.shimmerMurk ? static_cast<float>(**cfg.shimmerMurk) : 0.0f);
         glUniform1i(uniforms.shimmerLightFromBackdrop,

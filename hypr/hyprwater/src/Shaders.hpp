@@ -69,6 +69,7 @@ uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
+uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colourless water
 uniform float waveBias;       // storage offset used by the simulation
 
 in vec2 v_texcoord;
@@ -578,7 +579,7 @@ void main() {
     // only honest default for a coefficient is its measured value.
     // ========================================
     if (shimmerIntensity > 0.001) {
-        const vec3 ABSORB = vec3(0.340, 0.0565, 0.0092);
+        const vec3 ABSORB = vec3(0.340, 0.0565, 0.0092) * shimmerAbsorption;
         float path = 2.0 * max(shimmerDepth, 0.0);
 
         // MURK is scattering rather than absorption, and the two do different
@@ -589,7 +590,7 @@ void main() {
         // is why fog and milk are white, not blue -- so the veil is neutral at
         // source and only picks up colour from the water it then travels
         // through.
-        float b = shimmerMurk * 0.9;
+        float b = shimmerMurk * 2.5;
         vec3  trans = exp(-(ABSORB + vec3(b)) * path);
         // Scattered light averages about half the path before reaching you.
         vec3  veil  = exp(-ABSORB * path * 0.5) * (1.0 - exp(-b * path));

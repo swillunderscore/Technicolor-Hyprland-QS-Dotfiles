@@ -993,8 +993,9 @@ FloatingWindow {
         { key: "shimmer:scale",         label: "Wave size",    hint: "Size of the waves, and so of the cells between the bright lines. Larger waves also means fewer of them across a window.", from: 0.2, to: 3, def: 1.0, step: 0 },
         { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. Logarithmic, so most of the travel is spent down in the barely-moving range. Slow stays smooth: below 1x each step advances the physics less rather than stepping less often.", from: 0.002, to: 3, def: 1.0, step: 0, log: true },
         { key: "shimmer:agitation",     label: "Activity",     hint: "How busy the water is \u2014 how often something disturbs it, and how hard. Far left is a still pool crossed by a stray ripple every several seconds; far right is a crowded one. The scale is geometric, so the calm end has as much travel as the busy end.", from: 0, to: 1,  def: 0.5,  step: 0 },
-        { key: "shimmer:viscosity",     label: "Viscosity",    hint: "How thick the water is.\n\nLOW — thin, like water. Small ripples stick around once something makes them, so the surface stays busy and detailed, and waves travel fast.\n\nHIGH — thick, like syrup. Short waves are eaten within moments of appearing, so only long smooth rollers survive and the surface goes glassy between them. Waves also travel slower.\n\n(The speed part is a solver limit rather than physics \u2014 real viscosity damps waves without changing how fast they move.)", from: 0, to: 1,  def: 0.6,  step: 0 },
-        { key: "shimmer:murk",          label: "Murk",         hint: "Suspended particles \u2014 silt, plankton, whatever is floating in it. Zero is distilled water.\n\nParticles do two things at once: they block what is behind them, and they kick stray light back at you. So murky water does not simply go dark, it loses contrast toward a pale haze, the way a lake looks on a bright day.\n\nThe haze is colourless at source. Large particles scatter every wavelength about equally \u2014 the same reason fog and milk are white \u2014 and it only picks up colour from the water it travels through afterwards.\n\n\u26a0 Combined with high depth this gets genuinely murky. Start low.", from: 0, to: 1,  def: 0.0,  step: 0 },
+        { key: "shimmer:viscosity",     label: "Viscosity",    hint: "How thick the water is. LOW = thin: ripples persist, the surface stays busy, waves travel fast. HIGH = syrup: short waves die within moments, only long rollers survive, waves travel slower.", from: 0, to: 1,  def: 0.6,  step: 0 },
+        { key: "shimmer:absorption",    label: "Water colour", hint: "How much the water itself absorbs. 1.0 is the measured spectrum for pure water \u2014 strong in red, almost none in blue, which is why depth turns things blue. 0 makes the water colourless, which no real water is, but it is your desktop.", from: 0, to: 1,  def: 1.0,  step: 0 },
+        { key: "shimmer:murk",          label: "Murk",         hint: "Suspended silt. Particles block what is behind them AND scatter stray light at you, so murky water washes toward a pale haze rather than going dark. Colourless at source \u2014 large particles scatter all wavelengths equally, same reason fog is white.", from: 0, to: 1,  def: 0.0,  step: 0 },
     ]
 
     // Log-scaled sliders. A linear 0.002..3 track spends ~99% of its travel
@@ -2361,7 +2362,10 @@ FloatingWindow {
                                 delegate: Item {
                                     id: shRow
                                     required property var modelData
-                                    width: fxCol.width; height: 78
+                                    // Height follows the hint instead of being a fixed 78.
+                                    // Any hint longer than one line used to wrap out of the row
+                                    // and print on top of the next control.
+                                    width: fxCol.width; height: 46 + shHint.implicitHeight + 14
                                     property real val: modelData.def
                                     Connections { target: win; function onGlassValuesChanged() { shRow.val = win.glassValue(shRow.modelData) } }
                                     Item {
@@ -2391,7 +2395,8 @@ FloatingWindow {
                                         onCommitted: (v) => win.glassSet(shRow.modelData.key, shRow.val)
                                     }
                                     Text {
-                                        width: parent.width; y: 44; wrapMode: Text.WordWrap
+                                        id: shHint
+                                        width: parent.width; y: 46; wrapMode: Text.WordWrap
                                         text: shRow.modelData.hint || ""
                                         color: win.fg; opacity: 0.42; font.pixelSize: 10; font.family: win.ff
                                         lineHeight: 1.15

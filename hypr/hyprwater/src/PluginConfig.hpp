@@ -65,6 +65,7 @@ inline constexpr auto SHIMMER_DEPTH             = "plugin:hyprwater:shimmer:dept
 inline constexpr auto SHIMMER_AGITATION         = "plugin:hyprwater:shimmer:agitation";
 inline constexpr auto SHIMMER_VISCOSITY         = "plugin:hyprwater:shimmer:viscosity";
 inline constexpr auto SHIMMER_MURK              = "plugin:hyprwater:shimmer:murk";
+inline constexpr auto SHIMMER_ABSORPTION        = "plugin:hyprwater:shimmer:absorption";
 inline constexpr auto SHIMMER_BED               = "plugin:hyprwater:shimmer:bed_variation";
 inline constexpr auto LAYERS_NAMESPACES         = "plugin:hyprwater:layers:namespaces";
 inline constexpr auto LAYERS_EXCLUDE_NAMESPACES = "plugin:hyprwater:layers:exclude_namespaces";
@@ -199,6 +200,7 @@ struct SPluginConfig {
     Hyprlang::FLOAT* const* shimmerAgitation           = nullptr;
     Hyprlang::FLOAT* const* shimmerViscosity           = nullptr;
     Hyprlang::FLOAT* const* shimmerMurk                = nullptr;
+    Hyprlang::FLOAT* const* shimmerAbsorption          = nullptr;
     Hyprlang::FLOAT* const* shimmerBed                 = nullptr;
     StringConfigPtr       layersNamespaces;
     StringConfigPtr       layersExcludeNamespaces;
