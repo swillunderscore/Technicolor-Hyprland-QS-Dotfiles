@@ -542,13 +542,19 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     // seam.
     Vector2D monOff{0.0, 0.0};
     Vector2D desk{1920.0, 1080.0};
+    // The origin counts from the far left of ALL monitors, so the reference
+    // width must too. Dividing by ONE monitor's width while measuring from the
+    // desktop's left edge pushed second-monitor windows far outside the field,
+    // near where waves are born, so they saw their sources from much closer.
+    // Bounds accumulate as each monitor renders, so no compositor-wide list is
+    // needed here.
+    static Vector2D deskMax{1920.0, 1080.0};
     if (const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock()) {
         monOff = mon->m_position;
-        // Reference size is this monitor's, not the whole desktop bounding box:
-        // it keeps the wave scale identical on screens of different sizes, and
-        // the origin offset already keeps the sheet continuous across them.
-        desk   = mon->m_size;
+        deskMax.x = std::max(deskMax.x, mon->m_position.x + mon->m_size.x);
+        deskMax.y = std::max(deskMax.y, mon->m_position.y + mon->m_size.y);
     }
+    desk = deskMax;
     // rawBox, not transformedBox: rawBox is what gets projected to the target,
     // so it is the one carrying the window's real position. transformedBox is
     // relative to the sampled framebuffer, which is window-sized and therefore
@@ -566,32 +572,41 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     // on the side the water would pile up against.
     {
         const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
-        static std::unordered_map<uint64_t, std::pair<Vector2D, Vector2D>> track;
-        // Position is a good enough identity here: two windows cannot share one.
+        static std::unordered_map<uint64_t, Vector2D> track;
         const uint64_t id = static_cast<uint64_t>(rawBox.width) * 100000ULL
                           + static_cast<uint64_t>(rawBox.height);
         auto& prev = track[id];
-        const Vector2D vel{here.x - prev.first.x, here.y - prev.first.y};
-        const Vector2D acc{vel.x - prev.second.x, vel.y - prev.second.y};
-        prev = {here, vel};
+        Vector2D vel{here.x - prev.x, here.y - prev.y};
+        prev = here;
 
-        const double mag = std::sqrt(acc.x * acc.x + acc.y * acc.y);
-        // Ignore the teleport when a window first appears or jumps workspace.
-        if (mag > 0.6 && mag < 220.0 && g_pGlobalState->sloshQueue.size() < 8) {
-            const Vector2D c{here.x + rawBox.width * 0.5, here.y + rawBox.height * 0.5};
-            Vector2D g{(c.x - desk.x * 0.5) / std::max(desk.x, 1.0),
-                       (c.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
+        const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+        // The acceleration that matters is THE WATER'S, not the window's.
+        // A moving edge takes water that is sitting still and shoves it from
+        // rest to moving, and it keeps doing that for as long as it is moving,
+        // so the forcing tracks edge SPEED. Measuring the window's own
+        // acceleration was the wrong body entirely: a steady drag has almost
+        // none, so it fired for one frame at each end of the motion and read as
+        // nothing happening at all.
+        if (mag > 0.8 && mag < 260.0) {
             const float sc = g_pGlobalState->config.shimmerScale
                            ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
-            // Same mapping the shader uses, then into simulation space.
-            Vector2D wp{0.5 + g.x * 0.85 * sc, 0.5 + g.y * 0.85 * sc};
-            // Behind the motion: the water piles against the wall it is left by.
-            const double inv = -0.25 / std::max(mag, 1e-6);
+            const Vector2D dir{vel.x / mag, vel.y / mag};
+            // The LEADING edge displaces the water, so the push starts at the
+            // face moving into it rather than at the window's middle.
+            const Vector2D lead{here.x + rawBox.width  * (0.5 + dir.x * 0.5),
+                                here.y + rawBox.height * (0.5 + dir.y * 0.5)};
+            const Vector2D g{(lead.x - desk.x * 0.5) / std::max(desk.x, 1.0),
+                             (lead.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
+            const Vector2D wp{0.5 + g.x * 0.85 * sc, 0.5 + g.y * 0.85 * sc};
+            // Wide and shallow: an edge shoves a broad front, unlike the
+            // compact splash a falling object makes.
             g_pGlobalState->sloshQueue.push_back(
-                {static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105 + acc.x * inv * 0.02),
-                 static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105 + acc.y * inv * 0.02),
-                 0.030f,
-                 static_cast<float>(std::min(mag * 0.010, 0.22))});
+                {static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105),
+                 static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105),
+                 0.055f,
+                 static_cast<float>(std::min(0.03 + mag * 0.006, 0.20))});
+            if (g_pGlobalState->sloshQueue.size() > 6)
+                g_pGlobalState->sloshQueue.erase(g_pGlobalState->sloshQueue.begin());
         }
     }
     glUniform2f(uniforms.deskSize,
