@@ -118,22 +118,21 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
 //  Small grid on purpose: 512x512 costs ~260k texels x 5 taps once per frame,
 //  which is nothing beside the caustic pass running over every glass pixel.
 // ============================================================================
-// Push a finished stroke segment into the pending ring. On overflow the two
-// oldest merge into one chord — the tail is old news, and coarsening it far
-// from the whip's live end is invisible; dropping motion would not be.
-static void pushPendStroke(const SGlobalState::SDrag& s) {
+// Push a finished stroke segment into the pending ring. A FULL ring REFUSES
+// the push (returns false) and the caller keeps extending its live segment
+// instead: a lengthening chord is CONTINUOUS, so trail fidelity degrades
+// smoothly under saturation. The earlier policy merged the two oldest
+// segments into a chord — a discrete geometry snap that fired many times a
+// second during a hard whip at ultra-low sim speed (one absorption step per
+// SECOND at speed 0.002), which was exactly the residual jitter the user
+// kept seeing on window and mouse drags while clicks stayed smooth.
+static bool pushPendStroke(const SGlobalState::SDrag& s) {
     auto& st = *g_pGlobalState;
-    if (st.pendLen == SGlobalState::PEND_RING) {
-        auto& a = st.pendRing[st.pendHead];
-        auto& b = st.pendRing[(st.pendHead + 1) % SGlobalState::PEND_RING];
-        b.px = a.px;
-        b.py = a.py;
-        b.amount = std::min(a.amount + b.amount, 0.12f);
-        st.pendHead = (st.pendHead + 1) % SGlobalState::PEND_RING;
-        st.pendLen--;
-    }
+    if (st.pendLen == SGlobalState::PEND_RING)
+        return false;
     st.pendRing[(st.pendHead + st.pendLen) % SGlobalState::PEND_RING] = s;
     st.pendLen++;
+    return true;
 }
 
 // Shared by the wave step and the fluid passes: draw one quad over the whole
@@ -303,7 +302,10 @@ void queueClickSplash() {
     ck.y  = static_cast<float>(0.5 + g.y * 0.85 * sc * 2.0 * 0.105);
     ck.dx = 0.0f;   // zero direction = the shader's ROUND splash, not a dipole
     ck.dy = 0.0f;
-    ck.r  = 0.016f;
+    // A touch wider than the wake radius: short wavelengths carry the square
+    // grid's residual anisotropy (the faint 4-cornered ring the user spotted)
+    // and a broader tap simply emits fewer of them.
+    ck.r  = 0.022f;
     // Rapid clicks stack a little, capped: a drum-roll is a bigger splash,
     // not an unbounded one. Mostly slider-proportional with only a whisper of
     // a floor — the first cut had a fat constant base, which at a low slider
@@ -364,6 +366,7 @@ void renderTrailTex() {
     for (int i = 0; i < st.pendLen; i++)
         put(st.pendRing[(st.pendHead + i) % SGlobalState::PEND_RING], 1.0f);
     put(st.drag, 1.0f);
+    put(st.mouse, 1.0f);   // the cursor's live stroke rides the trail too
     // The strokes absorbed by the current sim step fade here at exactly the
     // complement of the crossfade their texture copies are arriving with.
     for (int i = 0; i < st.lastAbsCount; i++)
@@ -514,6 +517,16 @@ void stepWaveSim() {
             mk.r  = 0.010f;
             mk.amount = std::min(mk.amount + static_cast<float>(mag) * 0.00012f * mforce,
                                  0.012f * std::max(mforce, 0.05f));
+            // The mouse wake goes through the SAME ring and analytic trail as
+            // window drags. It previously spent straight into the sim — which
+            // renders at the STEP rate, i.e. once per second at the bottom of
+            // the speed slider: the cursor's wake was a 1 Hz slideshow while
+            // window wakes were smooth. Same physics, same pipeline.
+            if (std::hypot(mk.x - mk.px, mk.y - mk.py) > 0.009f && pushPendStroke(mk)) {
+                mk.px = mk.x;
+                mk.py = mk.y;
+                mk.amount = 0.0f;
+            }
         }
     }
 
@@ -865,12 +878,6 @@ void stepWaveSim() {
                 st2.pendHead = (st2.pendHead + 1) % SGlobalState::PEND_RING;
                 st2.pendLen--;
             }
-            if (st2.mouse.amount > 1e-5f && ns < 8) {
-                slot(st2.mouse, 0.010f, false);
-                st2.mouse.px = st2.mouse.x;
-                st2.mouse.py = st2.mouse.y;
-                st2.mouse.amount = 0.0f;
-            }
             glUniform4fv(u.sSeg, 8, seg);
             glUniform4fv(u.sPar, 8, par);
         }
@@ -1148,8 +1155,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // at ANY sim speed — subdividing only at sim steps turned the
             // trail into step-rate chords whose tails teleported (the tick
             // the user kept catching at minimum speed).
-            if (std::hypot(dg.x - dg.px, dg.y - dg.py) > std::max(0.9f * dg.r, 0.004f)) {
-                pushPendStroke(dg);
+            if (std::hypot(dg.x - dg.px, dg.y - dg.py) > std::max(0.9f * dg.r, 0.004f)
+                && pushPendStroke(dg)) {
                 dg.px = dg.x;
                 dg.py = dg.y;
                 dg.amount = 0.0f;
