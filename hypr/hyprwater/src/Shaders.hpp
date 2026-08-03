@@ -560,7 +560,19 @@ void main() {
             float lum = dot(lit, vec3(0.2126, 0.7152, 0.0722));
             // Still biased toward highlights: focused light comes from the
             // bright parts, not the average.
-            color += lit * c * shimmerIntensity * (0.35 + 1.15 * lum);
+            vec3 gain    = c * shimmerIntensity * (0.35 + 1.15 * lum);
+            vec3 boosted = color * max(vec3(0.0), 1.0 + gain);
+            // A vein may brighten a pixel to the ceiling OF ITS OWN COLOR,
+            // never past it into white. The old additive form clipped every
+            // strong vein to (1,1,1) — and pure white carries no trace of the
+            // backdrop, so bright veins read as light pasted ON TOP of the
+            // image instead of light coming THROUGH it (the user saw exactly
+            // this: over a light wallpaper the bright parts stopped looking
+            // like they came from the light stuff behind). Normalising by the
+            // max channel keeps the hue exact: the backdrop stays the only
+            // lamp, however hard the water focuses it.
+            float m = max(boosted.r, max(boosted.g, boosted.b));
+            color = boosted / max(1.0, m);
         } else {
             // Independent light: a plain warm source, for when the backdrop is
             // too dark to carry the effect (or a future explicit light).
