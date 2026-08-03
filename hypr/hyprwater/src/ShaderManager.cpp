@@ -42,8 +42,7 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.waveTexel                = glGetUniformLocation(program, "waveTexel");
     glassUniforms.winWake                  = glGetUniformLocation(program, "winWake");
     glassUniforms.winRectSim               = glGetUniformLocation(program, "winRectSim");
-    glassUniforms.pendSeg                  = glGetUniformLocation(program, "pendSeg[0]");
-    glassUniforms.pendPar                  = glGetUniformLocation(program, "pendPar[0]");
+    glassUniforms.trailTex                 = glGetUniformLocation(program, "trailTex");
     glassUniforms.waveBias           = glGetUniformLocation(program, "waveBias");
     glassUniforms.shimmerMurk        = glGetUniformLocation(program, "shimmerMurk");
     glassUniforms.shimmerAbsorption  = glGetUniformLocation(program, "shimmerAbsorption");
@@ -123,6 +122,23 @@ bool CShaderManager::compileWaveSimShader() {
     return true;
 }
 
+bool CShaderManager::compileTrailShader() {
+    if (!trailShader->createProgram(
+            g_pHyprOpenGL->m_shaders->TEXVERTSRC,
+            loadShaderSource("trail.frag"),
+            true
+        )) {
+        HyprlandAPI::addNotification(PHANDLE,
+            std::format("[{}] Failed to compile trail shader", PLUGIN_NAME),
+            CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        return false;
+    }
+    const auto program = trailShader->program();
+    trailUniforms.tSeg = glGetUniformLocation(program, "tSeg[0]");
+    trailUniforms.tPar = glGetUniformLocation(program, "tPar[0]");
+    return true;
+}
+
 bool CShaderManager::compileFluidShaders() {
     SP<CShader>* shaders[] = {&fluidAdvectShader, &fluidDivergenceShader,
                               &fluidJacobiShader, &fluidGradientShader};
@@ -177,6 +193,9 @@ void CShaderManager::initializeIfNeeded() {
     if (!compileFluidShaders())
         return;
 
+    if (!compileTrailShader())
+        return;
+
     m_initialized = true;
 }
 
@@ -184,6 +203,7 @@ void CShaderManager::destroy() noexcept {
     glassShader->destroy();
     blurShader->destroy();
     waveSimShader->destroy();
+    trailShader->destroy();
     fluidAdvectShader->destroy();
     fluidDivergenceShader->destroy();
     fluidJacobiShader->destroy();

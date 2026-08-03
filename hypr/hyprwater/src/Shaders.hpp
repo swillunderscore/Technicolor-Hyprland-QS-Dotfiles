@@ -77,12 +77,12 @@ uniform float waveTexel;     // 1 / simulation grid size, for the C1 read
 // is the part that must never lag or tick.
 uniform vec4 winWake;        // xy = drag direction, z = strength (0 at rest)
 uniform vec4 winRectSim;     // xy = window centre, zw = half-extents (sim uv)
-// Recent drag strokes, rendered analytically until the sim absorbs them —
-// oldest first, live head last. Rendering a short TRAIL rather than only the
-// newest segment is what keeps a fast curved whip smooth at low sim speed:
-// one segment per rare step chopped the curve into visible ticks.
-uniform vec4 pendSeg[7];     // xy = stroke start, zw = stroke end (sim uv)
-uniform vec4 pendPar[7];     // xy = direction, z = radius, w = amplitude
+// The analytic stroke trail, pre-rendered once per frame into its own
+// texture (trail.frag) in the same sim-uv domain as waveTex. Strokes are
+// subdivided by DISTANCE as the window moves — independent of the sim step
+// rate — so a hard whip at minimum speed stays a fine smooth curve instead
+// of a chain of step-rate chords.
+uniform sampler2D trailTex;
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
 // Where this window sits on the desktop, and how big the desktop is, both in
@@ -258,27 +258,14 @@ float waveH(vec2 q) {
     // at ANY simulation speed, instead of ticking once per rare step. This is
     // the piece sub-stepping alone could not provide at the bottom of the
     // speed slider.
-    for (int pi = 0; pi < 7; pi++) {
-        // Slot 6 is the stroke the sim absorbed THIS step: it keeps rendering
-        // analytically at exactly the complement of the crossfade weight its
-        // texture copy is fading in with, so their sum is constant and the
-        // handoff is invisible. Without this, every absorption dipped the wake
-        // for one sub-step — the residual "tick" the user's video caught at
-        // the simulation step rate.
-        float aw = (pi == 6) ? pendPar[pi].w * (1.0 - waveSubFrac) : pendPar[pi].w;
-        if (aw == 0.0) continue;
-        vec2  A2  = pendSeg[pi].xy;
-        vec2  AB2 = pendSeg[pi].zw - A2;
-        float l22 = dot(AB2, AB2);
-        float t2  = l22 > 1e-12 ? clamp(dot(uv - A2, AB2) / l22, 0.0, 1.0) : 0.0;
-        vec2  r2  = uv - (A2 + t2 * AB2);
-        float alo = dot(r2, pendPar[pi].xy);
-        float acr = dot(r2, vec2(-pendPar[pi].y, pendPar[pi].x));
-        float ra2 = max(pendPar[pi].z, 1e-5);
-        float rb2 = ra2 * 3.5;
-        h += aw * (alo / ra2)
-           * exp(-(alo * alo) / (ra2 * ra2) - (acr * acr) / (rb2 * rb2)) * 2.0;
-    }
+    // One texture read instead of a per-stencil-tap capsule loop: the trail
+    // pass already summed every segment this frame, including the
+    // just-absorbed one at its crossfade complement. Y-FLIPPED on purpose:
+    // the trail FBO's row order is mirrored relative to this shader's uv
+    // (verified empirically — a top-edge drag rendered its wake at the
+    // bottom until this flip; the sim texture avoids the issue only because
+    // it writes and reads itself with the same convention).
+    h += texture(trailTex, vec2(uv.x, 1.0 - uv.y)).r;
     return h;
 }
 
@@ -1191,6 +1178,43 @@ void main() {
     vec2 v = texture(tex, uv).rg
            - vec2(qR - qL, qU - qD) / (2.0 * texelSize.x);
     fragColor = vec4(v, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"trail.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// THE ANALYTIC STROKE TRAIL, summed once per FRAME into a texture the glass
+// shader reads with a single tap. Strokes are subdivided by DISTANCE as the
+// window moves, so this is a fine polyline of the drag path no matter how
+// slowly the simulation itself is stepping — evaluating ~26 capsules per
+// texel once per frame here is far cheaper than doing it inside every
+// stencil tap of the caustic pass, and it puts no ceiling on trail length.
+uniform vec4 tSeg[26];   // xy = start, zw = end (sim uv)
+uniform vec4 tPar[26];   // xy = direction, z = radius, w = amplitude
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2  uv = v_texcoord;
+    float h  = 0.0;
+    for (int i = 0; i < 26; i++) {
+        if (tPar[i].w == 0.0) continue;
+        vec2  A  = tSeg[i].xy;
+        vec2  AB = tSeg[i].zw - A;
+        float l2 = dot(AB, AB);
+        float t  = l2 > 1e-12 ? clamp(dot(uv - A, AB) / l2, 0.0, 1.0) : 0.0;
+        vec2  r  = uv - (A + t * AB);
+        float alo = dot(r, tPar[i].xy);
+        float acr = dot(r, vec2(-tPar[i].y, tPar[i].x));
+        float ra  = max(tPar[i].z, 1e-5);
+        float rb  = ra * 3.5;
+        h += tPar[i].w * (alo / ra)
+           * exp(-(alo * alo) / (ra * ra) - (acr * acr) / (rb * rb)) * 2.0;
+    }
+    fragColor = vec4(h, 0.0, 0.0, 1.0);
 }
 )GLSL"},
 

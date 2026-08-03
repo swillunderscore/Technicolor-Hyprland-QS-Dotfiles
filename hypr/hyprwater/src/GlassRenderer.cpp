@@ -118,6 +118,24 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
 //  Small grid on purpose: 512x512 costs ~260k texels x 5 taps once per frame,
 //  which is nothing beside the caustic pass running over every glass pixel.
 // ============================================================================
+// Push a finished stroke segment into the pending ring. On overflow the two
+// oldest merge into one chord — the tail is old news, and coarsening it far
+// from the whip's live end is invisible; dropping motion would not be.
+static void pushPendStroke(const SGlobalState::SDrag& s) {
+    auto& st = *g_pGlobalState;
+    if (st.pendLen == SGlobalState::PEND_RING) {
+        auto& a = st.pendRing[st.pendHead];
+        auto& b = st.pendRing[(st.pendHead + 1) % SGlobalState::PEND_RING];
+        b.px = a.px;
+        b.py = a.py;
+        b.amount = std::min(a.amount + b.amount, 0.12f);
+        st.pendHead = (st.pendHead + 1) % SGlobalState::PEND_RING;
+        st.pendLen--;
+    }
+    st.pendRing[(st.pendHead + st.pendLen) % SGlobalState::PEND_RING] = s;
+    st.pendLen++;
+}
+
 // Shared by the wave step and the fluid passes: draw one quad over the whole
 // target, no window geometry involved.
 static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
@@ -291,6 +309,78 @@ void queueClickSplash() {
     // a floor — the first cut had a fat constant base, which at a low slider
     // made every click dwarf the wake it was supposed to accompany.
     ck.amount = std::min(ck.amount + 0.012f + 0.06f * mforce, 0.20f);
+}
+
+// Sum the analytic stroke trail into its own texture, once per FRAME — the
+// trail moves with the window every frame, unlike the sim. ~26 capsules per
+// texel evaluated ONCE here beats evaluating them inside all ~26 stencil taps
+// of every caustic pixel, and puts no ceiling on how finely a whip is traced.
+void renderTrailTex() {
+    auto& st = *g_pGlobalState;
+    auto& sm = st.shaderManager;
+    if (!sm.isInitialized())
+        return;
+
+    using namespace std::chrono;
+    static steady_clock::time_point last{};
+    const auto now = steady_clock::now();
+    if (duration_cast<microseconds>(now - last).count() < 3000)
+        return;   // several glassed surfaces per frame; render once
+    last = now;
+
+    if (!st.trailFb)
+        st.trailFb = g_pHyprRenderer->createFB("hyprwater-trail");
+    static uint32_t fmt = DRM_FORMAT_ABGR16161616F;
+    if (st.trailFb->m_size.x != SIM || st.trailFb->m_size.y != SIM) {
+        st.trailFb->alloc(SIM, SIM, fmt);
+        if (!st.trailFb->getTexture() || fbId(st.trailFb) == 0) {
+            // UNORM fallback loses the trough half (no negatives) — degraded
+            // but functional, and matches the sim's own fallback policy.
+            fmt = DRM_FORMAT_ABGR8888;
+            st.trailFb->alloc(SIM, SIM, fmt);
+        }
+    }
+    if (!st.trailFb->getTexture() || fbId(st.trailFb) == 0)
+        return;
+
+    GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+
+    float seg[104] = {0}, par[104] = {0};
+    int   n = 0;
+    auto put = [&](const SGlobalState::SDrag& s, float wScale) {
+        if (n >= 26 || s.amount <= 1e-5f || wScale <= 0.0f)
+            return;
+        const float ra  = s.r > 0.0f ? s.r : 0.045f;
+        const float len = std::hypot(s.x - s.px, s.y - s.py);
+        seg[n * 4 + 0] = s.px; seg[n * 4 + 1] = s.py;
+        seg[n * 4 + 2] = s.x;  seg[n * 4 + 3] = s.y;
+        par[n * 4 + 0] = s.dx; par[n * 4 + 1] = s.dy;
+        par[n * 4 + 2] = ra;
+        par[n * 4 + 3] = wScale * s.amount / (1.0f + 0.6f * len / ra);
+        n++;
+    };
+    for (int i = 0; i < st.pendLen; i++)
+        put(st.pendRing[(st.pendHead + i) % SGlobalState::PEND_RING], 1.0f);
+    put(st.drag, 1.0f);
+    // The stroke absorbed by the current sim step fades here at exactly the
+    // complement of the crossfade its texture copy is arriving with.
+    put(st.lastAbsorbed, 1.0f - st.waveSubFrac);
+
+    auto sh = g_pHyprOpenGL->useShader(sm.trailShader);
+    sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+    glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
+    glUniform4fv(sm.trailUniforms.tSeg, 26, seg);
+    glUniform4fv(sm.trailUniforms.tPar, 26, par);
+    g_pHyprOpenGL->setViewport(0, 0, SIM, SIM);
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.trailFb));
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
 }
 
 void stepWaveSim() {
@@ -753,17 +843,7 @@ void stepWaveSim() {
             // curved whip at low sim speed stays a smooth polyline instead of
             // ticking in one chunk per rare step.
             if (st2.drag.amount > 1e-5f) {
-                if (st2.pendLen < SGlobalState::PEND_RING) {
-                    st2.pendRing[(st2.pendHead + st2.pendLen) % SGlobalState::PEND_RING] = st2.drag;
-                    st2.pendLen++;
-                } else {
-                    // Ring starved (ambient fires stole absorption steps):
-                    // extend the newest entry rather than dropping motion.
-                    auto& nw = st2.pendRing[(st2.pendHead + st2.pendLen - 1) % SGlobalState::PEND_RING];
-                    nw.x  = st2.drag.x;  nw.y  = st2.drag.y;
-                    nw.dx = st2.drag.dx; nw.dy = st2.drag.dy;
-                    nw.amount = std::min(nw.amount + st2.drag.amount, 0.08f);
-                }
+                pushPendStroke(st2.drag);
                 st2.drag.px = st2.drag.x;
                 st2.drag.py = st2.drag.y;
                 st2.drag.amount = 0.0f;
@@ -926,8 +1006,12 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         const auto& wcfg = g_pGlobalState->config;
         const bool wOn = wcfg.shimmerEnabled && **wcfg.shimmerEnabled != 0
                       && wcfg.shimmerIntensity && **wcfg.shimmerIntensity > 0.0;
-        if (wOn)
+        if (wOn) {
             stepWaveSim();
+            // The trail pass renders per FRAME even when the sim does not
+            // step — that independence is the whole point.
+            renderTrailTex();
+        }
     }
 
     auto shader = g_pHyprOpenGL->useShader(shaderManager.glassShader);
@@ -1011,44 +1095,9 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                         static_cast<float>(std::max(rawBox.width  * 0.5 * kk, 1e-4)),
                         static_cast<float>(std::max(rawBox.height * 0.5 * kk, 1e-4)));
 
-            // Analytic stroke trail: the ring of not-yet-absorbed strokes plus
-            // the live head, oldest first. Uploaded AFTER stepWaveSim ran, so
-            // this is the true post-absorption state and each handoff frame is
-            // seamless.
-            {
-                float seg[28] = {0}, par[28] = {0};
-                int   n = 0;
-                auto put = [&](const SGlobalState::SDrag& s) {
-                    if (n >= 7 || s.amount <= 1e-5f) return;
-                    const float ra  = s.r > 0.0f ? s.r : 0.045f;
-                    const float len = std::hypot(s.x - s.px, s.y - s.py);
-                    seg[n * 4 + 0] = s.px; seg[n * 4 + 1] = s.py;
-                    seg[n * 4 + 2] = s.x;  seg[n * 4 + 3] = s.y;
-                    par[n * 4 + 0] = s.dx; par[n * 4 + 1] = s.dy;
-                    par[n * 4 + 2] = ra;
-                    par[n * 4 + 3] = s.amount / (1.0f + 0.6f * len / ra);
-                    n++;
-                };
-                const auto& st3 = *g_pGlobalState;
-                for (int i = 0; i < st3.pendLen && i < 5; i++)
-                    put(st3.pendRing[(st3.pendHead + i) % SGlobalState::PEND_RING]);
-                put(st3.drag);
-                // Slot 6 is RESERVED for the just-absorbed stroke — the
-                // shader weights it by (1 - waveSubFrac) so absorption never
-                // dips the wake.
-                {
-                    const auto& la = st3.lastAbsorbed;
-                    if (la.amount > 1e-5f) {
-                        const float ra  = la.r > 0.0f ? la.r : 0.045f;
-                        const float len = std::hypot(la.x - la.px, la.y - la.py);
-                        seg[24] = la.px; seg[25] = la.py; seg[26] = la.x; seg[27] = la.y;
-                        par[24] = la.dx; par[25] = la.dy; par[26] = ra;
-                        par[27] = la.amount / (1.0f + 0.6f * len / ra);
-                    }
-                }
-                glUniform4fv(uniforms.pendSeg, 7, seg);
-                glUniform4fv(uniforms.pendPar, 7, par);
-            }
+            // (The analytic stroke trail is no longer uploaded here — it is
+            // summed into its own texture once per frame by renderTrailTex,
+            // and the glass shader reads it with a single tap.)
         }
         // A toggle, not a force slider: windows either sit in the water or
         // they don't. Position tracking above still runs while off, so
@@ -1091,6 +1140,18 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             constexpr float force = 0.35f;
             dg.amount = std::min(dg.amount + static_cast<float>(mag) * 0.00035f * force,
                                  0.05f * force);
+            // Subdivide by DISTANCE, per frame: once the live segment is
+            // about a radius of arc long, commit it to the ring and start a
+            // new one at its end. This keeps a hard whip a fine smooth curve
+            // at ANY sim speed — subdividing only at sim steps turned the
+            // trail into step-rate chords whose tails teleported (the tick
+            // the user kept catching at minimum speed).
+            if (std::hypot(dg.x - dg.px, dg.y - dg.py) > std::max(0.9f * dg.r, 0.004f)) {
+                pushPendStroke(dg);
+                dg.px = dg.x;
+                dg.py = dg.y;
+                dg.amount = 0.0f;
+            }
         }
     }
 
@@ -1162,6 +1223,22 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
                 glActiveTexture(GL_TEXTURE0);
                 glUniform1i(uniforms.waveTex, 2);
+            }
+            // The analytic stroke trail, freshly summed this frame. Unit 5 —
+            // 0 backdrop, 1 layer mask, 2 water, 3/4 sim internals. The
+            // uniform is set UNCONDITIONALLY: if it defaulted to unit 0 the
+            // height read would add the BACKDROP's red channel to the water.
+            // An unbound unit 5 samples as zero, which is merely a flat trail.
+            glUniform1i(uniforms.trailTex, 5);
+            auto& tfb = g_pGlobalState->trailFb;
+            if (tfb && tfb->getTexture()) {
+                glActiveTexture(GL_TEXTURE5);
+                tfb->getTexture()->bind();
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glActiveTexture(GL_TEXTURE0);
             }
         }
     }

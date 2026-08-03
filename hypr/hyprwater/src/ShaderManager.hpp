@@ -17,8 +17,7 @@ struct SGlassUniforms {
     GLint waveTexel                = -1;
     GLint winWake                  = -1;
     GLint winRectSim               = -1;
-    GLint pendSeg                  = -1;
-    GLint pendPar                  = -1;
+    GLint trailTex                 = -1;
     GLint waveBias                 = -1;
     GLint shimmerMurk              = -1;
     GLint shimmerAbsorption        = -1;
@@ -70,6 +69,11 @@ struct SWaveSimUniforms {
 
 // One struct for all four Stable Fluids passes, prefixed by pass:
 // a = advect, d = divergence, j = jacobi, g = gradient.
+struct STrailUniforms {
+    GLint tSeg = -1;
+    GLint tPar = -1;
+};
+
 struct SFluidUniforms {
     GLint aDt          = -1;
     GLint aDissipation = -1;
@@ -98,6 +102,9 @@ class CShaderManager {
     SP<CShader>      waveSimShader = makeShared<CShader>();
     SWaveSimUniforms waveSimUniforms;
 
+    SP<CShader>    trailShader = makeShared<CShader>();
+    STrailUniforms trailUniforms;
+
     SP<CShader>    fluidAdvectShader     = makeShared<CShader>();
     SP<CShader>    fluidDivergenceShader = makeShared<CShader>();
     SP<CShader>    fluidJacobiShader     = makeShared<CShader>();
@@ -112,4 +119,5 @@ class CShaderManager {
     [[nodiscard]] bool compileBlurShader();
     [[nodiscard]] bool compileWaveSimShader();
     [[nodiscard]] bool compileFluidShaders();
+    [[nodiscard]] bool compileTrailShader();
 };

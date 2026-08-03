@@ -63,7 +63,13 @@ struct SGlobalState {
     // the glass shader while they wait to be absorbed into the simulation
     // (oldest at pendHead). Absorbing only the tail — long after the eye has
     // moved on — is what keeps a fast curved whip smooth at low sim speed.
-    static constexpr int PEND_RING = 6;
+    // Strokes are subdivided by DISTANCE as the window moves (per frame, not
+    // per sim step), so a hard whip at minimum sim speed produces many fine
+    // segments — the ring must hold a second or two of them. Rendering cost
+    // is constant regardless: the trail is summed into its own texture once
+    // per frame (trailFb), and the glass shader reads one tap.
+    static constexpr int PEND_RING = 24;
+    SP<Render::IFramebuffer> trailFb;
     SDrag pendRing[PEND_RING];
     int   pendHead = 0;
     int   pendLen  = 0;

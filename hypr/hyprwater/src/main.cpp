@@ -423,6 +423,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_pGlobalState->fluidDivFb.reset();
     g_pGlobalState->fluidVelCurrent = 0;
     g_pGlobalState->fluidPrsCurrent = 0;
+    g_pGlobalState->trailFb.reset();
 
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassPassElement");
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerPassElement");
