@@ -594,10 +594,38 @@ void main() {
         // is why fog and milk are white, not blue -- so the veil is neutral at
         // source and only picks up color from the water it then travels
         // through.
-        float b = shimmerMurk * 2.5;
+        float b     = shimmerMurk * 2.5;
         vec3  trans = exp(-(ABSORB + vec3(b)) * path);
         // Scattered light averages about half the path before reaching you.
         vec3  veil  = exp(-ABSORB * path * 0.5) * (1.0 - exp(-b * path));
+
+        // SCATTERING MOVES LIGHT SIDEWAYS. That is the whole mechanism, and
+        // without it this term was a global multiply plus a constant add --
+        // arithmetic identical to a levels adjustment, which is why it read as
+        // a gamma filter rather than as water. A particle does not dim the
+        // point behind it, it takes light that was heading somewhere else and
+        // sends it here, so what you see at any point is a MIX of its
+        // surroundings. That spatial mixing is why murk makes things hazy
+        // instead of merely pale.
+        //
+        // The width of that mixing grows with how far light travels through
+        // the particles, so it scales with murk AND depth, exactly like the
+        // veil does. Four taps on a ring is a crude point-spread function, but
+        // it is a spatial one, which the previous version was not at all.
+        if (b * path > 0.01) {
+            float r = min(0.5 * b * path, 6.0) * 0.004;
+            vec2  tp = uvG + domeUV;
+            vec3  around = sampleBlurred(tp + vec2( r,  r)).rgb
+                         + sampleBlurred(tp + vec2(-r,  r)).rgb
+                         + sampleBlurred(tp + vec2( r, -r)).rgb
+                         + sampleBlurred(tp + vec2(-r, -r)).rgb;
+            around *= 0.25;
+            // How much of what you see arrived by scattering rather than
+            // straight through. Same exponential as the veil, because it is
+            // the same light.
+            float mixed = 1.0 - exp(-b * path * 0.5);
+            color = mix(color, around, clamp(mixed, 0.0, 0.85));
+        }
 
         color = color * trans + veil;
     }
