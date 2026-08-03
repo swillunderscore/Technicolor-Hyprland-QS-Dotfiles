@@ -202,7 +202,6 @@ static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
 //  numpy prototype first: vortex dipole forms behind a drag, a wave packet is
 //  carried at the current's speed, and 4000 steps stay bounded.
 // ============================================================================
-static constexpr int FLUID_JACOBI = 24;
 static constexpr int SIM          = 1024;   // height-field grid
 
 // Grid size comes from shimmer:currents_resolution (default 512). At 512 the
@@ -229,26 +228,159 @@ static void bindSimTexture(int unit, const SP<Render::IFramebuffer>& fb) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-static void stepFluidAdvect(const SGlobalState::SDrag& dragNow, const int res, const float dt) {
+// THE FLUID RUNS CONTINUOUSLY, DECOUPLED FROM THE WAVE STEPS. It used to
+// advance once per WAVE step, which at low sim speed meant a whole second of
+// whip momentum landed in the field as one lump: the water's apparent motion
+// surged in step-rate beats even though every frame rendered on time — the
+// low-speed "tick" that survived every frame-timing check. Now the fluid
+// integrates a micro-step of simulated time (elapsed real time × speed) at a
+// fixed real-time cadence, so momentum enters the frame it happens and the
+// velocity the glass reads never jumps. Cost is FLAT versus sim speed:
+// 9 passes per tick instead of 27 per wave step (which at normal speeds was
+// 27 × 48..480 steps/s).
+//
+// Numerical note: more ticks per second means more semi-Lagrangian resampling
+// smear, which is why the cadence is ~33 Hz and not the frame rate — the old
+// code at NORMAL speeds ran 48-480 resamples/s and the eddies looked right,
+// so 33/s is safely inside the proven regime. 33 Hz also puts force arrival
+// at 30 ms granularity, far below anything the eye reads as a beat.
+static constexpr int    FLUID_JACOBI_TICK = 4;      // warm-started: ~130 iters/s
+static constexpr double FLUID_TICK_S      = 0.030;  // ~33 Hz ceiling
+// Simulated seconds that must accrue before a FORCE-FREE tick is worth doing.
+// Below this the advection offset is a fraction of a texel (velocities run
+// ~0.01-0.6 uv/s, a 2048 texel is 4.9e-4 uv) — i.e. the pass would resample
+// the field onto itself and change nothing, so idle water at low speed simply
+// waits. This is what keeps the continuous tick CHEAPER than the old
+// per-wave-step burst rather than more expensive.
+static constexpr double FLUID_IDLE_SIM_S  = 2.0e-4;
+
+static void stepFluidFrame() {
+    if (!g_pGlobalState)
+        return;
     auto& st = *g_pGlobalState;
+    const auto& cfg = st.config;
+
+    const bool currentsOn = cfg.shimmerCurrents && **cfg.shimmerCurrents != 0;
+    const double speed = cfg.shimmerSpeed
+        ? std::clamp(static_cast<double>(**cfg.shimmerSpeed), 0.0, 4.0) : 1.0;
+    // Same fp16 requirement as the wave field: velocity is SIGNED and small.
+    // The wave alloc already decided the format; follow it.
+    const bool fp16 = st.waveFb[0] && st.waveFb[0]->m_drmFormat == DRM_FORMAT_ABGR16161616F;
+    static bool currentsWere = false;
+    static double pendingSim = 0.0;
+    if (!currentsOn || !fp16 || speed <= 0.0) {
+        st.flowDt = 0.0f;
+        currentsWere = false;   // so re-enabling starts from still water
+        pendingSim = 0.0;
+        return;
+    }
+
+    // The glass shader's advected interpolation slides by ONE WAVE STEP's
+    // advection (that is what separates the two sim states it blends).
+    // Published before the cadence gates below so the glass never loses the
+    // field on a frame this function returns early from.
+    const int SUB = speed >= 0.4 ? 1 : (speed >= 0.15 ? 2 : 4);
+    st.flowDt = 1.0f / (120.0f * SUB);
+
+    // At most one tick per 30 ms, however many glassed surfaces call in.
+    static std::chrono::steady_clock::time_point lastTick{};
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed = std::chrono::duration<double>(now - lastTick).count();
+    if (elapsed < FLUID_TICK_S)
+        return;
+    lastTick = now;
+
+    // Simulated time waiting to be integrated. Capped so a stall integrates a
+    // bounded amount instead of replaying itself as one big lurch. Time keeps
+    // ACCUMULATING across skipped ticks, so the dissipation and advection a
+    // skipped tick would have applied are not lost, just deferred.
+    pendingSim += std::min(elapsed, 0.25) * speed;
+    const bool haveForce = st.fluidForceWin.amount > 1e-6f
+                        || st.fluidForceMouse.amount > 1e-6f;
+    if (!haveForce && pendingSim < FLUID_IDLE_SIM_S)
+        return;
+    const float dt = static_cast<float>(pendingSim);
+    pendingSim = 0.0;
+
+    // Projection is only needed when new momentum arrived: a divergence-free
+    // field advected by itself stays (to first order) divergence-free, so an
+    // unforced tick is just advect + dissipate — one pass instead of seven.
+    // The periodic cleanup mops up the second-order divergence semi-Lagrangian
+    // advection does introduce. Idle water therefore costs LESS than the old
+    // per-wave-step burst did, and the full solve is spent where it is
+    // actually visible: while something is stirring the pool.
+    static int cleanupCountdown = 0;
+    const bool doProject = haveForce || --cleanupCountdown <= 0;
+    if (doProject)
+        cleanupCountdown = 8;
+
+    // Save the caller's target FIRST: the housekeeping below binds and clears
+    // fluid FBOs, and saving after it would "restore" the caller onto one of
+    // them — every glass draw after that would land in the fluid texture.
+    GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+
+    // FBO housekeeping (moved from the wave step so it happens even on frames
+    // where the slow sim does not advance). Changing the resolution key live
+    // just reallocates and restarts the field from still water.
+    const int res = fluidRes();
+    {
+        bool freshFluid = !currentsWere;   // stale field from before the toggle
+        currentsWere = true;
+        SP<Render::IFramebuffer>* fbs[] = {&st.fluidVelFb[0], &st.fluidVelFb[1],
+                                           &st.fluidPrsFb[0], &st.fluidPrsFb[1],
+                                           &st.fluidDivFb};
+        const char* names[] = {"hyprwater-vel-a", "hyprwater-vel-b",
+                               "hyprwater-prs-a", "hyprwater-prs-b",
+                               "hyprwater-div"};
+        for (size_t i = 0; i < std::size(names); i++) {
+            auto& fb = *fbs[i];
+            if (!fb) {
+                DBG("%.4f FLUIDHK create %s\n", dbgNow(), names[i]);
+                fb = g_pHyprRenderer->createFB(names[i]);
+            }
+            if (!fb) {
+                st.flowDt = 0.0f;
+                return;
+            }
+            if (fb->m_size.x != res || fb->m_size.y != res) {
+                DBG("%.4f FLUIDHK alloc %s %d\n", dbgNow(), names[i], res);
+                fb->alloc(res, res, DRM_FORMAT_ABGR16161616F);
+                freshFluid = true;
+            }
+            if (!fb->getTexture() || fbId(fb) == 0) {
+                st.flowDt = 0.0f;
+                return;
+            }
+        }
+        if (freshFluid) {
+            // Zero is genuinely zero here (still water, no pressure), unlike
+            // the height textures whose flat state is the bias value.
+            for (auto* fb : fbs) {
+                glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
+            DBG("%.4f FLUIDHK cleared\n", dbgNow());
+        }
+    }
+
     const auto& fu = st.shaderManager.fluidUniforms;
     const float texel = 1.0f / res;
 
-    // Snapshot the last completed field before this step overwrites it: the
-    // glass cross-fades prev→current by waveSubFrac so the advected
-    // interpolation's slide RATE is continuous across the step boundary.
-    // Without it the whip's per-step momentum lump changes the water's
-    // apparent motion in step-rate beats even though every frame renders.
-    if (st.fluidVelPrevFb && fbId(st.fluidVelPrevFb) != 0
-        && static_cast<int>(st.fluidVelPrevFb->m_size.x) == res) {
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(st.fluidVelFb[st.fluidVelCurrent]));
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(st.fluidVelPrevFb));
-        glBlitFramebuffer(0, 0, res, res, 0, 0, res, res, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    }
-
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
     g_pHyprOpenGL->setViewport(0, 0, res, res);
 
-    // 1) Advect the velocity by itself + inject the drag's momentum + bleed.
+    // One force slot per tick; the window's momentum outranks the fingertip's.
+    // Whichever is skipped keeps its accumulation for the next tick (28 ms
+    // away, not a wave step away).
+    auto& fw = st.fluidForceWin;
+    auto& fm = st.fluidForceMouse;
+    auto& dragNow = fw.amount > 1e-6f ? fw : fm;
+    const float spentForce = dragNow.amount;
+
+    // 1) Advect the velocity by itself + inject the momentum + bleed.
     {
         auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidAdvectShader);
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
@@ -258,20 +390,19 @@ static void stepFluidAdvect(const SGlobalState::SDrag& dragNow, const int res, c
         // ~4 s momentum half-life on top of what the projection and the
         // semi-Lagrangian interpolation already dissipate: eddies outlive the
         // drag that made them by a few seconds, then the water goes still.
-        // Per-step retention follows the sub-step size so the half-life is a
-        // property of simulated time, not of how finely it is sliced.
+        // Retention follows dt so the half-life is a property of simulated
+        // time, not of how finely it is sliced.
         glUniform1f(fu.aDissipation, std::pow(0.998f, dt * 120.0f));
-        if (dragNow.amount > 1e-5f) {
-            // Same spot, direction and window-width radius as the height
-            // dipole this step will fire — the dipole is the bow wave, this is
-            // the momentum the hull leaves in the water. The dipole amplitude
-            // (~0.002-0.05 per spend) maps to a peak velocity kick of
-            // ~0.02-0.6 uv/s, the range the prototype showed makes visible
-            // swirls without outrunning the advection.
+        if (dragNow.amount > 1e-6f) {
+            // The force shader adds the splat WITHOUT a dt factor, so the
+            // per-second momentum total is the same whether it arrives as one
+            // wave-step lump (the old way) or as ~35 small spends (now) —
+            // the accumulators integrate distance either way.
             glUniform2f(fu.aForceDir, dragNow.dx, dragNow.dy);
             glUniform4f(fu.aForce, dragNow.x, dragNow.y,
                         dragNow.r > 0.0f ? dragNow.r : 0.045f,
                         dragNow.amount * 12.0f);
+            dragNow.amount = 0.0f;
         } else {
             glUniform2f(fu.aForceDir, 0.0f, 0.0f);
             glUniform4f(fu.aForce, 0.0f, 0.0f, 1.0f, 0.0f);
@@ -283,7 +414,7 @@ static void stepFluidAdvect(const SGlobalState::SDrag& dragNow, const int res, c
     }
 
     // 2) How much each cell is now being pumped or drained.
-    {
+    if (doProject) {
         auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidDivergenceShader);
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
         sh->setUniformInt(SHADER_TEX, 3);
@@ -294,32 +425,10 @@ static void stepFluidAdvect(const SGlobalState::SDrag& dragNow, const int res, c
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 
-    // 3+4) The pressure solve is QUEUED, not run. The 24 Jacobi iterations +
-    // gradient are a burst of GPU work that, injected into one frame on top
-    // of an already-heavy glass pass, blew the frame deadline on the real
-    // desktop — one dropped frame per sim step, which at low sim speed reads
-    // as the render ticking at exactly the step rate (and currents-off being
-    // perfectly smooth, since only currents carry the burst). runFluidSolve
-    // spends the queue: inline when steps arrive at frame rate, a few
-    // iterations per frame when steps are slower than frames.
-    st.fluidJacobiLeft = FLUID_JACOBI;
-    st.fluidNeedGrad   = true;
-}
-
-// Spend up to maxIters of the queued pressure solve, finishing with the
-// gradient subtraction when the last iteration lands. q is warm-started from
-// the previous step, so iterations compound instead of starting over. Until
-// the gradient fires, fluidVelCurrent holds the post-advect velocity —
-// slightly divergent, but fresher than the previous projected field and only
-// on screen for the few frames a spread solve takes. Assumes blend is off.
-static void runFluidSolve(const int res, const int maxIters) {
-    auto& st = *g_pGlobalState;
-    const auto& fu = st.shaderManager.fluidUniforms;
-    const float texel = 1.0f / res;
-
-    g_pHyprOpenGL->setViewport(0, 0, res, res);
-
-    if (st.fluidJacobiLeft > 0) {
+    // 3) Relax lap(q) = div. q is warm-started ACROSS ticks, so at ~35 Hz the
+    //    4 iterations here compound into ~130/s — more relaxation per second
+    //    than the old 24-per-wave-step ever delivered at low speed.
+    if (doProject) {
         auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidJacobiShader);
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
         sh->setUniformInt(SHADER_TEX, 3);
@@ -327,18 +436,16 @@ static void runFluidSolve(const int res, const int maxIters) {
         glUniform2f(fu.jTexelSize, texel, texel);
         glUniform1i(fu.jDivTex, 4);
         bindSimTexture(4, st.fluidDivFb);
-        const int n = std::min(st.fluidJacobiLeft, maxIters);
-        for (int j = 0; j < n; j++) {
+        for (int j = 0; j < FLUID_JACOBI_TICK; j++) {
             glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidPrsFb[1 - st.fluidPrsCurrent]));
             bindSimTexture(3, st.fluidPrsFb[st.fluidPrsCurrent]);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             st.fluidPrsCurrent = 1 - st.fluidPrsCurrent;
         }
-        st.fluidJacobiLeft -= n;
     }
 
-    // Keep only the swirl — once the iterations are all spent.
-    if (st.fluidJacobiLeft == 0 && st.fluidNeedGrad) {
+    // 4) Keep only the swirl.
+    if (doProject) {
         auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidGradientShader);
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
         sh->setUniformInt(SHADER_TEX, 3);
@@ -350,43 +457,84 @@ static void runFluidSolve(const int res, const int maxIters) {
         bindSimTexture(4, st.fluidPrsFb[st.fluidPrsCurrent]);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         st.fluidVelCurrent = 1 - st.fluidVelCurrent;
-        st.fluidNeedGrad = false;
     }
-}
 
-// Per-FRAME slice of a spread-out solve, called from the glass pass next to
-// the trail render. 6 iterations a frame retires a step's 24 in ~4 frames —
-// far inside the ≥1 s between steps at the speeds where spreading engages.
-static void runFluidBudgetFrame() {
-    if (!g_pGlobalState)
-        return;
-    auto& st = *g_pGlobalState;
-    if (st.fluidJacobiLeft <= 0 && !st.fluidNeedGrad)
-        return;
-    if (!st.fluidDivFb || !st.fluidVelFb[0] || !st.fluidVelFb[1]
-        || !st.fluidPrsFb[0] || !st.fluidPrsFb[1] || fbId(st.fluidDivFb) == 0)
-        return;
-    // One slice per frame, not per glassed surface — same guard as the trail.
-    static std::chrono::steady_clock::time_point lastSlice{};
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastSlice < std::chrono::milliseconds(3))
-        return;
-    lastSlice = now;
-
-    GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
-    glGetIntegerv(GL_VIEWPORT, prevVp);
-    g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
-
-    runFluidSolve(static_cast<int>(st.fluidDivFb->m_size.x), 6);
-    DBG("%.4f FLUIDB left=%d grad=%d\n", dbgNow(), st.fluidJacobiLeft,
-        static_cast<int>(st.fluidNeedGrad));
+    DBG("%.4f FLUIDTICK dt=%.5f force=%.4f proj=%d\n", dbgNow(), dt, spentForce,
+        static_cast<int>(doProject));
 
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
+}
+
+// ---- Mouse wake ----------------------------------------------------------
+// The cursor is a fingertip trailed in the pool: same distance-based
+// accumulator as a dragged window, mapped through the same desktop-space
+// formula so it disturbs the same sheet, but far lighter and far smaller.
+// Sampled once per FRAME. It used to be sampled inside the wave step — at
+// low sim speed that is once a SECOND: the wake became a 1 Hz polyline of
+// ≤400 px chords, and any brisk flick tripped the teleport guard and vanished
+// entirely. The cursor is real-time input; it must be sampled in real time.
+static void sampleMouseWake() {
+    if (!g_pGlobalState)
+        return;
+    // Once per frame, however many glassed surfaces call in.
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - last).count() < 0.003)
+        return;
+    last = now;
+
+    const auto& mcfg = g_pGlobalState->config;
+    const float mforce = mcfg.shimmerMouse
+                       ? std::clamp(static_cast<float>(**mcfg.shimmerMouse), 0.0f, 1.0f) : 0.0f;
+    static Vector2D prevCur{-1e9, -1e9};
+    const Vector2D cur = g_pInputManager ? g_pInputManager->getMouseCoordsInternal() : prevCur;
+    const Vector2D d{cur.x - prevCur.x, cur.y - prevCur.y};
+    prevCur = cur;
+    const double mag = std::sqrt(d.x * d.x + d.y * d.y);
+    // Ignore sub-pixel jitter and teleports (first sample, warps). Per-frame
+    // deltas make 400 px a genuine teleport again, not just a fast flick.
+    if (mforce > 0.001f && mag > 0.3 && mag < 400.0) {
+        const auto& desk = g_pGlobalState->deskMax;
+        const float sc = mcfg.shimmerScale
+                       ? static_cast<float>(**mcfg.shimmerScale) : 1.0f;
+        const Vector2D g{(cur.x - desk.x * 0.5) / std::max(desk.x, 1.0),
+                         (cur.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
+        auto& mk = g_pGlobalState->mouse;
+        const float mx = static_cast<float>(0.5 + g.x * 0.85 * sc * 2.0 * 0.105);
+        const float my = static_cast<float>(0.5 + g.y * 0.85 * sc * 2.0 * 0.105);
+        if (mk.amount <= 1e-6f) {
+            const float k = static_cast<float>(0.85 * sc * 2.0 * 0.105 / std::max(desk.x, 1.0));
+            mk.px = mx - static_cast<float>(d.x) * k;
+            mk.py = my - static_cast<float>(d.y) * k;
+        }
+        mk.x  = mx;
+        mk.y  = my;
+        mk.dx = static_cast<float>(d.x / mag);
+        mk.dy = static_cast<float>(d.y / mag);
+        // A fingertip, not a hull: ~10 sim texels wide, and per-pixel
+        // deposit about a third of a window's at full slider.
+        mk.r  = 0.010f;
+        mk.amount = std::min(mk.amount + static_cast<float>(mag) * 0.00012f * mforce,
+                             0.012f * std::max(mforce, 0.05f));
+        // The wake goes through the SAME ring and analytic trail as window
+        // drags: same physics, same pipeline, at any sim speed.
+        if (std::hypot(mk.x - mk.px, mk.y - mk.py) > 0.009f && pushPendStroke(mk)) {
+            mk.px = mk.x;
+            mk.py = mk.y;
+            mk.amount = 0.0f;
+        }
+        // And its momentum feeds the continuous fluid tick.
+        auto& ff = g_pGlobalState->fluidForceMouse;
+        ff.x  = mx;  ff.y = my;
+        ff.dx = mk.dx; ff.dy = mk.dy;
+        ff.r  = mk.r;
+        ff.amount = std::min(ff.amount + static_cast<float>(mag) * 0.00012f * mforce,
+                             0.012f * std::max(mforce, 0.05f));
+    }
 }
 
 // A click is a TAP on the surface: a small round press-in at the cursor,
@@ -528,9 +676,6 @@ void stepWaveSim() {
     // buys, so the simulation advances at a constant rate no matter how the
     // frames land — which also makes wave speed independent of refresh rate.
     int steps = 0;
-    // Steps per real second, hoisted for the fluid-solve scheduling below:
-    // steps slower than frames leave idle frames to spread the solve into.
-    double stepHz = 480.0;
     {
         using namespace std::chrono;
         // ANCHORED TO ABSOLUTE TIME, not to "elapsed since I was last called".
@@ -575,7 +720,6 @@ void stepWaveSim() {
         // dt" approach died exactly there.
         SUB = speed >= 0.4 ? 1 : (speed >= 0.15 ? 2 : 4);
         const double sub = STEP / SUB;
-        stepHz = 120.0 * SUB * speed;
 
         double pending = simTime - simDone;
         int n = static_cast<int>(pending / sub);
@@ -593,59 +737,6 @@ void stepWaveSim() {
             DBG("%.4f STEP-BEGIN n=%d SUB=%d\n", dbgNow(), steps, SUB);
         if (steps <= 0)
             return;
-    }
-
-    // ---- Mouse wake ------------------------------------------------------
-    // The cursor is a fingertip trailed in the pool: same distance-based
-    // accumulator as a dragged window, mapped through the same desktop-space
-    // formula so it disturbs the same sheet, but far lighter and far smaller.
-    // Sampled here (once per sim advance) rather than per surface — the cursor
-    // is global, there is nothing per-window about it.
-    {
-        const auto& mcfg = g_pGlobalState->config;
-        const float mforce = mcfg.shimmerMouse
-                           ? std::clamp(static_cast<float>(**mcfg.shimmerMouse), 0.0f, 1.0f) : 0.0f;
-        static Vector2D prevCur{-1e9, -1e9};
-        const Vector2D cur = g_pInputManager ? g_pInputManager->getMouseCoordsInternal() : prevCur;
-        const Vector2D d{cur.x - prevCur.x, cur.y - prevCur.y};
-        prevCur = cur;
-        const double mag = std::sqrt(d.x * d.x + d.y * d.y);
-        // Same sanity window as window drags: ignore sub-pixel jitter and
-        // teleports (first sample, warps).
-        if (mforce > 0.001f && mag > 0.3 && mag < 400.0) {
-            const auto& desk = g_pGlobalState->deskMax;
-            const float sc = mcfg.shimmerScale
-                           ? static_cast<float>(**mcfg.shimmerScale) : 1.0f;
-            const Vector2D g{(cur.x - desk.x * 0.5) / std::max(desk.x, 1.0),
-                             (cur.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
-            auto& mk = g_pGlobalState->mouse;
-            const float mx = static_cast<float>(0.5 + g.x * 0.85 * sc * 2.0 * 0.105);
-            const float my = static_cast<float>(0.5 + g.y * 0.85 * sc * 2.0 * 0.105);
-            if (mk.amount <= 1e-6f) {
-                const float k = static_cast<float>(0.85 * sc * 2.0 * 0.105 / std::max(desk.x, 1.0));
-                mk.px = mx - static_cast<float>(d.x) * k;
-                mk.py = my - static_cast<float>(d.y) * k;
-            }
-            mk.x  = mx;
-            mk.y  = my;
-            mk.dx = static_cast<float>(d.x / mag);
-            mk.dy = static_cast<float>(d.y / mag);
-            // A fingertip, not a hull: ~10 sim texels wide, and per-pixel
-            // deposit about a third of a window's at full slider.
-            mk.r  = 0.010f;
-            mk.amount = std::min(mk.amount + static_cast<float>(mag) * 0.00012f * mforce,
-                                 0.012f * std::max(mforce, 0.05f));
-            // The mouse wake goes through the SAME ring and analytic trail as
-            // window drags. It previously spent straight into the sim — which
-            // renders at the STEP rate, i.e. once per second at the bottom of
-            // the speed slider: the cursor's wake was a 1 Hz slideshow while
-            // window wakes were smooth. Same physics, same pipeline.
-            if (std::hypot(mk.x - mk.px, mk.y - mk.py) > 0.009f && pushPendStroke(mk)) {
-                mk.px = mk.x;
-                mk.py = mk.y;
-                mk.amount = 0.0f;
-            }
-        }
     }
 
     auto& fbA = g_pGlobalState->waveFb[0];
@@ -706,54 +797,12 @@ void stepWaveSim() {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevVp);
 
-    // ---- Currents: velocity-field housekeeping ---------------------------
-    // Gated on the half-float path: velocity is SIGNED and small, and unlike
-    // the height field it has no bias trick worth doing on a UNORM target —
-    // quantised velocity reads as the water jittering in place. No fallback,
-    // the toggle just does nothing on hardware that can't render to fp16.
-    bool fluidOn = fmt == DRM_FORMAT_ABGR16161616F
-                && g_pGlobalState->config.shimmerCurrents
-                && **g_pGlobalState->config.shimmerCurrents != 0;
-    {
-        static bool currentsWere = false;
-        bool freshFluid = fresh;
-        if (fluidOn && !currentsWere)
-            freshFluid = true;   // stale field from before the toggle flipped
-        currentsWere = fluidOn;
-        if (fluidOn) {
-            auto& st = *g_pGlobalState;
-            const int res = fluidRes();
-            SP<Render::IFramebuffer>* fbs[] = {&st.fluidVelFb[0], &st.fluidVelFb[1],
-                                               &st.fluidPrsFb[0], &st.fluidPrsFb[1],
-                                               &st.fluidDivFb, &st.fluidVelPrevFb};
-            const char* names[] = {"hyprwater-vel-a", "hyprwater-vel-b",
-                                   "hyprwater-prs-a", "hyprwater-prs-b",
-                                   "hyprwater-div", "hyprwater-vel-prev"};
-            for (size_t i = 0; i < std::size(names); i++) {
-                auto& fb = *fbs[i];
-                if (!fb)
-                    fb = g_pHyprRenderer->createFB(names[i]);
-                if (fb->m_size.x != res || fb->m_size.y != res) {
-                    fb->alloc(res, res, fmt);
-                    freshFluid = true;
-                }
-                if (!fb || !fb->getTexture() || fbId(fb) == 0)
-                    fluidOn = false;
-            }
-            // Zero is genuinely zero here (still water, no pressure), unlike
-            // the height textures whose flat state is the bias value.
-            if (fluidOn && freshFluid) {
-                for (auto* fb : fbs) {
-                    glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
-                    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                    glClear(GL_COLOR_BUFFER_BIT);
-                }
-                // Any solve queued against the old field is now moot.
-                st.fluidJacobiLeft = 0;
-                st.fluidNeedGrad   = false;
-            }
-        }
-    }
+    // The fluid itself lives on its own real-time tick (stepFluidFrame) —
+    // here the wave only needs to know whether a usable field exists to
+    // advect by. flowDt is published by the fluid tick.
+    const bool fluidOn = g_pGlobalState->flowDt > 0.0f
+                      && g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent]
+                      && g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent]->getTexture();
 
     const auto& u = shaderManager.waveSimUniforms;
     auto shader = g_pHyprOpenGL->useShader(shaderManager.waveSimShader);
@@ -865,7 +914,6 @@ void stepWaveSim() {
     // it, so a disabled field costs one compare and no texture read.
     glUniform1i(u.velTex, 4);
     glUniform1f(u.flowAdvect, fluidOn ? 1.0f / (120.0f * SUB) : 0.0f);
-    g_pGlobalState->flowDt = fluidOn ? 1.0f / (120.0f * SUB) : 0.0f;
     // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
     // in physics and wrong in use: at speed 0.002 it worked out to one
     // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is
@@ -882,37 +930,12 @@ void stepWaveSim() {
         if (!s0 || !s0->getTexture() || fbId(d0) == 0)
             break;
 
-        // Currents advance FIRST so this wave step reads the freshly projected
-        // field. The drag state is read here and spent (zeroed) by the wave
-        // impulse branch below — the same drag feeds both on the same step:
-        // the height dipole is the bow wave, the velocity splat is the
-        // momentum left in the water. The dipole stays even with currents on
-        // because a divergence-free field advecting a FLAT surface leaves it
-        // flat — momentum alone cannot raise water here, so without the dipole
-        // a drag across calm water would be invisible.
-        if (fluidOn) {
-            const int res = fluidRes();
-            // A solve still spreading from the previous step must land before
-            // this step advects through its field.
-            if (g_pGlobalState->fluidJacobiLeft > 0 || g_pGlobalState->fluidNeedGrad)
-                runFluidSolve(res, FLUID_JACOBI);
-            // One force slot per step; the window's momentum outranks the
-            // fingertip's. Whichever is skipped keeps its accumulation for a
-            // later step.
-            stepFluidAdvect(g_pGlobalState->drag.amount > 1e-5f
-                                ? g_pGlobalState->drag : g_pGlobalState->mouse,
-                            res, 1.0f / (120.0f * SUB));
-            // Steps at frame rate keep the pressure solve inline (spreading
-            // could never catch up); steps slower than frames leave it queued
-            // for the per-frame budget slice instead of bursting 25 draws
-            // into this frame — that burst was the low-speed tick.
-            if (stepHz >= 45.0)
-                runFluidSolve(res, FLUID_JACOBI);
-            // The fluid passes bound their own programs; the wave uniforms set
-            // above still live in the wave program's state, so rebinding is
-            // all that is needed.
-            shader = g_pHyprOpenGL->useShader(shaderManager.waveSimShader);
-        }
+        // The fluid no longer advances here — it integrates continuously on
+        // its own real-time tick (stepFluidFrame), so this step simply reads
+        // whatever the field currently is. The height dipole below stays even
+        // with currents on, because a divergence-free field advecting a FLAT
+        // surface leaves it flat — momentum alone cannot raise water here, so
+        // without the dipole a drag across calm water would be invisible.
         glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
         g_pHyprOpenGL->setViewport(0, 0, SIM, SIM);
 
@@ -1150,11 +1173,12 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                       && wcfg.shimmerIntensity && **wcfg.shimmerIntensity > 0.0;
         if (wOn) {
             stepWaveSim();
-            // The trail pass renders per FRAME even when the sim does not
-            // step — that independence is the whole point. Same for the
-            // fluid budget: it retires a queued pressure solve a slice per
-            // frame on the frames BETWEEN steps.
-            runFluidBudgetFrame();
+            // These three run per FRAME even when the slow sim does not
+            // step — that independence is the whole point: the cursor is
+            // real-time input, the fluid integrates real time, and the trail
+            // moves with the window.
+            sampleMouseWake();
+            stepFluidFrame();
             renderTrailTex();
         }
     }
@@ -1287,6 +1311,16 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             constexpr float force = 0.35f;
             dg.amount = std::min(dg.amount + static_cast<float>(mag) * 0.00035f * force,
                                  0.05f * force);
+            // Same motion, second ledger: momentum for the continuous fluid
+            // tick, spent every ~28 ms instead of once per wave step.
+            {
+                auto& ff = g_pGlobalState->fluidForceWin;
+                ff.x  = dg.x;  ff.y = dg.y;
+                ff.dx = dg.dx; ff.dy = dg.dy;
+                ff.r  = dg.r;
+                ff.amount = std::min(ff.amount + static_cast<float>(mag) * 0.00035f * force,
+                                     0.05f * force);
+            }
             // Subdivide by DISTANCE, per frame: once the live segment is
             // about a radius of arc long, commit it to the ring and start a
             // new one at its end. This keeps a hard whip a fine smooth curve
@@ -1391,21 +1425,12 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // forced to 0 whenever the texture is unusable so the shader
             // falls back to the plain crossfade.
             glUniform1i(uniforms.velTexG, 6);
-            glUniform1i(uniforms.velTexPrev, 7);
             auto& vfb = g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent];
-            auto& pfb = g_pGlobalState->fluidVelPrevFb;
-            const bool velOk = g_pGlobalState->flowDt > 0.0f && vfb && vfb->getTexture()
-                            && pfb && pfb->getTexture();
+            const bool velOk = g_pGlobalState->flowDt > 0.0f && vfb && vfb->getTexture();
             glUniform1f(uniforms.flowShift, velOk ? g_pGlobalState->flowDt : 0.0f);
             if (velOk) {
                 glActiveTexture(GL_TEXTURE6);
                 vfb->getTexture()->bind();
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glActiveTexture(GL_TEXTURE7);
-                pfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

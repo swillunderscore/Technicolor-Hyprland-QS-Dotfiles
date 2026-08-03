@@ -91,15 +91,6 @@ uniform sampler2D trailTex;
 // elapsed fraction of a step and the new state slid back by the remainder
 // makes advected water glide continuously between steps.
 uniform sampler2D velTexG;
-// The velocity field as it was BEFORE the latest sim step. The fluid only
-// changes once per step, and a whip's whole accumulated momentum lands in
-// that one step — so sliding by velTexG alone keeps positions continuous but
-// makes the slide RATE jump at every step boundary: at low sim speed the
-// water visibly surges in step-rate beats along the drag path (the tick that
-// survived every frame-timing check — currents off was smooth because there
-// is no dv at all, and clicks were smooth because taps inject no momentum).
-// Cross-fading prev→current by waveSubFrac makes the rate continuous too.
-uniform sampler2D velTexPrev;
 uniform float     flowShift;   // one step's advection time; 0 = currents off
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
@@ -246,10 +237,10 @@ float waveH(vec2 q) {
     float h;
     if (flowShift > 0.0) {
         // Advected interpolation (see velTexG above): slide, don't dissolve.
-        // The prev→current blend keeps d(offset)/dt continuous across step
-        // boundaries (see velTexPrev above).
-        vec2 dv = mix(texture(velTexPrev, uv).rg,
-                      texture(velTexG,   uv).rg, waveSubFrac) * flowShift;
+        // The velocity itself is continuous in time (the fluid integrates on
+        // a real-time tick, not per wave step), so sampling it directly is
+        // already smooth.
+        vec2 dv = texture(velTexG, uv).rg * flowShift;
         float hp = texture(waveTex, uv - dv * waveSubFrac).g - waveBias;
         float hc = texture(waveTex, uv + dv * (1.0 - waveSubFrac)).r - waveBias;
         h = mix(hp, hc, waveSubFrac);

@@ -19,7 +19,6 @@ struct SGlassUniforms {
     GLint winRectSim               = -1;
     GLint trailTex                 = -1;
     GLint velTexG                  = -1;
-    GLint velTexPrev               = -1;
     GLint flowShift                = -1;
     GLint waveBias                 = -1;
     GLint shimmerMurk              = -1;

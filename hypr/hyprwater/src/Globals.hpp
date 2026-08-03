@@ -89,13 +89,14 @@ struct SGlobalState {
     // interpolation between states (0 while currents are off).
     float flowDt = 0.0f;
 
-    // Deferred pressure solve: at low step rates the 24 Jacobi iterations +
-    // gradient are spread over frames instead of bursting into the step's
-    // frame — the burst was blowing the frame deadline on the real desktop
-    // (heavy caustics, two monitors, 1024²+ fluid) and dropping one frame per
-    // sim step: a tick at exactly the step rate, gone when currents are off.
-    int  fluidJacobiLeft = 0;
-    bool fluidNeedGrad   = false;
+    // Momentum accumulated for the CONTINUOUS fluid tick (stepFluidFrame):
+    // window and mouse motion recorded the frame it happens, spent by the
+    // next ~28 ms fluid tick. The fluid used to be forced once per WAVE step
+    // — a whole second of whip momentum landing as one lump at low sim speed,
+    // which made the water's apparent motion surge in step-rate beats no
+    // matter how smoothly the frames rendered.
+    SDrag fluidForceWin;
+    SDrag fluidForceMouse;
 
     // Logical desktop bounds, accumulated as monitors render (no compositor-
     // wide list is in scope here). Shared by the window-drag mapping and the
@@ -110,11 +111,6 @@ struct SGlobalState {
     SP<Render::IFramebuffer> fluidVelFb[2];
     SP<Render::IFramebuffer> fluidPrsFb[2];
     SP<Render::IFramebuffer> fluidDivFb;
-    // Snapshot of the last completed (projected) velocity, taken just before
-    // each step's advection overwrites it. The glass cross-fades prev→current
-    // by waveSubFrac so the advected interpolation's slide RATE stays
-    // continuous across step boundaries (see velTexPrev in liquidglass.frag).
-    SP<Render::IFramebuffer> fluidVelPrevFb;
     int fluidVelCurrent = 0;
     int fluidPrsCurrent = 0;
 
