@@ -3,6 +3,7 @@
 #include "Globals.hpp"
 
 #include <array>
+#include <cstdint>
 #include <unordered_map>
 #include <algorithm>
 #include <chrono>
@@ -571,8 +572,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     {
         const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
         static std::unordered_map<uint64_t, Vector2D> track;
-        const uint64_t id = static_cast<uint64_t>(rawBox.width) * 100000ULL
-                          + static_cast<uint64_t>(rawBox.height);
+        // Identity must be the WINDOW, not its shape. Keying on width/height
+        // meant two same-sized windows shared one entry, so each one's position
+        // overwrote the other's every frame and both produced huge fake
+        // velocities while sitting still -- waves from windows nobody touched,
+        // and none from the one being dragged. Each decoration owns its own
+        // sample framebuffer, so that pointer is a genuine per-window identity.
+        const uint64_t id = reinterpret_cast<uintptr_t>(sampleFramebuffer.get());
         auto& prev = track[id];
         const Vector2D vel{here.x - prev.x, here.y - prev.y};
         prev = here;
