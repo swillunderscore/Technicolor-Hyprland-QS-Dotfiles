@@ -755,6 +755,10 @@ uniform vec4  impulse;        // xy = position (uv), z = radius, w = strength
 // whole thing in one expression. Stretching the ellipse ACROSS that direction is
 // what makes it read as an edge sweeping through rather than a point source.
 uniform vec2  impulseDir;
+// Start of the stroke this impulse covers (== impulse.xy for point sources).
+// See the dipole branch: slow simulation + fast window = a long swept path
+// per step, deposited along the segment rather than stamped at its end.
+uniform vec2  impulseB;
 uniform float bedVariation;   // 0 = flat bottom, 1 = strongly uneven
 uniform float viscosity;      // how fast SHORT waves die relative to long ones
 uniform float maxSpeed;       // largest stable speed for THIS viscosity
@@ -808,18 +812,36 @@ void main() {
     float h      = c.r - hBias;
     float hPrev  = c.g - hBias;
 
-    // 5-point Laplacian. Sampling with clamped edges makes the boundary behave
-    // like a wall, so waves REFLECT instead of vanishing — that reflection is a
-    // large part of what makes a real pool look busy in a non-repeating way.
+    // 9-POINT ISOTROPIC Laplacian. The plain 5-point stencil is anisotropic at
+    // short wavelengths — waves travel at different speeds along the axes than
+    // along the diagonals — so under heavy agitation, cell-scale bumps get
+    // squared off into axis-aligned four-lobed shapes, which the caustic then
+    // prints as unnatural 2x2 "flowers" (the user spotted them immediately).
+    // The 9-point stencil is isotropic to fourth order; four more taps buys
+    // waves that do not know which way the texture grid points. Sampling with
+    // clamped edges still makes the boundary a reflecting wall.
     vec4 nL = texture(tex, uv + vec2(-texelSize.x, 0.0));
     vec4 nR = texture(tex, uv + vec2( texelSize.x, 0.0));
     vec4 nD = texture(tex, uv + vec2(0.0, -texelSize.y));
     vec4 nU = texture(tex, uv + vec2(0.0,  texelSize.y));
+    vec4 dA = texture(tex, uv + vec2(-texelSize.x, -texelSize.y));
+    vec4 dB = texture(tex, uv + vec2( texelSize.x, -texelSize.y));
+    vec4 dC = texture(tex, uv + vec2(-texelSize.x,  texelSize.y));
+    vec4 dE = texture(tex, uv + vec2( texelSize.x,  texelSize.y));
 
-    float l  = (nL.r + nR.r + nD.r + nU.r) - 4.0 * hBias - 4.0 * h;
-    // The same Laplacian one step back. It rides along in the .g channel of the
-    // four samples already taken, so it costs no extra reads.
-    float lp = (nL.g + nR.g + nD.g + nU.g) - 4.0 * hBias - 4.0 * hPrev;
+    float edge = (nL.r + nR.r + nD.r + nU.r) - 4.0 * hBias;
+    float corn = (dA.r + dB.r + dC.r + dE.r) - 4.0 * hBias;
+    float l    = (4.0 * edge + corn - 20.0 * h) / 6.0;
+    // The same Laplacian one step back. It rides along in the .g channel of
+    // the samples already taken, so it costs no extra reads.
+    float edgeP = (nL.g + nR.g + nD.g + nU.g) - 4.0 * hBias;
+    float cornP = (dA.g + dB.g + dC.g + dE.g) - 4.0 * hBias;
+    float lp    = (4.0 * edgeP + cornP - 20.0 * hPrev) / 6.0;
+    // Stability note: the 9-point operator's eigenvalues span [-16/3, 0]
+    // instead of the 5-point's [-8, 0], so every speed the CPU-side ceiling
+    // (derived for the 5-point) allows is strictly INSIDE the stable region
+    // here — verified numerically (scratchpad sweep: ceiling 0.75 - 2v vs the
+    // 5-point's ~0.49 - 2v). Speeds are deliberately unchanged.
 
     // Explicit second-order integration: h(t+1) = 2h - h(t-1) + c^2 * lap
     // Local propagation speed from the local depth. Clamped well under the
@@ -872,10 +894,22 @@ void main() {
             float d = length(q);
             hNext += exp(-(d * d) / (ra * ra)) * impulse.w;
         } else {
-            // Along the motion it is narrow, across it is broad -- an edge is a
-            // line, not a dot.
-            float along  = dot(q, impulseDir);
-            float across = dot(q, vec2(-impulseDir.y, impulseDir.x));
+            // A dragged edge sweeps a PATH between simulation steps, and at
+            // low simulation speed that path is long: stamping the whole
+            // accumulated displacement at the endpoint made slow-motion drags
+            // "tick" one blob per step. The dipole is therefore laid along
+            // the SEGMENT the edge actually covered (impulseB = where the
+            // stroke began, impulse.xy = where it is now): distance is taken
+            // to the nearest point of the segment, so the crest is a
+            // continuous ridge along the swept path. A stationary source
+            // (impulseB == impulse.xy) degenerates to the old point dipole.
+            vec2  A  = impulseB;
+            vec2  AB = impulse.xy - A;
+            float l2 = dot(AB, AB);
+            float t  = l2 > 1e-12 ? clamp(dot(v_texcoord - A, AB) / l2, 0.0, 1.0) : 0.0;
+            vec2  r  = v_texcoord - (A + t * AB);
+            float along  = dot(r, impulseDir);
+            float across = dot(r, vec2(-impulseDir.y, impulseDir.x));
             float rb = ra * 3.5;
             float e  = exp(-(along * along) / (ra * ra)
                            - (across * across) / (rb * rb));
@@ -886,7 +920,17 @@ void main() {
         }
     }
 
-    hNext = clamp(hNext, -0.49, 0.49);
+    // SOFT amplitude limit. The old hard clamp at 0.49 flat-topped the waves
+    // whenever agitation outran damping — and a plateau's rim is a ring of
+    // enormous curvature that the caustic pass faithfully printed as harsh
+    // outlines all over the surface (measured: at max agitation 0.7% of ALL
+    // texels sat on the clamp every step; with this limiter, none do — the
+    // asymptote is never reached). Linear below 0.30, exponential approach to
+    // 0.49 above it, C1-continuous at the knee: waves compress like water
+    // instead of clipping like audio.
+    float aa = abs(hNext);
+    if (aa > 0.30)
+        hNext = sign(hNext) * (0.30 + 0.19 * (1.0 - exp(-(aa - 0.30) / 0.19)));
     fragColor = vec4(hNext + hBias, h + hBias, 0.0, 1.0);
 }
 )GLSL"},

@@ -45,7 +45,12 @@ struct SGlobalState {
     // or fall behind. This accumulates how far an edge has swept since the last
     // step and spends the lot in one go, which also makes the total depend on
     // DISTANCE covered rather than on how long the drag took.
-    struct SDrag { float x = 0, y = 0, dx = 0, dy = 0, amount = 0, r = 0; };
+    // px,py anchor the START of the stroke being accumulated (where the
+    // source was when the sim last spent it); x,y are where it is NOW. The
+    // wave step lays the dipole along that segment, so a slow simulation
+    // getting dragged through quickly deposits a continuous ridge instead of
+    // one blob per step.
+    struct SDrag { float x = 0, y = 0, px = 0, py = 0, dx = 0, dy = 0, amount = 0, r = 0; };
     SDrag drag;
     // The mouse's own wake — same accumulator shape, far lighter touch. A
     // cursor is a fingertip trailed in the pool, not a hull.

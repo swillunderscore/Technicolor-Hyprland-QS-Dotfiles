@@ -382,8 +382,15 @@ void stepWaveSim() {
             const Vector2D g{(cur.x - desk.x * 0.5) / std::max(desk.x, 1.0),
                              (cur.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
             auto& mk = g_pGlobalState->mouse;
-            mk.x  = static_cast<float>(0.5 + g.x * 0.85 * sc * 2.0 * 0.105);
-            mk.y  = static_cast<float>(0.5 + g.y * 0.85 * sc * 2.0 * 0.105);
+            const float mx = static_cast<float>(0.5 + g.x * 0.85 * sc * 2.0 * 0.105);
+            const float my = static_cast<float>(0.5 + g.y * 0.85 * sc * 2.0 * 0.105);
+            if (mk.amount <= 1e-6f) {
+                const float k = static_cast<float>(0.85 * sc * 2.0 * 0.105 / std::max(desk.x, 1.0));
+                mk.px = mx - static_cast<float>(d.x) * k;
+                mk.py = my - static_cast<float>(d.y) * k;
+            }
+            mk.x  = mx;
+            mk.y  = my;
             mk.dx = static_cast<float>(d.x / mag);
             mk.dy = static_cast<float>(d.y / mag);
             // A fingertip, not a hull: ~10 sim texels wide, and per-pixel
@@ -645,6 +652,22 @@ void stepWaveSim() {
         // fires, so the bottom of the slider has to be an actual OFF rather
         // than the slowest available drip -- otherwise there is no way to watch
         // the water finish settling, which is the only way to judge damping.
+        // Spend an accumulated stroke: dipole laid along [px,py -> x,y], its
+        // amplitude normalised by the stroke's length so a long slow-motion
+        // sweep deposits the same total displacement as the sum of the short
+        // ones it replaces — without this, low sim speed made drags "tick"
+        // one full-strength blob per rare step.
+        auto spendStroke = [&u](SGlobalState::SDrag& s, float fallbackR) {
+            const float ra  = s.r > 0.0f ? s.r : fallbackR;
+            const float len = std::hypot(s.x - s.px, s.y - s.py);
+            const float amp = s.amount / (1.0f + 0.6f * len / ra);
+            glUniform2f(u.impulseDir, s.dx, s.dy);
+            glUniform2f(u.impulseB, s.px, s.py);
+            glUniform4f(u.impulse, s.x, s.y, ra, amp);
+            s.px = s.x;   // the next stroke continues from here
+            s.py = s.y;
+            s.amount = 0.0f;
+        };
         const bool fire = ag > 0.001f && nn % std::max<uint64_t>(every, 2) == 0;
         if (fire) {
             uint64_t r = nn * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -658,31 +681,26 @@ void stepWaveSim() {
             // GENTLY -- a lake gets a stray ripple, not a cannonball every ten
             // seconds. Without this the low end read as rare violent splashes.
             const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag);
+            const float ix = 0.5f + std::cos(ang) * rr, iy = 0.5f + std::sin(ang) * rr;
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
-            glUniform4f(u.impulse, 0.5f + std::cos(ang) * rr, 0.5f + std::sin(ang) * rr,
-                        rad, amp);
+            glUniform2f(u.impulseB, ix, iy);
+            glUniform4f(u.impulse, ix, iy, rad, amp);
         } else if (g_pGlobalState->click.amount > 1e-5f) {
             // A tap presses IN — negative amplitude — and the rebound ring is
             // the ripple. Taps outrank the drag spend because they are rare,
             // discrete events; the drag keeps its accumulation for next step.
             auto& ck = g_pGlobalState->click;
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
+            glUniform2f(u.impulseB, ck.x, ck.y);
             glUniform4f(u.impulse, ck.x, ck.y, ck.r > 0.0f ? ck.r : 0.016f, -ck.amount);
             ck.amount = 0.0f;
         } else if (g_pGlobalState->drag.amount > 1e-5f) {
-            // Spend everything the drag has built up, as one dipole.
-            auto& dg = g_pGlobalState->drag;
-            glUniform2f(u.impulseDir, dg.dx, dg.dy);
-            glUniform4f(u.impulse, dg.x, dg.y, dg.r > 0.0f ? dg.r : 0.045f, dg.amount);
-            dg.amount = 0.0f;
+            spendStroke(g_pGlobalState->drag, 0.045f);
         } else if (g_pGlobalState->mouse.amount > 1e-5f) {
-            // The fingertip's turn — same dipole shape, small and shallow.
-            auto& mk = g_pGlobalState->mouse;
-            glUniform2f(u.impulseDir, mk.dx, mk.dy);
-            glUniform4f(u.impulse, mk.x, mk.y, mk.r > 0.0f ? mk.r : 0.010f, mk.amount);
-            mk.amount = 0.0f;
+            spendStroke(g_pGlobalState->mouse, 0.010f);
         } else {
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
+            glUniform2f(u.impulseB, 0.0f, 0.0f);
             glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
         }
 
@@ -891,8 +909,17 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                              (c.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
             const Vector2D wp{0.5 + g.x * 0.85 * sc, 0.5 + g.y * 0.85 * sc};
             auto& dg = g_pGlobalState->drag;
-            dg.x  = static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105);
-            dg.y  = static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105);
+            const float sx = static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105);
+            const float sy = static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105);
+            // Fresh stroke: anchor its start one frame back, so even the very
+            // first spend covers the distance moved rather than a point.
+            if (dg.amount <= 1e-6f) {
+                const float k = static_cast<float>(0.85 * sc * 2.0 * 0.105 / std::max(desk.x, 1.0));
+                dg.px = sx - static_cast<float>(vel.x) * k;
+                dg.py = sy - static_cast<float>(vel.y) * k;
+            }
+            dg.x  = sx;
+            dg.y  = sy;
             dg.dx = static_cast<float>(vel.x / mag);
             dg.dy = static_cast<float>(vel.y / mag);
             // The disturbance is as wide as the window, because the whole

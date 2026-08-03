@@ -5122,37 +5122,12 @@ PanelWindow {
     property bool ddcRestored: false
     Process { id: ddcRestoreProc; onRunningChanged: if (!running) bar.readAllBrightness() }
 
-    // Some monitors have no persistent memory for DDC-written brightness. The
-    // MSI G273Q here keeps it in a volatile register: ~8 s after any cold
-    // power-on its scaler restores the flash value (100), and the MCCS
-    // save-to-NVRAM command is silently ignored — proven with a 2 s logger
-    // over two button cycles, while the ASUS beside it persists fine. So this
-    // poll IS the monitor's memory: a monitor reading EXACTLY 100 while its
-    // saved value says otherwise gets snapped back. A deliberate 100 is safe
-    // (the slider persists saved=100 and the guard stops), and OSD tweaks to
-    // any other value are never touched. There is no event to hook instead —
-    // the connector-force service hides HPD from the whole stack on purpose.
-    Timer {
-        interval: 5000; running: true; repeat: true
-        onTriggered: {
-            if (!bar.ddcMonitors.length || ddcEnforceProc.running) return
-            var cmd = "fixed=0; "
-            for (var i = 0; i < bar.ddcMonitors.length; i++) {
-                var m = bar.ddcMonitors[i]
-                cmd += "f=\"$HOME/.config/hypr/.ddc-brightness-" + m.name + "\"; " +
-                       "if [ -f \"$f\" ]; then s=$(cat \"$f\"); if [ \"$s\" != 100 ]; then " +
-                       "v=$(ddcutil getvcp 10 --bus " + m.bus + " --brief 2>/dev/null | awk '{print $4}'); " +
-                       "if [ \"$v\" = 100 ]; then ddcutil setvcp 10 \"$s\" --bus " + m.bus + "; fixed=1; fi; fi; fi; "
-            }
-            cmd += "echo $fixed"
-            ddcEnforceProc.command = ["bash", "-c", cmd]
-            ddcEnforceProc.running = true
-        }
-    }
-    Process {
-        id: ddcEnforceProc
-        stdout: StdioCollector { onStreamFinished: if (this.text.trim() === "1") bar.readAllBrightness() }
-    }
+    // No enforcement poll, by the user's choice. The MSI G273Q keeps DDC
+    // brightness in a volatile register and restores flash (100) ~8 s after
+    // any cold power-on — that is monitor firmware, the user knows, and they
+    // adjust brightness through the day so the host should not fight them.
+    // The slider still persists per connector and the session-start restore
+    // above still runs, so crash restarts come back at the chosen value.
 
     function readAllBrightness() {
         if (!ddcMonitors.length) return
