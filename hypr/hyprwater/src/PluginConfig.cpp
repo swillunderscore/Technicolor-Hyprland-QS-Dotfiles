@@ -50,6 +50,11 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_MURK, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_DRAG, Config::FLOAT{0.35f});
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::SHIMMER_CURRENTS, Config::INTEGER{1});
+    // Deliberately a config key with NO Settings slider (same as bed_variation):
+    // "how coarse would you like the fluid grid" is not a physical property of
+    // water, so it does not earn UI. It is here so the default can be argued
+    // with from the write-in box without recompiling.
+    addConfigValue<Config::Values::Int>(handle, ConfigKeys::SHIMMER_CURRENTS_RES, Config::INTEGER{512});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_ABSORPTION, Config::FLOAT{1.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_BED, Config::FLOAT{0.45f});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::LAYERS_NAMESPACES, Config::STRING{});
@@ -181,6 +186,7 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.shimmerMurk             = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_MURK);
     config.shimmerDrag             = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_DRAG);
     config.shimmerCurrents         = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SHIMMER_CURRENTS);
+    config.shimmerCurrentsRes      = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SHIMMER_CURRENTS_RES);
     config.shimmerAbsorption       = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_ABSORPTION);
     config.shimmerBed              = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_BED);
     config.layersNamespaces        = getStringPtr(handle, ConfigKeys::LAYERS_NAMESPACES);

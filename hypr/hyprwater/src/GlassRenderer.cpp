@@ -146,8 +146,18 @@ static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
 //  numpy prototype first: vortex dipole forms behind a drag, a wave packet is
 //  carried at the current's speed, and 4000 steps stay bounded.
 // ============================================================================
-static constexpr int FLUID        = 256;
 static constexpr int FLUID_JACOBI = 24;
+
+// Grid size comes from shimmer:currents_resolution (default 512). At 512 the
+// desktop spans ~107 fluid texels, a typical window ~27 — swirls small enough
+// to read as corner turbulence rather than one window-sized smear. The FBO
+// alloc below compares against this every step, so changing the key live just
+// reallocates and restarts the field from still water.
+static int fluidRes() {
+    const auto& cfg = g_pGlobalState->config;
+    const int64_t r = cfg.shimmerCurrentsRes ? **cfg.shimmerCurrentsRes : 512;
+    return static_cast<int>(std::clamp<int64_t>(r, 64, 2048));
+}
 
 static void bindSimTexture(int unit, const SP<Render::IFramebuffer>& fb) {
     // Explicit filtering EVERY bind, same lesson as the wave texture: nothing
@@ -162,12 +172,12 @@ static void bindSimTexture(int unit, const SP<Render::IFramebuffer>& fb) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-static void stepFluidOnce(const SGlobalState::SDrag& dragNow) {
+static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res) {
     auto& st = *g_pGlobalState;
     const auto& fu = st.shaderManager.fluidUniforms;
-    const float texel = 1.0f / FLUID;
+    const float texel = 1.0f / res;
 
-    g_pHyprOpenGL->setViewport(0, 0, FLUID, FLUID);
+    g_pHyprOpenGL->setViewport(0, 0, res, res);
 
     // 1) Advect the velocity by itself + inject the drag's momentum + bleed.
     {
@@ -389,6 +399,7 @@ void stepWaveSim() {
         currentsWere = fluidOn;
         if (fluidOn) {
             auto& st = *g_pGlobalState;
+            const int res = fluidRes();
             SP<Render::IFramebuffer>* fbs[] = {&st.fluidVelFb[0], &st.fluidVelFb[1],
                                                &st.fluidPrsFb[0], &st.fluidPrsFb[1],
                                                &st.fluidDivFb};
@@ -399,8 +410,8 @@ void stepWaveSim() {
                 auto& fb = *fbs[i];
                 if (!fb)
                     fb = g_pHyprRenderer->createFB(names[i]);
-                if (fb->m_size.x != FLUID || fb->m_size.y != FLUID) {
-                    fb->alloc(FLUID, FLUID, fmt);
+                if (fb->m_size.x != res || fb->m_size.y != res) {
+                    fb->alloc(res, res, fmt);
                     freshFluid = true;
                 }
                 if (!fb || !fb->getTexture() || fbId(fb) == 0)
@@ -544,7 +555,7 @@ void stepWaveSim() {
         // flat — momentum alone cannot raise water here, so without the dipole
         // a drag across calm water would be invisible.
         if (fluidOn) {
-            stepFluidOnce(g_pGlobalState->drag);
+            stepFluidOnce(g_pGlobalState->drag, fluidRes());
             // The fluid passes bound their own programs; the wave uniforms set
             // above still live in the wave program's state, so rebinding is
             // all that is needed.
