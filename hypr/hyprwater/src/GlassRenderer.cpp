@@ -3,6 +3,7 @@
 #include "Globals.hpp"
 
 #include <array>
+#include <unordered_map>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -385,6 +386,11 @@ void stepWaveSim() {
             const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag);
             glUniform4f(u.impulse, 0.5f + std::cos(ang) * rr, 0.5f + std::sin(ang) * rr,
                         rad, amp);
+        } else if (!g_pGlobalState->sloshQueue.empty()) {
+            // A window moved: spend one queued slosh this step.
+            const auto sl = g_pGlobalState->sloshQueue.back();
+            g_pGlobalState->sloshQueue.pop_back();
+            glUniform4f(u.impulse, sl.x, sl.y, sl.r, sl.amp);
         } else {
             glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
         }
@@ -551,6 +557,43 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     glUniform2f(uniforms.winOrigin,
                 static_cast<float>(rawBox.x + monOff.x),
                 static_cast<float>(rawBox.y + monOff.y));
+
+    // WINDOW AS A BUCKET. Carry a bucket of water and whip it sideways and the
+    // water does not move with you -- it lags, piles against the trailing wall,
+    // then sloshes back. What drives that is ACCELERATION, not speed: a bucket
+    // carried at a steady walk stays flat. So the impulse is proportional to
+    // the change in velocity, and it is injected BEHIND the window's centre,
+    // on the side the water would pile up against.
+    {
+        const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
+        static std::unordered_map<uint64_t, std::pair<Vector2D, Vector2D>> track;
+        // Position is a good enough identity here: two windows cannot share one.
+        const uint64_t id = static_cast<uint64_t>(rawBox.width) * 100000ULL
+                          + static_cast<uint64_t>(rawBox.height);
+        auto& prev = track[id];
+        const Vector2D vel{here.x - prev.first.x, here.y - prev.first.y};
+        const Vector2D acc{vel.x - prev.second.x, vel.y - prev.second.y};
+        prev = {here, vel};
+
+        const double mag = std::sqrt(acc.x * acc.x + acc.y * acc.y);
+        // Ignore the teleport when a window first appears or jumps workspace.
+        if (mag > 0.6 && mag < 220.0 && g_pGlobalState->sloshQueue.size() < 8) {
+            const Vector2D c{here.x + rawBox.width * 0.5, here.y + rawBox.height * 0.5};
+            Vector2D g{(c.x - desk.x * 0.5) / std::max(desk.x, 1.0),
+                       (c.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
+            const float sc = g_pGlobalState->config.shimmerScale
+                           ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
+            // Same mapping the shader uses, then into simulation space.
+            Vector2D wp{0.5 + g.x * 0.85 * sc, 0.5 + g.y * 0.85 * sc};
+            // Behind the motion: the water piles against the wall it is left by.
+            const double inv = -0.25 / std::max(mag, 1e-6);
+            g_pGlobalState->sloshQueue.push_back(
+                {static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105 + acc.x * inv * 0.02),
+                 static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105 + acc.y * inv * 0.02),
+                 0.030f,
+                 static_cast<float>(std::min(mag * 0.010, 0.22))});
+        }
+    }
     glUniform2f(uniforms.deskSize,
                 static_cast<float>(desk.x), static_cast<float>(desk.y));
 

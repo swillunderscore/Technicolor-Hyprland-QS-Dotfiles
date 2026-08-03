@@ -37,6 +37,11 @@ struct SGlobalState {
     // Height offset used when storing the surface. Zero on a signed float
     // target; 0.5 only on the UNORM fallback, which cannot hold a negative.
     float    waveBias      = 0.0f;
+    // Impulses queued by window motion. A window is a bucket: accelerate it and
+    // the water inside piles up against the trailing wall. Filled while drawing
+    // each window, drained by the next simulation step.
+    struct SSlosh { float x, y, r, amp; };
+    std::vector<SSlosh> sloshQueue;
 
     // Layer surface glass state (one per tracked layer, keyed by raw pointer).
     // shared_ptr so CGlassLayerPassElement can hold a copy that survives map erasure mid-frame.
@@ -78,5 +83,5 @@ inline constexpr std::string_view PLUGIN_DESCRIPTION = "Liquid glass with a simu
 // credit them for work they did not do, and BSD-3 clause 3 specifically bars
 // using their name to promote a derived product. Upstream is credited in
 // LICENSE and in the README instead, which is where attribution belongs.
-inline constexpr std::string_view PLUGIN_AUTHOR      = "swillunderscore";
+inline constexpr std::string_view PLUGIN_AUTHOR      = "Swill Software";
 inline constexpr std::string_view PLUGIN_VERSION     = "1.0.0";
