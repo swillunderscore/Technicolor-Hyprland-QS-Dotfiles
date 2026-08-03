@@ -77,10 +77,12 @@ uniform float waveTexel;     // 1 / simulation grid size, for the C1 read
 // is the part that must never lag or tick.
 uniform vec4 winWake;        // xy = drag direction, z = strength (0 at rest)
 uniform vec4 winRectSim;     // xy = window centre, zw = half-extents (sim uv)
-// The drag deposit accumulated since the last simulation step, rendered
-// analytically until the sim absorbs it (see waveH).
-uniform vec4 pendStroke;     // xy = stroke start, zw = stroke end (sim uv)
-uniform vec4 pendStroke2;    // xy = direction, z = radius, w = amplitude
+// Recent drag strokes, rendered analytically until the sim absorbs them —
+// oldest first, live head last. Rendering a short TRAIL rather than only the
+// newest segment is what keeps a fast curved whip smooth at low sim speed:
+// one segment per rare step chopped the curve into visible ticks.
+uniform vec4 pendSeg[7];     // xy = stroke start, zw = stroke end (sim uv)
+uniform vec4 pendPar[7];     // xy = direction, z = radius, w = amplitude
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
 // Where this window sits on the desktop, and how big the desktop is, both in
@@ -256,17 +258,18 @@ float waveH(vec2 q) {
     // at ANY simulation speed, instead of ticking once per rare step. This is
     // the piece sub-stepping alone could not provide at the bottom of the
     // speed slider.
-    if (pendStroke2.w != 0.0) {
-        vec2  A2  = pendStroke.xy;
-        vec2  AB2 = pendStroke.zw - A2;
+    for (int pi = 0; pi < 7; pi++) {
+        if (pendPar[pi].w == 0.0) continue;
+        vec2  A2  = pendSeg[pi].xy;
+        vec2  AB2 = pendSeg[pi].zw - A2;
         float l22 = dot(AB2, AB2);
         float t2  = l22 > 1e-12 ? clamp(dot(uv - A2, AB2) / l22, 0.0, 1.0) : 0.0;
         vec2  r2  = uv - (A2 + t2 * AB2);
-        float alo = dot(r2, pendStroke2.xy);
-        float acr = dot(r2, vec2(-pendStroke2.y, pendStroke2.x));
-        float ra2 = max(pendStroke2.z, 1e-5);
+        float alo = dot(r2, pendPar[pi].xy);
+        float acr = dot(r2, vec2(-pendPar[pi].y, pendPar[pi].x));
+        float ra2 = max(pendPar[pi].z, 1e-5);
         float rb2 = ra2 * 3.5;
-        h += pendStroke2.w * (alo / ra2)
+        h += pendPar[pi].w * (alo / ra2)
            * exp(-(alo * alo) / (ra2 * ra2) - (acr * acr) / (rb2 * rb2)) * 2.0;
     }
     return h;
@@ -515,8 +518,16 @@ void main() {
             // and spend at most part of it, leaving room for the edge
             // refraction that is already using some.
             vec2 margin = uvPadding / max(1.0 - 2.0 * uvPadding, vec2(0.001));
-            vec2 budget = max(margin * 0.6, vec2(0.0));
-            waveWarp = clamp(waveWarp, -budget, budget);
+            vec2 budget = max(margin * 0.6, vec2(0.001));
+            // SOFT compressor, never a hard clamp. Clamped displacement is
+            // CONSTANT displacement: at high depth most of the surface pinned
+            // against the budget, and a constant shift moves the image without
+            // bending it — straight lines came back the deeper the water got,
+            // with hard seams wherever +budget regions met -budget regions.
+            // This rational limiter is linear for small warps, approaches the
+            // budget asymptotically, and its derivative never reaches zero:
+            // deep water compresses its bending but NEVER flattens it.
+            waveWarp = waveWarp / (1.0 + abs(waveWarp) / budget);
 
             // Fade the warp out approaching the border. Even inside the budget,
             // a sample near the edge reaches content the neighbouring monitor

@@ -59,6 +59,15 @@ struct SGlobalState {
     // mouse-button listener and spent by the next simulation step.
     SDrag click;
 
+    // Ring of recently finished drag strokes, still rendered analytically in
+    // the glass shader while they wait to be absorbed into the simulation
+    // (oldest at pendHead). Absorbing only the tail — long after the eye has
+    // moved on — is what keeps a fast curved whip smooth at low sim speed.
+    static constexpr int PEND_RING = 6;
+    SDrag pendRing[PEND_RING];
+    int   pendHead = 0;
+    int   pendLen  = 0;
+
     // Logical desktop bounds, accumulated as monitors render (no compositor-
     // wide list is in scope here). Shared by the window-drag mapping and the
     // mouse-wake mapping so both live on the same sheet of water.

@@ -686,21 +686,17 @@ void stepWaveSim() {
         // fires, so the bottom of the slider has to be an actual OFF rather
         // than the slowest available drip -- otherwise there is no way to watch
         // the water finish settling, which is the only way to judge damping.
-        // Spend an accumulated stroke: dipole laid along [px,py -> x,y], its
-        // amplitude normalised by the stroke's length so a long slow-motion
-        // sweep deposits the same total displacement as the sum of the short
-        // ones it replaces — without this, low sim speed made drags "tick"
-        // one full-strength blob per rare step.
-        auto spendStroke = [&u](SGlobalState::SDrag& s, float fallbackR) {
+        // Upload a stroke as this step's impulse: dipole laid along
+        // [px,py -> x,y], amplitude normalised by the stroke's length so a
+        // long slow-motion sweep deposits the same total displacement as the
+        // sum of the short ones it replaces.
+        auto uploadStroke = [&u](const SGlobalState::SDrag& s, float fallbackR) {
             const float ra  = s.r > 0.0f ? s.r : fallbackR;
             const float len = std::hypot(s.x - s.px, s.y - s.py);
             const float amp = s.amount / (1.0f + 0.6f * len / ra);
             glUniform2f(u.impulseDir, s.dx, s.dy);
             glUniform2f(u.impulseB, s.px, s.py);
             glUniform4f(u.impulse, s.x, s.y, ra, amp);
-            s.px = s.x;   // the next stroke continues from here
-            s.py = s.y;
-            s.amount = 0.0f;
         };
         const bool fire = ag > 0.001f && nn % std::max<uint64_t>(every, 2) == 0;
         if (fire) {
@@ -735,10 +731,44 @@ void stepWaveSim() {
             glUniform2f(u.impulseB, ck.x, ck.y);
             glUniform4f(u.impulse, ck.x, ck.y, ck.r > 0.0f ? ck.r : 0.016f, -ck.amount);
             ck.amount = 0.0f;
-        } else if (g_pGlobalState->drag.amount > 1e-5f) {
-            spendStroke(g_pGlobalState->drag, 0.045f);
+        } else if (g_pGlobalState->drag.amount > 1e-5f || g_pGlobalState->pendLen > 0) {
+            auto& st2 = *g_pGlobalState;
+            // The head stroke moves into the analytic ring; the SIM only
+            // absorbs the OLDEST ring entry each step. The whole ring keeps
+            // rendering analytically in the glass shader meanwhile, so a fast
+            // curved whip at low sim speed stays a smooth polyline instead of
+            // ticking in one chunk per rare step.
+            if (st2.drag.amount > 1e-5f) {
+                if (st2.pendLen < SGlobalState::PEND_RING) {
+                    st2.pendRing[(st2.pendHead + st2.pendLen) % SGlobalState::PEND_RING] = st2.drag;
+                    st2.pendLen++;
+                } else {
+                    // Ring starved (ambient fires stole absorption steps):
+                    // extend the newest entry rather than dropping motion.
+                    auto& nw = st2.pendRing[(st2.pendHead + st2.pendLen - 1) % SGlobalState::PEND_RING];
+                    nw.x  = st2.drag.x;  nw.y  = st2.drag.y;
+                    nw.dx = st2.drag.dx; nw.dy = st2.drag.dy;
+                    nw.amount = std::min(nw.amount + st2.drag.amount, 0.08f);
+                }
+                st2.drag.px = st2.drag.x;
+                st2.drag.py = st2.drag.y;
+                st2.drag.amount = 0.0f;
+            }
+            if (st2.pendLen > 0) {
+                uploadStroke(st2.pendRing[st2.pendHead], 0.045f);
+                st2.pendHead = (st2.pendHead + 1) % SGlobalState::PEND_RING;
+                st2.pendLen--;
+            } else {
+                glUniform2f(u.impulseDir, 0.0f, 0.0f);
+                glUniform2f(u.impulseB, 0.0f, 0.0f);
+                glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
+            }
         } else if (g_pGlobalState->mouse.amount > 1e-5f) {
-            spendStroke(g_pGlobalState->mouse, 0.010f);
+            auto& mk2 = g_pGlobalState->mouse;
+            uploadStroke(mk2, 0.010f);
+            mk2.px = mk2.x;
+            mk2.py = mk2.y;
+            mk2.amount = 0.0f;
         } else {
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
             glUniform2f(u.impulseB, 0.0f, 0.0f);
@@ -963,20 +993,30 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                         static_cast<float>(std::max(rawBox.width  * 0.5 * kk, 1e-4)),
                         static_cast<float>(std::max(rawBox.height * 0.5 * kk, 1e-4)));
 
-            // Pending drag stroke — whatever has accumulated since the sim
-            // last spent it, rendered analytically until absorbed (stepWaveSim
-            // ran BEFORE these uploads, so this is the true post-spend state
-            // and the handoff frame is seamless).
-            const auto& pd = g_pGlobalState->drag;
-            if (pd.amount > 1e-5f) {
-                const float ra  = pd.r > 0.0f ? pd.r : 0.045f;
-                const float len = std::hypot(pd.x - pd.px, pd.y - pd.py);
-                glUniform4f(uniforms.pendStroke,  pd.px, pd.py, pd.x, pd.y);
-                glUniform4f(uniforms.pendStroke2, pd.dx, pd.dy, ra,
-                            pd.amount / (1.0f + 0.6f * len / ra));
-            } else {
-                glUniform4f(uniforms.pendStroke,  0.0f, 0.0f, 0.0f, 0.0f);
-                glUniform4f(uniforms.pendStroke2, 0.0f, 0.0f, 1.0f, 0.0f);
+            // Analytic stroke trail: the ring of not-yet-absorbed strokes plus
+            // the live head, oldest first. Uploaded AFTER stepWaveSim ran, so
+            // this is the true post-absorption state and each handoff frame is
+            // seamless.
+            {
+                float seg[28] = {0}, par[28] = {0};
+                int   n = 0;
+                auto put = [&](const SGlobalState::SDrag& s) {
+                    if (n >= 7 || s.amount <= 1e-5f) return;
+                    const float ra  = s.r > 0.0f ? s.r : 0.045f;
+                    const float len = std::hypot(s.x - s.px, s.y - s.py);
+                    seg[n * 4 + 0] = s.px; seg[n * 4 + 1] = s.py;
+                    seg[n * 4 + 2] = s.x;  seg[n * 4 + 3] = s.y;
+                    par[n * 4 + 0] = s.dx; par[n * 4 + 1] = s.dy;
+                    par[n * 4 + 2] = ra;
+                    par[n * 4 + 3] = s.amount / (1.0f + 0.6f * len / ra);
+                    n++;
+                };
+                const auto& st3 = *g_pGlobalState;
+                for (int i = 0; i < st3.pendLen; i++)
+                    put(st3.pendRing[(st3.pendHead + i) % SGlobalState::PEND_RING]);
+                put(st3.drag);
+                glUniform4fv(uniforms.pendSeg, 7, seg);
+                glUniform4fv(uniforms.pendPar, 7, par);
             }
         }
         // A toggle, not a force slider: windows either sit in the water or
