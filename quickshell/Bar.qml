@@ -5122,16 +5122,18 @@ PanelWindow {
     property bool ddcRestored: false
     Process { id: ddcRestoreProc; onRunningChanged: if (!running) bar.readAllBrightness() }
 
-    // Some monitors reset DDC brightness to 100 whenever they are power-cycled
-    // at the button (the left one here does — confirmed the morning after a
-    // normal monitors-off night, no crash involved). There is no hotplug event
-    // to hook: the connector-force service hides HPD from the whole stack on
-    // purpose. So enforce by polling: a monitor reading EXACTLY 100 while its
+    // Some monitors have no persistent memory for DDC-written brightness. The
+    // MSI G273Q here keeps it in a volatile register: ~8 s after any cold
+    // power-on its scaler restores the flash value (100), and the MCCS
+    // save-to-NVRAM command is silently ignored — proven with a 2 s logger
+    // over two button cycles, while the ASUS beside it persists fine. So this
+    // poll IS the monitor's memory: a monitor reading EXACTLY 100 while its
     // saved value says otherwise gets snapped back. A deliberate 100 is safe
     // (the slider persists saved=100 and the guard stops), and OSD tweaks to
-    // any other value are never touched.
+    // any other value are never touched. There is no event to hook instead —
+    // the connector-force service hides HPD from the whole stack on purpose.
     Timer {
-        interval: 15000; running: true; repeat: true
+        interval: 5000; running: true; repeat: true
         onTriggered: {
             if (!bar.ddcMonitors.length || ddcEnforceProc.running) return
             var cmd = "fixed=0; "
