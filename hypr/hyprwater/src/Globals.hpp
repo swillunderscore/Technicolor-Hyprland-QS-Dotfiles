@@ -67,6 +67,15 @@ struct SGlobalState {
     SDrag pendRing[PEND_RING];
     int   pendHead = 0;
     int   pendLen  = 0;
+    // The stroke absorbed by the CURRENT sim step: rendered analytically one
+    // interval longer, weighted (1 - waveSubFrac) in the shader so its
+    // analytic half fades out exactly as its texture half fades in.
+    SDrag lastAbsorbed;
+
+    // Ambient splash being fed into the sim as a SWELL over several steps
+    // (one-step entry read as a tick on slow water).
+    float ambX = 0, ambY = 0, ambR = 1;
+    float ambLeft = 0, ambChunk = 0;
 
     // Logical desktop bounds, accumulated as monitors render (no compositor-
     // wide list is in scope here). Shared by the window-drag mapping and the

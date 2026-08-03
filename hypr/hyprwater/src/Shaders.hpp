@@ -259,7 +259,14 @@ float waveH(vec2 q) {
     // the piece sub-stepping alone could not provide at the bottom of the
     // speed slider.
     for (int pi = 0; pi < 7; pi++) {
-        if (pendPar[pi].w == 0.0) continue;
+        // Slot 6 is the stroke the sim absorbed THIS step: it keeps rendering
+        // analytically at exactly the complement of the crossfade weight its
+        // texture copy is fading in with, so their sum is constant and the
+        // handoff is invisible. Without this, every absorption dipped the wake
+        // for one sub-step — the residual "tick" the user's video caught at
+        // the simulation step rate.
+        float aw = (pi == 6) ? pendPar[pi].w * (1.0 - waveSubFrac) : pendPar[pi].w;
+        if (aw == 0.0) continue;
         vec2  A2  = pendSeg[pi].xy;
         vec2  AB2 = pendSeg[pi].zw - A2;
         float l22 = dot(AB2, AB2);
@@ -269,7 +276,7 @@ float waveH(vec2 q) {
         float acr = dot(r2, vec2(-pendPar[pi].y, pendPar[pi].x));
         float ra2 = max(pendPar[pi].z, 1e-5);
         float rb2 = ra2 * 3.5;
-        h += pendPar[pi].w * (alo / ra2)
+        h += aw * (alo / ra2)
            * exp(-(alo * alo) / (ra2 * ra2) - (acr * acr) / (rb2 * rb2)) * 2.0;
     }
     return h;
@@ -538,6 +545,14 @@ void main() {
             // refraction.
             vec2 d = min(uv, 1.0 - uv);                     // distance to nearest edge
             float fade = smoothstep(0.0, 0.10, min(d.x, d.y));
+            // Fade near the DESKTOP bounds too. A half-offscreen window's
+            // capture is cut at the screen edge — the pixels the warp wants
+            // simply were never rendered — and the moving clamp band there
+            // flickered with every wave. Nothing valid exists to sample, so
+            // the only honest behaviour is calm glass at the screen rim.
+            vec2 dp  = winOrigin + uv * winSize;
+            vec2 de  = min(dp, deskSize - dp);
+            fade *= smoothstep(0.0, 60.0, min(de.x, de.y));
             waveWarp *= fade;
         }
     }
@@ -639,8 +654,14 @@ void main() {
             // confirmed absent on a flat backdrop at identical settings).
             // A 5-tap cross a couple of pixels wide integrates the dither out
             // while leaving real color variation intact.
-            vec2 lo = 2.5 / fullSize;
             vec2 lp2 = uvG + domeUV;
+            // Collapse the taps toward the centre near the captured region's
+            // edge: past it there is nothing valid to sample, and taps landing
+            // in the clamp band flickered with the waves at the top of tall
+            // windows.
+            float sfE = smoothstep(0.0, 0.05,
+                                   min(min(lp2.x, 1.0 - lp2.x), min(lp2.y, 1.0 - lp2.y)));
+            vec2 lo = 2.5 / fullSize * sfE;
             vec3  lit = (color
                        + texture(tex, lp2 + vec2( lo.x, 0.0)).rgb
                        + texture(tex, lp2 - vec2( lo.x, 0.0)).rgb
@@ -853,6 +874,12 @@ uniform vec2  impulseDir;
 // See the dipole branch: slow simulation + fast window = a long swept path
 // per step, deposited along the segment rather than stamped at its end.
 uniform vec2  impulseB;
+// Second, ROUND-ONLY impulse slot: ambient splashes and click taps, so they
+// never contend with the stroke slot above. Ambient amplitude arrives spread
+// over several steps (a swell, not a pop) — at low simulation speed a
+// one-step splash materialised in ~60 ms while everything else crawled,
+// which read as a tick on still water.
+uniform vec4  impulse2;       // xy = position, z = radius, w = strength
 uniform float bedVariation;   // 0 = flat bottom, 1 = strongly uneven
 uniform float viscosity;      // how fast SHORT waves die relative to long ones
 uniform float maxSpeed;       // largest stable speed for THIS viscosity
@@ -1012,6 +1039,14 @@ void main() {
             // rather than adding any.
             hNext += impulse.w * (along / ra) * e * 2.0;
         }
+    }
+
+    if (impulse2.w != 0.0) {
+        vec2  q2 = (v_texcoord - impulse2.xy)
+                 * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
+        float d2 = length(q2);
+        float r3 = max(impulse2.z, 1e-9);
+        hNext += exp(-(d2 * d2) / (r3 * r3)) * impulse2.w;
     }
 
     // SOFT amplitude limit. The old hard clamp at 0.49 flat-topped the waves

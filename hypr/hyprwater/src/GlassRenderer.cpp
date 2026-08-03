@@ -698,40 +698,54 @@ void stepWaveSim() {
             glUniform2f(u.impulseB, s.px, s.py);
             glUniform4f(u.impulse, s.x, s.y, ra, amp);
         };
-        const bool fire = ag > 0.001f && nn % std::max<uint64_t>(every, 2) == 0;
-        if (fire) {
-            uint64_t r = nn * 6364136223846793005ULL + 1442695040888963407ULL;
-            auto fr = [&](int sh) { return static_cast<float>((r >> sh) & 0xFFFF) / 65535.0f; };
-            // Outer ring only: the shader samples just the middle of the sim, so
-            // these are genuinely off-screen and their waves travel inward.
-            const float ang = fr(16) * 6.2831853f;
-            const float rr  = 0.40f + 0.09f * fr(32);
-            const float rad = 0.025f + 0.050f * std::clamp(thick, 0.0f, 1.0f) + 0.020f * fr(40);
-            // Calm water is not just disturbed less often, it is disturbed more
-            // GENTLY -- a lake gets a stray ripple, not a cannonball every ten
-            // seconds. Without this the low end read as rare violent splashes.
-            // SELF-LIMITING: each disturbance is scaled by how much energy is
-            // already in flight. Real water cannot stack waves without bound —
-            // past a point they break — so at high Activity the surface
-            // approaches a lively equilibrium instead of saturating into mush
-            // pinned against the amplitude limiter.
-            const float tame = 1.0f / (1.0f + seaEnergy * 0.12f);
-            const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag) * tame;
-            seaEnergy += amp;
-            const float ix = 0.5f + std::cos(ang) * rr, iy = 0.5f + std::sin(ang) * rr;
-            glUniform2f(u.impulseDir, 0.0f, 0.0f);
-            glUniform2f(u.impulseB, ix, iy);
-            glUniform4f(u.impulse, ix, iy, rad, amp);
-        } else if (g_pGlobalState->click.amount > 1e-5f) {
-            // A tap presses IN — negative amplitude — and the rebound ring is
-            // the ripple. Taps outrank the drag spend because they are rare,
-            // discrete events; the drag keeps its accumulation for next step.
-            auto& ck = g_pGlobalState->click;
-            glUniform2f(u.impulseDir, 0.0f, 0.0f);
-            glUniform2f(u.impulseB, ck.x, ck.y);
-            glUniform4f(u.impulse, ck.x, ck.y, ck.r > 0.0f ? ck.r : 0.016f, -ck.amount);
-            ck.amount = 0.0f;
-        } else if (g_pGlobalState->drag.amount > 1e-5f || g_pGlobalState->pendLen > 0) {
+        // ── SLOT 2: round events (ambient swell / click tap) ─────────────
+        // Independent of the stroke slot below, so splashes never starve the
+        // drag-trail absorption and vice versa.
+        {
+            auto& st2 = *g_pGlobalState;
+            const bool fire = ag > 0.001f && nn % std::max<uint64_t>(every, 2) == 0;
+            if (fire) {
+                uint64_t r = nn * 6364136223846793005ULL + 1442695040888963407ULL;
+                auto fr = [&](int sh) { return static_cast<float>((r >> sh) & 0xFFFF) / 65535.0f; };
+                // Outer ring only: the shader samples just the middle of the
+                // sim, so these are genuinely off-screen and travel inward.
+                const float ang = fr(16) * 6.2831853f;
+                const float rr  = 0.40f + 0.09f * fr(32);
+                const float rad = 0.025f + 0.050f * std::clamp(thick, 0.0f, 1.0f) + 0.020f * fr(40);
+                // Calm water is disturbed more GENTLY, not merely less often;
+                // and SELF-LIMITING by the energy already in flight — real
+                // waves break instead of stacking without bound.
+                const float tame = 1.0f / (1.0f + seaEnergy * 0.12f);
+                const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag) * tame;
+                seaEnergy += amp;
+                // A SWELL, not a pop: the amplitude enters over 6 steps. At
+                // low sim speed a one-step splash materialised in ~60 ms while
+                // everything else crawled — the user's video caught them as
+                // isolated ticks on otherwise still water.
+                st2.ambX = 0.5f + std::cos(ang) * rr;
+                st2.ambY = 0.5f + std::sin(ang) * rr;
+                st2.ambR = rad;
+                st2.ambChunk = amp / 6.0f;
+                st2.ambLeft  = amp;
+            }
+            if (st2.click.amount > 1e-5f) {
+                // A tap presses IN — negative amplitude — and the rebound ring
+                // is the ripple. Taps are real-time user actions: immediate.
+                glUniform4f(u.impulse2, st2.click.x, st2.click.y,
+                            st2.click.r > 0.0f ? st2.click.r : 0.016f, -st2.click.amount);
+                st2.click.amount = 0.0f;
+            } else if (st2.ambLeft > 0.0f) {
+                const float chunk = std::min(st2.ambChunk, st2.ambLeft);
+                glUniform4f(u.impulse2, st2.ambX, st2.ambY, st2.ambR, chunk);
+                st2.ambLeft -= chunk;
+            } else {
+                glUniform4f(u.impulse2, 0.0f, 0.0f, 1.0f, 0.0f);
+            }
+        }
+
+        // ── SLOT 1: strokes only (drag trail absorption, then mouse) ─────
+        g_pGlobalState->lastAbsorbed.amount = 0.0f;
+        if (g_pGlobalState->drag.amount > 1e-5f || g_pGlobalState->pendLen > 0) {
             auto& st2 = *g_pGlobalState;
             // The head stroke moves into the analytic ring; the SIM only
             // absorbs the OLDEST ring entry each step. The whole ring keeps
@@ -755,7 +769,11 @@ void stepWaveSim() {
                 st2.drag.amount = 0.0f;
             }
             if (st2.pendLen > 0) {
-                uploadStroke(st2.pendRing[st2.pendHead], 0.045f);
+                // Remember what is being absorbed: the glass shader keeps
+                // rendering it this interval at (1 - subFrac) weight, the
+                // exact complement of its texture copy fading in.
+                st2.lastAbsorbed = st2.pendRing[st2.pendHead];
+                uploadStroke(st2.lastAbsorbed, 0.045f);
                 st2.pendHead = (st2.pendHead + 1) % SGlobalState::PEND_RING;
                 st2.pendLen--;
             } else {
@@ -1012,9 +1030,22 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                     n++;
                 };
                 const auto& st3 = *g_pGlobalState;
-                for (int i = 0; i < st3.pendLen; i++)
+                for (int i = 0; i < st3.pendLen && i < 5; i++)
                     put(st3.pendRing[(st3.pendHead + i) % SGlobalState::PEND_RING]);
                 put(st3.drag);
+                // Slot 6 is RESERVED for the just-absorbed stroke — the
+                // shader weights it by (1 - waveSubFrac) so absorption never
+                // dips the wake.
+                {
+                    const auto& la = st3.lastAbsorbed;
+                    if (la.amount > 1e-5f) {
+                        const float ra  = la.r > 0.0f ? la.r : 0.045f;
+                        const float len = std::hypot(la.x - la.px, la.y - la.py);
+                        seg[24] = la.px; seg[25] = la.py; seg[26] = la.x; seg[27] = la.y;
+                        par[24] = la.dx; par[25] = la.dy; par[26] = ra;
+                        par[27] = la.amount / (1.0f + 0.6f * len / ra);
+                    }
+                }
                 glUniform4fv(uniforms.pendSeg, 7, seg);
                 glUniform4fv(uniforms.pendPar, 7, par);
             }

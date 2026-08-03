@@ -59,6 +59,7 @@ struct SWaveSimUniforms {
     GLint impulse      = -1;
     GLint impulseDir = -1;
     GLint impulseB   = -1;
+    GLint impulse2   = -1;
     GLint bedVariation = -1;
     GLint viscosity    = -1;
     GLint maxSpeed     = -1;
