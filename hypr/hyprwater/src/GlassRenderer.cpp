@@ -565,66 +565,27 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                 static_cast<float>(rawBox.x + monOff.x),
                 static_cast<float>(rawBox.y + monOff.y));
 
-    // A dragged edge shoves still water from rest to moving, and keeps doing it
-    // for as long as it moves, so the forcing tracks edge speed. Injected at the
-    // LEADING face in the same desktop coordinates the shader samples, so the
-    // wave appears where the edge actually is.
-    {
-        const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
-        // Two things per window: where it was last frame (for speed) and where
-        // it last threw a wave (to stop it throwing one every single frame).
-        static std::unordered_map<uint64_t, std::pair<Vector2D, Vector2D>> track;
-        // Identity must be the WINDOW, not its shape. Keying on width/height
-        // meant two same-sized windows shared one entry, so each one's position
-        // overwrote the other's every frame and both produced huge fake
-        // velocities while sitting still -- waves from windows nobody touched,
-        // and none from the one being dragged. Each decoration owns its own
-        // sample framebuffer, so that pointer is a genuine per-window identity.
-        const uint64_t id = reinterpret_cast<uintptr_t>(sampleFramebuffer.get());
-        auto& prev = track[id];
-        const Vector2D vel{here.x - prev.first.x, here.y - prev.first.y};
-        prev.first = here;
-        const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
-        // THE RATE IS THE WHOLE PROBLEM. This runs once per window per FRAME,
-        // so a drag was firing ~165 impulses a second into nearly the same spot
-        // while the simulation only spends about 120 -- energy compounding on
-        // itself until it detonated and wiped the surface flat. No amplitude is
-        // small enough to survive being applied that often.
-        //
-        // A real edge does not deposit a wave per frame either; it displaces
-        // water as it sweeps through it. So a wave is thrown only once the
-        // window has actually covered ground since the last one, which also
-        // makes fast drags produce more waves than slow ones for free.
-        const Vector2D sinceLast{here.x - prev.second.x, here.y - prev.second.y};
-        const double travelled = std::sqrt(sinceLast.x * sinceLast.x
-                                         + sinceLast.y * sinceLast.y);
-        if (mag > 0.35 && mag < 260.0 && travelled > 55.0) {
-            prev.second = here;
-            const float sc = g_pGlobalState->config.shimmerScale
-                           ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
-            const Vector2D dir{vel.x / mag, vel.y / mag};
-            const Vector2D lead{here.x + rawBox.width  * (0.5 + dir.x * 0.5),
-                                here.y + rawBox.height * (0.5 + dir.y * 0.5)};
-            const Vector2D g{(lead.x - desk.x * 0.5) / std::max(desk.x, 1.0),
-                             (lead.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
-            const Vector2D wp{0.5 + g.x * 0.85 * sc, 0.5 + g.y * 0.85 * sc};
-            g_pGlobalState->sloshQueue.push_back(
-                {static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105),
-                 static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105),
-                 // Wider than a splash: an edge pushes a broad front of water,
-                 // so a compact source reads as a dropped stone instead.
-                 0.085f,
-                 // Strictly proportional to how fast the edge is moving, with
-                 // no floor. The old form added a fixed 0.03 to everything and
-                 // saturated almost immediately, so a slow drag hit nearly as
-                 // hard as a fast one -- it did not track the drag at all, it
-                 // just fired. Much gentler overall, too: this is water being
-                 // pushed aside, not something thrown into it.
-                 static_cast<float>(std::min(mag * 0.0022, 0.075))});
-            if (g_pGlobalState->sloshQueue.size() > 6)
-                g_pGlobalState->sloshQueue.erase(g_pGlobalState->sloshQueue.begin());
-        }
-    }
+    // WINDOW-MOTION WAVES: OFF. Three attempts, all wrong in the same way, so
+    // this is a design note rather than a constant waiting to be tuned.
+    //
+    // A Gaussian height bump IS a splash -- a stone dropped in. It can never
+    // read as dragging however small or rare it is made. Dragging looks the way
+    // it does because water piles against the advancing face and leaves a
+    // trough behind that flows back in, which is a DIPOLE: positive ahead of
+    // the edge, negative behind it, oriented along the motion.
+    //
+    // The energy was also accounted against the wrong variable. Displacement
+    // belongs to DISTANCE MOVED, deposited every frame in tiny amounts, so a
+    // 500px drag delivers the same total whether it takes half a second or
+    // five. Mine was per-event and therefore proportional to TIME, which is
+    // why speed made it detonate instead of making it stronger.
+    //
+    // Doing it properly: accumulate this frame's displacement, apply ONE dipole
+    // per simulation step scaled by distance covered since the last step (not a
+    // queue of discrete splashes -- the render loop runs faster than the sim,
+    // so any queue either overflows or lags), and give the impulse an
+    // anisotropic shape stretched across the direction of travel so it reads as
+    // an edge rather than a point.
     glUniform2f(uniforms.winSize,
                 static_cast<float>(rawBox.width), static_cast<float>(rawBox.height));
     glUniform2f(uniforms.deskSize,
