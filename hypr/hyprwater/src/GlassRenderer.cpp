@@ -364,9 +364,10 @@ void renderTrailTex() {
     for (int i = 0; i < st.pendLen; i++)
         put(st.pendRing[(st.pendHead + i) % SGlobalState::PEND_RING], 1.0f);
     put(st.drag, 1.0f);
-    // The stroke absorbed by the current sim step fades here at exactly the
-    // complement of the crossfade its texture copy is arriving with.
-    put(st.lastAbsorbed, 1.0f - st.waveSubFrac);
+    // The strokes absorbed by the current sim step fade here at exactly the
+    // complement of the crossfade their texture copies are arriving with.
+    for (int i = 0; i < st.lastAbsCount; i++)
+        put(st.lastAbs[i], 1.0f - st.waveSubFrac);
 
     auto sh = g_pHyprOpenGL->useShader(sm.trailShader);
     sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
@@ -777,18 +778,6 @@ void stepWaveSim() {
         // fires, so the bottom of the slider has to be an actual OFF rather
         // than the slowest available drip -- otherwise there is no way to watch
         // the water finish settling, which is the only way to judge damping.
-        // Upload a stroke as this step's impulse: dipole laid along
-        // [px,py -> x,y], amplitude normalised by the stroke's length so a
-        // long slow-motion sweep deposits the same total displacement as the
-        // sum of the short ones it replaces.
-        auto uploadStroke = [&u](const SGlobalState::SDrag& s, float fallbackR) {
-            const float ra  = s.r > 0.0f ? s.r : fallbackR;
-            const float len = std::hypot(s.x - s.px, s.y - s.py);
-            const float amp = s.amount / (1.0f + 0.6f * len / ra);
-            glUniform2f(u.impulseDir, s.dx, s.dy);
-            glUniform2f(u.impulseB, s.px, s.py);
-            glUniform4f(u.impulse, s.x, s.y, ra, amp);
-        };
         // ── SLOT 2: round events (ambient swell / click tap) ─────────────
         // Independent of the stroke slot below, so splashes never starve the
         // drag-trail absorption and vice versa.
@@ -834,44 +823,56 @@ void stepWaveSim() {
             }
         }
 
-        // ── SLOT 1: strokes only (drag trail absorption, then mouse) ─────
-        g_pGlobalState->lastAbsorbed.amount = 0.0f;
-        if (g_pGlobalState->drag.amount > 1e-5f || g_pGlobalState->pendLen > 0) {
+        // ── STROKE SLOTS: drain the ring HARD, up to 8 segments per step ──
+        // Segments waiting around analytically while their absorbed siblings
+        // flow with the currents was the static-vs-flowing handoff chop; with
+        // 8 slots the ring drains faster than any whip can fill it, so a
+        // segment spends at most a step or two analytic — while the currents
+        // near a fresh drag are still too weak to expose the handoff.
+        {
             auto& st2 = *g_pGlobalState;
-            // The head stroke moves into the analytic ring; the SIM only
-            // absorbs the OLDEST ring entry each step. The whole ring keeps
-            // rendering analytically in the glass shader meanwhile, so a fast
-            // curved whip at low sim speed stays a smooth polyline instead of
-            // ticking in one chunk per rare step.
+            st2.lastAbsCount = 0;
             if (st2.drag.amount > 1e-5f) {
                 pushPendStroke(st2.drag);
                 st2.drag.px = st2.drag.x;
                 st2.drag.py = st2.drag.y;
                 st2.drag.amount = 0.0f;
             }
-            if (st2.pendLen > 0) {
-                // Remember what is being absorbed: the glass shader keeps
-                // rendering it this interval at (1 - subFrac) weight, the
-                // exact complement of its texture copy fading in.
-                st2.lastAbsorbed = st2.pendRing[st2.pendHead];
-                uploadStroke(st2.lastAbsorbed, 0.045f);
+            float seg[32] = {0}, par[32] = {0};
+            int   ns = 0;
+            auto slot = [&](const SGlobalState::SDrag& s, float fallbackR, bool round) {
+                if (ns >= 8 || s.amount <= 1e-5f)
+                    return;
+                const float ra  = s.r > 0.0f ? s.r : fallbackR;
+                const float len = std::hypot(s.x - s.px, s.y - s.py);
+                seg[ns * 4 + 0] = round ? s.x : s.px;
+                seg[ns * 4 + 1] = round ? s.y : s.py;
+                seg[ns * 4 + 2] = s.x;  seg[ns * 4 + 3] = s.y;
+                par[ns * 4 + 0] = round ? 0.0f : s.dx;
+                par[ns * 4 + 1] = round ? 0.0f : s.dy;
+                par[ns * 4 + 2] = ra;
+                par[ns * 4 + 3] = s.amount / (round ? 1.0f : (1.0f + 0.6f * len / ra));
+                ns++;
+            };
+            while (st2.pendLen > 0 && ns < 8) {
+                const auto& sgm = st2.pendRing[st2.pendHead];
+                // Remember what is being absorbed: the trail pass keeps
+                // rendering it this interval at (1 - subFrac), the exact
+                // complement of its texture copy fading in.
+                if (st2.lastAbsCount < 8)
+                    st2.lastAbs[st2.lastAbsCount++] = sgm;
+                slot(sgm, 0.045f, false);
                 st2.pendHead = (st2.pendHead + 1) % SGlobalState::PEND_RING;
                 st2.pendLen--;
-            } else {
-                glUniform2f(u.impulseDir, 0.0f, 0.0f);
-                glUniform2f(u.impulseB, 0.0f, 0.0f);
-                glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
             }
-        } else if (g_pGlobalState->mouse.amount > 1e-5f) {
-            auto& mk2 = g_pGlobalState->mouse;
-            uploadStroke(mk2, 0.010f);
-            mk2.px = mk2.x;
-            mk2.py = mk2.y;
-            mk2.amount = 0.0f;
-        } else {
-            glUniform2f(u.impulseDir, 0.0f, 0.0f);
-            glUniform2f(u.impulseB, 0.0f, 0.0f);
-            glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
+            if (st2.mouse.amount > 1e-5f && ns < 8) {
+                slot(st2.mouse, 0.010f, false);
+                st2.mouse.px = st2.mouse.x;
+                st2.mouse.py = st2.mouse.y;
+                st2.mouse.amount = 0.0f;
+            }
+            glUniform4fv(u.sSeg, 8, seg);
+            glUniform4fv(u.sPar, 8, par);
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, fbId(d0));

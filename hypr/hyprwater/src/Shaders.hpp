@@ -866,19 +866,15 @@ uniform sampler2D tex;        // previous state (R = h, G = h_prev)
 uniform vec2  texelSize;
 uniform float waveSpeed;      // (c*dt/dx)^2 — MUST stay < 0.5 or it explodes
 uniform float damping;        // per-step energy retention, slightly below 1
-uniform vec4  impulse;        // xy = position (uv), z = radius, w = strength
-// Direction of a DRAGGED edge, zero for an ordinary splash. A dragged edge does
-// not make a splash: it piles water against its advancing face and leaves a
-// trough behind that flows back in. That shape is a dipole -- positive one side,
-// negative the other -- and the derivative of a Gaussian is exactly that, so
-// differentiating an elliptical bump along the direction of travel gives the
-// whole thing in one expression. Stretching the ellipse ACROSS that direction is
-// what makes it read as an edge sweeping through rather than a point source.
-uniform vec2  impulseDir;
-// Start of the stroke this impulse covers (== impulse.xy for point sources).
-// See the dipole branch: slow simulation + fast window = a long swept path
-// per step, deposited along the segment rather than stamped at its end.
-uniform vec2  impulseB;
+// STROKE SLOTS. A dragged edge does not make a splash: it piles water against
+// its advancing face and leaves a trough behind — a dipole, the derivative of
+// an elliptical bump along the travel direction, laid along the SEGMENT the
+// edge swept. Eight slots so the sim can absorb a whole burst of
+// distance-subdivided whip segments in ONE step: segments waiting around
+// analytically while the sim's copies flow with the currents was the
+// static-vs-flowing handoff chop the user isolated.
+uniform vec4  sSeg[8];        // xy = start, zw = end (uv)
+uniform vec4  sPar[8];        // xy = direction, z = radius, w = strength
 // Second, ROUND-ONLY impulse slot: ambient splashes and click taps, so they
 // never contend with the stroke slot above. Ambient amplitude arrives spread
 // over several steps (a swell, not a pop) — at low simulation speed a
@@ -1007,42 +1003,31 @@ void main() {
     // 0.25 explicit-diffusion stability bound.
     float hNext = (2.0 * h - hPrev + localSpeed * l + viscosity * (l - lp)) * damping;
 
-    // Occasional localized push — "someone moved at the far end of the pool".
-    // Energy arrives later, from a direction, and then fades: the pacing the
-    // constant-amplitude sine sum could never produce.
-    if (impulse.w != 0.0) {
-        // v_texcoord again: the thing splashing is an external object at a
-        // fixed place, not a parcel of the flowing sheet.
-        vec2  q  = (v_texcoord - impulse.xy) * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
-        float ra = max(impulse.z, 1e-9);
-        if (dot(impulseDir, impulseDir) < 0.5) {
-            // Ordinary splash: round bump, unchanged.
+    // Stroke deposits — up to eight segments per step (see the uniform note).
+    // v_texcoord, not the advected uv: the thing pushing is an external
+    // object at a fixed place, not a parcel of the flowing sheet.
+    for (int si = 0; si < 8; si++) {
+        if (sPar[si].w == 0.0) continue;
+        vec2  A  = sSeg[si].xy;
+        vec2  AB = sSeg[si].zw - A;
+        float l2 = dot(AB, AB);
+        float ra = max(sPar[si].z, 1e-9);
+        if (dot(sPar[si].xy, sPar[si].xy) < 0.5) {
+            // Round splash (no direction): plain bump at the segment start.
+            vec2  q = (v_texcoord - A) * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
             float d = length(q);
-            hNext += exp(-(d * d) / (ra * ra)) * impulse.w;
+            hNext += exp(-(d * d) / (ra * ra)) * sPar[si].w;
         } else {
-            // A dragged edge sweeps a PATH between simulation steps, and at
-            // low simulation speed that path is long: stamping the whole
-            // accumulated displacement at the endpoint made slow-motion drags
-            // "tick" one blob per step. The dipole is therefore laid along
-            // the SEGMENT the edge actually covered (impulseB = where the
-            // stroke began, impulse.xy = where it is now): distance is taken
-            // to the nearest point of the segment, so the crest is a
-            // continuous ridge along the swept path. A stationary source
-            // (impulseB == impulse.xy) degenerates to the old point dipole.
-            vec2  A  = impulseB;
-            vec2  AB = impulse.xy - A;
-            float l2 = dot(AB, AB);
             float t  = l2 > 1e-12 ? clamp(dot(v_texcoord - A, AB) / l2, 0.0, 1.0) : 0.0;
             vec2  r  = v_texcoord - (A + t * AB);
-            float along  = dot(r, impulseDir);
-            float across = dot(r, vec2(-impulseDir.y, impulseDir.x));
+            float along  = dot(r, sPar[si].xy);
+            float across = dot(r, vec2(-sPar[si].y, sPar[si].x));
             float rb = ra * 3.5;
             float e  = exp(-(along * along) / (ra * ra)
                            - (across * across) / (rb * rb));
-            // d/d(along) of that bump: positive ahead of the edge, negative
-            // behind it, and it integrates to zero, so a drag displaces water
-            // rather than adding any.
-            hNext += impulse.w * (along / ra) * e * 2.0;
+            // d/d(along): positive ahead, negative behind, integrates to
+            // zero — a drag displaces water rather than adding any.
+            hNext += sPar[si].w * (along / ra) * e * 2.0;
         }
     }
 

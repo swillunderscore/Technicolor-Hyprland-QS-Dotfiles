@@ -73,10 +73,12 @@ struct SGlobalState {
     SDrag pendRing[PEND_RING];
     int   pendHead = 0;
     int   pendLen  = 0;
-    // The stroke absorbed by the CURRENT sim step: rendered analytically one
-    // interval longer, weighted (1 - waveSubFrac) in the shader so its
-    // analytic half fades out exactly as its texture half fades in.
-    SDrag lastAbsorbed;
+    // The strokes absorbed by the CURRENT sim step (up to 8 per step now):
+    // rendered analytically one interval longer, weighted (1 - waveSubFrac)
+    // in the trail pass so their analytic half fades out exactly as their
+    // texture half fades in.
+    SDrag lastAbs[8];
+    int   lastAbsCount = 0;
 
     // Ambient splash being fed into the sim as a SWELL over several steps
     // (one-step entry read as a tick on slow water).
