@@ -145,7 +145,7 @@ battery_pct() { local d; d="$(battery_path)"; [ -n "$d" ] && cat "$d/capacity" 2
 # while holding a reduced tier we read ONE key and only re-issue if it drifted
 # back. At tier 0 there is nothing to hold, so an idle desktop sends zero IPC.
 daemon() {
-    local tier=0 busy bat want
+    local tier=0 busy bat want hicount=0
     apply_tier 0
     while :; do
         [ -f "$CONF" ] && . "$CONF"
@@ -164,18 +164,35 @@ daemon() {
             [ "$GPU_LOW" -lt 0 ] && GPU_LOW=0
         fi
 
-        # A fullscreen app pins the tier immediately — no ramp, no waiting for a
-        # threshold that a frame-capped game might never cross. Dropping straight
-        # to the floor also means the effects are gone BEFORE the game finishes
-        # loading, rather than stepping down over six seconds while it stutters.
+        # FULLSCREEN LOWERS THE BAR, IT DOES NOT PIN THE TIER.
+        # Being fullscreen is not the same as needing the GPU. Plenty of very
+        # good games are cheap to render, and stripping someone's desktop for a
+        # fullscreen card game is pure loss. So fullscreen only makes the
+        # governor readier to act: the step-down threshold drops to
+        # FULLSCREEN_GPU_HIGH, and the step-up threshold moves with it.
+        #   light game (say 20% GPU)  -> nothing happens, effects stay
+        #   heavy game (say 90% GPU)  -> steps down quickly
+        # An earlier version pinned straight to MAX_TIER on any fullscreen
+        # window; that was too blunt and is deliberately not what happens now.
+        hi="$GPU_HIGH"; lo="$GPU_LOW"
         if fullscreen_app; then
-            tier="$MAX_TIER"
-        else
-            busy="$(gpu_busy)"
-            if [ "$busy" -ge 0 ] 2>/dev/null; then
-                if   [ "$busy" -ge "$GPU_HIGH" ] && [ "$tier" -lt "$MAX_TIER" ]; then tier=$((tier+1))
-                elif [ "$busy" -le "$GPU_LOW"  ] && [ "$tier" -gt 0 ];            then tier=$((tier-1))
-                fi
+            hi="${FULLSCREEN_GPU_HIGH:-40}"
+            lo=$((hi - 15)); [ "$lo" -lt 0 ] && lo=0
+        fi
+        [ "$lo" -ge "$hi" ] && { lo=$((hi - 5)); [ "$lo" -lt 0 ] && lo=0; }
+
+        busy="$(gpu_busy)"
+        if [ "$busy" -ge 0 ] 2>/dev/null; then
+            # SUSTAINED load only. gpu_busy_percent is an instantaneous sample,
+            # and a single 2 s poll can catch a one-off spike — a wallpaper
+            # transition, a video seek, a shader compile — at 90%+ while the
+            # true load is half that. Stepping down on one spike is how the
+            # water "randomly turned itself off". Two consecutive high polls
+            # (~4 s) means the load is real; a genuinely heavy game still steps
+            # down fast, a hiccup no longer costs the desktop its effects.
+            if [ "$busy" -ge "$hi" ]; then hicount=$((hicount+1)); else hicount=0; fi
+            if   [ "$hicount" -ge 2 ] && [ "$tier" -lt "$MAX_TIER" ]; then tier=$((tier+1)); hicount=0
+            elif [ "$busy" -le "$lo" ] && [ "$tier" -gt 0 ];          then tier=$((tier-1))
             fi
         fi
 

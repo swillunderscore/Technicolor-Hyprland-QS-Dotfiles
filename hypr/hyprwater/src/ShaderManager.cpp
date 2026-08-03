@@ -39,6 +39,7 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.waveTex                  = glGetUniformLocation(program, "waveTex");
     glassUniforms.shimmerDepth             = glGetUniformLocation(program, "shimmerDepth");
     glassUniforms.waveSubFrac              = glGetUniformLocation(program, "waveSubFrac");
+    glassUniforms.waveTexel                = glGetUniformLocation(program, "waveTexel");
     glassUniforms.waveBias           = glGetUniformLocation(program, "waveBias");
     glassUniforms.shimmerMurk        = glGetUniformLocation(program, "shimmerMurk");
     glassUniforms.shimmerAbsorption  = glGetUniformLocation(program, "shimmerAbsorption");

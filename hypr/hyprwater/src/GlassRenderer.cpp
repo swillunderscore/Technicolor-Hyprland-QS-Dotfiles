@@ -148,6 +148,7 @@ static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
 //  carried at the current's speed, and 4000 steps stay bounded.
 // ============================================================================
 static constexpr int FLUID_JACOBI = 24;
+static constexpr int SIM          = 1024;   // height-field grid
 
 // Grid size comes from shimmer:currents_resolution (default 512). At 512 the
 // desktop spans ~107 fluid texels, a typical window ~27 — swirls small enough
@@ -173,7 +174,7 @@ static void bindSimTexture(int unit, const SP<Render::IFramebuffer>& fb) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res) {
+static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res, const float dt) {
     auto& st = *g_pGlobalState;
     const auto& fu = st.shaderManager.fluidUniforms;
     const float texel = 1.0f / res;
@@ -186,11 +187,13 @@ static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res) {
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
         sh->setUniformInt(SHADER_TEX, 3);
         glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
-        glUniform1f(fu.aDt, 1.0f / 120.0f);
+        glUniform1f(fu.aDt, dt);
         // ~4 s momentum half-life on top of what the projection and the
         // semi-Lagrangian interpolation already dissipate: eddies outlive the
         // drag that made them by a few seconds, then the water goes still.
-        glUniform1f(fu.aDissipation, 0.998f);
+        // Per-step retention follows the sub-step size so the half-life is a
+        // property of simulated time, not of how finely it is sliced.
+        glUniform1f(fu.aDissipation, std::pow(0.998f, dt * 120.0f));
         if (dragNow.amount > 1e-5f) {
             // Same spot, direction and window-width radius as the height
             // dipole this step will fire — the dipole is the bow wave, this is
@@ -291,11 +294,16 @@ void queueClickSplash() {
 }
 
 void stepWaveSim() {
-    static constexpr int SIM = 1024;
-
     auto& shaderManager = g_pGlobalState->shaderManager;
     if (!shaderManager.isInitialized())
         return;
+
+    // Crude integrator of recently-injected wave energy, for the
+    // self-limiting agitation: real water cannot stack waves without bound —
+    // past a point they break and the energy leaves the wave field. A height
+    // field has no breaking, so this is its diminishing-returns stand-in.
+    static float seaEnergy = 0.0f;
+    int SUB = 1;   // sub-steps per nominal 1/120 s step (see the time block)
 
     // Called from the glass pass, which runs once PER GLASSED SURFACE — with
     // several glass windows up that would advance the simulation several times
@@ -326,7 +334,7 @@ void stepWaveSim() {
         // asks for the same answer.
         static steady_clock::time_point origin{};
         static double simTime  = 0.0;   // simulated seconds consumed so far
-        static uint64_t done   = 0;     // steps already integrated
+        static double simDone  = 0.0;   // simulated seconds already integrated
         static double lastReal = 0.0;
         constexpr double STEP  = 1.0 / 120.0;
 
@@ -343,16 +351,33 @@ void stepWaveSim() {
         if (dReal > 0.25) dReal = 0.25;   // swallow stalls rather than replaying them
         lastReal = real;
         simTime += dReal * speed;
+        // Injected-energy estimate for the self-limiting agitation below:
+        // bleeds away on a ~2 s time constant of REAL time.
+        seaEnergy *= static_cast<float>(std::exp(-dReal * 0.5));
 
-        const uint64_t want = static_cast<uint64_t>(simTime / STEP);
-        steps = static_cast<int>(std::min<uint64_t>(want > done ? want - done : 0, 4));
-        done += steps;
-        if (steps == 4) done = want;      // caught up after a stall
+        // SUB-STEPPING. At low speed, whole 1/120 s steps arrive so rarely
+        // that the surface — and especially a drag's deposits — visibly tick
+        // between states. Instead of stepping rarely at full size, step more
+        // often at reduced size: SUB sub-steps of STEP/SUB with the Courant
+        // number divided by SUB² keeps the physical wave speed identical
+        // (c ∝ sqrt(s)·rate) while the update rate stays ≥ ~40 Hz well down
+        // the slider. Never smaller than STEP/4: the Laplacian's per-step
+        // contribution must stay above fp16 precision — the old "just scale
+        // dt" approach died exactly there.
+        SUB = speed >= 0.4 ? 1 : (speed >= 0.15 ? 2 : 4);
+        const double sub = STEP / SUB;
 
-        // Phase within the current step, also from the clock, so both halves of
-        // a spanning window blend to the same point between states.
+        double pending = simTime - simDone;
+        int n = static_cast<int>(pending / sub);
+        const int cap = 4 * SUB;
+        if (n > cap) { n = cap; simDone = simTime - cap * sub; }   // caught up after a stall
+        steps = n;
+        simDone += n * sub;
+
+        // Phase within the current sub-step, also from the clock, so both
+        // halves of a monitor-spanning window blend to the same point.
         g_pGlobalState->waveSubFrac =
-            static_cast<float>(std::clamp(simTime / STEP - static_cast<double>(done), 0.0, 1.0));
+            static_cast<float>(std::clamp((simTime - simDone) / sub, 0.0, 1.0));
 
         if (steps <= 0)
             return;
@@ -543,7 +568,9 @@ void stepWaveSim() {
     // Still below 1, so agitation genuinely settles when impulses pause.
     // Also fixed, for the same reason: decay is part of the physics, and
     // scaling it changed how the water behaved rather than how fast it ran.
-    glUniform1f(u.damping, 0.9994f);
+    // Per-SUB-step: damping is a per-step retention, so K smaller steps need
+    // the K-th root to bleed the same energy per simulated second.
+    glUniform1f(u.damping, SUB == 1 ? 0.9994f : std::pow(0.9994f, 1.0f / SUB));
     // Fixed, not exposed. This varies the local wave speed the way an uneven
     // bottom does, which is what stops wavefronts from staying perfect arcs.
     // There was a slider for it, but "how fake would you like the floor to be"
@@ -571,6 +598,9 @@ void stepWaveSim() {
     const float ag  = std::clamp(agit, 0.0f, 1.0f);
     uint64_t every = static_cast<uint64_t>(
         std::exp(std::log(900.0f) + (std::log(6.0f) - std::log(900.0f)) * ag) + 0.5f);
+    // `every` counts STEPS; sub-steps are SUB× more frequent, so scale it to
+    // keep the disturbance rate fixed in real time.
+    every *= static_cast<uint64_t>(SUB);
 
     // "Ripples vs swell" IS viscosity: impulse size only chooses what goes IN,
     // viscosity chooses what SURVIVES, and the latter is what the label means.
@@ -600,12 +630,16 @@ void stepWaveSim() {
     const float disc = std::max(K * K * 0.5f - 4.0f * visc, 0.0f);
     const float uRoot = (K / std::sqrt(2.0f) + std::sqrt(disc)) * 0.5f;
     glUniform1f(u.hBias, g_pGlobalState->waveBias);
-    glUniform1f(u.viscosity, visc);
-    glUniform1f(u.maxSpeed, uRoot * uRoot);
+    // Courant number and viscosity both scale with dt² ∝ 1/SUB², which is
+    // exactly what keeps the physical wave speed and dissipation identical
+    // across sub-step regimes (and strictly inside the stability ceiling,
+    // which was solved for the full-size step).
+    glUniform1f(u.viscosity, visc / (SUB * SUB));
+    glUniform1f(u.maxSpeed, uRoot * uRoot / (SUB * SUB));
     // Exactly 0 when currents are off: the shader's advection branch keys on
     // it, so a disabled field costs one compare and no texture read.
     glUniform1i(u.velTex, 4);
-    glUniform1f(u.flowAdvect, fluidOn ? 1.0f / 120.0f : 0.0f);
+    glUniform1f(u.flowAdvect, fluidOn ? 1.0f / (120.0f * SUB) : 0.0f);
     // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
     // in physics and wrong in use: at speed 0.002 it worked out to one
     // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is
@@ -636,7 +670,7 @@ void stepWaveSim() {
             // later step.
             stepFluidOnce(g_pGlobalState->drag.amount > 1e-5f
                               ? g_pGlobalState->drag : g_pGlobalState->mouse,
-                          fluidRes());
+                          fluidRes(), 1.0f / (120.0f * SUB));
             // The fluid passes bound their own programs; the wave uniforms set
             // above still live in the wave program's state, so rebinding is
             // all that is needed.
@@ -680,7 +714,14 @@ void stepWaveSim() {
             // Calm water is not just disturbed less often, it is disturbed more
             // GENTLY -- a lake gets a stray ripple, not a cannonball every ten
             // seconds. Without this the low end read as rare violent splashes.
-            const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag);
+            // SELF-LIMITING: each disturbance is scaled by how much energy is
+            // already in flight. Real water cannot stack waves without bound —
+            // past a point they break — so at high Activity the surface
+            // approaches a lively equilibrium instead of saturating into mush
+            // pinned against the amplitude limiter.
+            const float tame = 1.0f / (1.0f + seaEnergy * 0.12f);
+            const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag) * tame;
+            seaEnergy += amp;
             const float ix = 0.5f + std::cos(ang) * rr, iy = 0.5f + std::sin(ang) * rr;
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
             glUniform2f(u.impulseB, ix, iy);
@@ -981,6 +1022,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glUniform1f(uniforms.shimmerDepth,
                     cfg.shimmerDepth ? static_cast<float>(**cfg.shimmerDepth) : 1.0f);
         glUniform1f(uniforms.waveSubFrac, g_pGlobalState->waveSubFrac);
+        glUniform1f(uniforms.waveTexel, 1.0f / SIM);
         glUniform1f(uniforms.waveBias, g_pGlobalState->waveBias);
         glUniform1f(uniforms.shimmerAbsorption,
                     cfg.shimmerAbsorption ? static_cast<float>(**cfg.shimmerAbsorption) : 1.0f);

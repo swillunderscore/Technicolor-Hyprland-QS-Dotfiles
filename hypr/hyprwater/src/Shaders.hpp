@@ -68,6 +68,7 @@ uniform int   shimmerLightFromBackdrop;
 uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
+uniform float waveTexel;     // 1 / simulation grid size, for the C1 read
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
 // Where this window sits on the desktop, and how big the desktop is, both in
@@ -201,6 +202,18 @@ float waveH(vec2 q) {
     // real simulated water. GL_CLAMP_TO_EDGE only ever engages far outside the
     // window, where nothing is drawn.
     vec2 uv = 0.5 + (q - 0.5) * (2.0 * VIS);
+    // C1-CONTINUOUS read. Plain bilinear is only C0: at the magnification a
+    // high wave-size setting reaches (one sim texel across ~16 screen pixels)
+    // the caustic — built from SECOND derivatives — printed every texel cell
+    // as a tile of near-constant curvature, a blocky grid-scale residue that
+    // survived even the isotropic stencil. Re-mapping the sample point with a
+    // quintic ease inside each texel makes the interpolated surface C1 at
+    // texel borders for two ALU ops and zero extra taps.
+    vec2 p = uv / waveTexel - 0.5;
+    vec2 i = floor(p);
+    vec2 f = p - i;
+    f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    uv = (i + 0.5 + f) * waveTexel;
     // R is the newest state, G the one before it. Blending by how far we are
     // between them makes the motion continuous even when a simulation step
     // spans many frames — which is exactly the case at low speed. Without this,
