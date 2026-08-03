@@ -996,7 +996,7 @@ FloatingWindow {
         { key: "shimmer:viscosity",     label: "Viscosity",    hint: "How thick the water is. LOW = thin: ripples persist, the surface stays busy, waves travel fast. HIGH = syrup: short waves die within moments, only long rollers survive, waves travel slower.", from: 0, to: 1,  def: 0.6,  step: 0 },
         { key: "shimmer:absorption",    label: "Water color", hint: "How much the water itself absorbs. 1.0 is the measured spectrum for pure water \u2014 strong in red, almost none in blue, which is why depth turns things blue. 0 makes the water colourless, which no real water is, but it is your desktop.", from: 0, to: 1,  def: 1.0,  step: 0 },
         { key: "shimmer:murk",          label: "Murk",         hint: "Suspended silt. Particles block what is behind them AND scatter stray light at you, so murky water washes toward a pale haze rather than going dark. Colourless at source \u2014 large particles scatter all wavelengths equally, same reason fog is white.", from: 0, to: 1,  def: 0.0,  step: 0 },
-        { key: "shimmer:drag",          label: "Drag force",   hint: "How much water a window shoves aside as you move it. The disturbance is a dipole as wide as the window \u2014 water piles against the advancing face and a trough behind it fills back in \u2014 and what it deposits follows the distance dragged, not how fast you dragged it. Zero leaves the surface alone.", from: 0, to: 1,  def: 0.35, step: 0 },
+        { key: "shimmer:mouse",         label: "Mouse wake",   hint: "How heavily the cursor rests on the water. A fingertip trailed through the pool \u2014 a thin wake of ripples follows where you point, deposited by distance moved, not speed. Zero lifts it off the surface entirely.", from: 0, to: 1,  def: 0.3, step: 0 },
     ]
 
     // Log-scaled sliders. A linear 0.002..3 track spends ~99% of its travel
@@ -2359,15 +2359,34 @@ FloatingWindow {
                             }
 
                             Rectangle {
+                                width: parent.width; height: Math.max(50, winPhysCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                                Column {
+                                    id: winPhysCol
+                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    anchors.right: winPhysTg.left; anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                    Text { text: "Window physics"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                    Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                           text: "Windows sit in the water. Dragging one shoves it aside — a crest piles against the advancing edge, a trough fills in behind, sized to the window and deposited by distance dragged. Off, windows glide over the surface without touching it." }
+                                }
+                                TcToggle {
+                                    id: winPhysTg
+                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    on: win.glassValue({ key: "shimmer:window_physics", def: 1 }) >= 0.5
+                                    onToggled: (v) => { win.glassSet("shimmer:window_physics", v ? 1 : 0); win.loadGlass() }
+                                }
+                            }
+
+                            Rectangle {
                                 width: parent.width; height: Math.max(50, curCol.implicitHeight + 18); radius: 9; color: win.rowBg
                                 Column {
                                     id: curCol
                                     anchors.left: parent.left; anchors.leftMargin: 12
                                     anchors.right: curTg.left; anchors.rightMargin: 10
                                     anchors.verticalCenter: parent.verticalCenter; spacing: 2
-                                    Text { text: "Currents"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                    Text { text: "Velocity field"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
                                     Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
-                                           text: "A velocity field under the surface. Dragging a window leaves real momentum in the water — whirlpools spin off its corners and linger for a few seconds, and waves crossing a current get bent and carried by it. Off, the water still waves but never flows." }
+                                           text: "The water itself flows. Motion leaves real momentum behind — whirlpools spin off a dragged window's corners and linger for a few seconds, and waves crossing a current get bent and carried by it. Off, the water still waves but never flows." }
                                 }
                                 TcToggle {
                                     id: curTg

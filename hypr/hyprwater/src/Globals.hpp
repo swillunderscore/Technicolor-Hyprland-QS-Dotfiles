@@ -47,6 +47,14 @@ struct SGlobalState {
     // DISTANCE covered rather than on how long the drag took.
     struct SDrag { float x = 0, y = 0, dx = 0, dy = 0, amount = 0, r = 0; };
     SDrag drag;
+    // The mouse's own wake — same accumulator shape, far lighter touch. A
+    // cursor is a fingertip trailed in the pool, not a hull.
+    SDrag mouse;
+
+    // Logical desktop bounds, accumulated as monitors render (no compositor-
+    // wide list is in scope here). Shared by the window-drag mapping and the
+    // mouse-wake mapping so both live on the same sheet of water.
+    Vector2D deskMax{1920.0, 1080.0};
 
     // Currents (Stable Fluids) state. The height field above is a SCALAR — it
     // has no curl, so it cannot hold an eddy no matter how it is forced. This

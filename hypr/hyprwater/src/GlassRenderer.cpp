@@ -12,6 +12,7 @@
 #include <GLES3/gl32.h>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 
 namespace GlassRenderer {
 
@@ -325,6 +326,42 @@ void stepWaveSim() {
             return;
     }
 
+    // ---- Mouse wake ------------------------------------------------------
+    // The cursor is a fingertip trailed in the pool: same distance-based
+    // accumulator as a dragged window, mapped through the same desktop-space
+    // formula so it disturbs the same sheet, but far lighter and far smaller.
+    // Sampled here (once per sim advance) rather than per surface — the cursor
+    // is global, there is nothing per-window about it.
+    {
+        const auto& mcfg = g_pGlobalState->config;
+        const float mforce = mcfg.shimmerMouse
+                           ? std::clamp(static_cast<float>(**mcfg.shimmerMouse), 0.0f, 1.0f) : 0.0f;
+        static Vector2D prevCur{-1e9, -1e9};
+        const Vector2D cur = g_pInputManager ? g_pInputManager->getMouseCoordsInternal() : prevCur;
+        const Vector2D d{cur.x - prevCur.x, cur.y - prevCur.y};
+        prevCur = cur;
+        const double mag = std::sqrt(d.x * d.x + d.y * d.y);
+        // Same sanity window as window drags: ignore sub-pixel jitter and
+        // teleports (first sample, warps).
+        if (mforce > 0.001f && mag > 0.3 && mag < 400.0) {
+            const auto& desk = g_pGlobalState->deskMax;
+            const float sc = mcfg.shimmerScale
+                           ? static_cast<float>(**mcfg.shimmerScale) : 1.0f;
+            const Vector2D g{(cur.x - desk.x * 0.5) / std::max(desk.x, 1.0),
+                             (cur.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
+            auto& mk = g_pGlobalState->mouse;
+            mk.x  = static_cast<float>(0.5 + g.x * 0.85 * sc * 2.0 * 0.105);
+            mk.y  = static_cast<float>(0.5 + g.y * 0.85 * sc * 2.0 * 0.105);
+            mk.dx = static_cast<float>(d.x / mag);
+            mk.dy = static_cast<float>(d.y / mag);
+            // A fingertip, not a hull: ~10 sim texels wide, and per-pixel
+            // deposit about a third of a window's at full slider.
+            mk.r  = 0.010f;
+            mk.amount = std::min(mk.amount + static_cast<float>(mag) * 0.00012f * mforce,
+                                 0.012f * std::max(mforce, 0.05f));
+        }
+    }
+
     auto& fbA = g_pGlobalState->waveFb[0];
     auto& fbB = g_pGlobalState->waveFb[1];
     if (!fbA) fbA = g_pHyprRenderer->createFB("hyprwater-wave-a");
@@ -555,7 +592,12 @@ void stepWaveSim() {
         // flat — momentum alone cannot raise water here, so without the dipole
         // a drag across calm water would be invisible.
         if (fluidOn) {
-            stepFluidOnce(g_pGlobalState->drag, fluidRes());
+            // One force slot per step; the window's momentum outranks the
+            // fingertip's. Whichever is skipped keeps its accumulation for a
+            // later step.
+            stepFluidOnce(g_pGlobalState->drag.amount > 1e-5f
+                              ? g_pGlobalState->drag : g_pGlobalState->mouse,
+                          fluidRes());
             // The fluid passes bound their own programs; the wave uniforms set
             // above still live in the wave program's state, so rebinding is
             // all that is needed.
@@ -593,6 +635,12 @@ void stepWaveSim() {
             glUniform2f(u.impulseDir, dg.dx, dg.dy);
             glUniform4f(u.impulse, dg.x, dg.y, dg.r > 0.0f ? dg.r : 0.045f, dg.amount);
             dg.amount = 0.0f;
+        } else if (g_pGlobalState->mouse.amount > 1e-5f) {
+            // The fingertip's turn — same dipole shape, small and shallow.
+            auto& mk = g_pGlobalState->mouse;
+            glUniform2f(u.impulseDir, mk.dx, mk.dy);
+            glUniform4f(u.impulse, mk.x, mk.y, mk.r > 0.0f ? mk.r : 0.010f, mk.amount);
+            mk.amount = 0.0f;
         } else {
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
             glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
@@ -756,8 +804,9 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     // desktop's left edge pushed second-monitor windows far outside the field,
     // near where waves are born, so they saw their sources from much closer.
     // Bounds accumulate as each monitor renders, so no compositor-wide list is
-    // needed here.
-    static Vector2D deskMax{1920.0, 1080.0};
+    // needed here. Held in global state (not a function-local static) because
+    // the mouse wake in stepWaveSim maps the cursor through the same bounds.
+    auto& deskMax = g_pGlobalState->deskMax;
     if (const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock()) {
         monOff = mon->m_position;
         deskMax.x = std::max(deskMax.x, mon->m_position.x + mon->m_size.x);
@@ -786,7 +835,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         const Vector2D vel{here.x - prev.x, here.y - prev.y};
         prev = here;
         const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
-        if (mag > 0.3 && mag < 400.0) {
+        // A toggle, not a force slider: windows either sit in the water or
+        // they don't. Position tracking above still runs while off, so
+        // flipping it on mid-drag doesn't read the accumulated gap as one
+        // violent shove.
+        const bool wPhys = !g_pGlobalState->config.shimmerWindowPhysics
+                        || **g_pGlobalState->config.shimmerWindowPhysics != 0;
+        if (wPhys && mag > 0.3 && mag < 400.0) {
             const float sc = g_pGlobalState->config.shimmerScale
                            ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
             // Centre, not leading edge: the dipole already puts the crest ahead
@@ -807,10 +862,11 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             const double halfW = rawBox.width / std::max(desk.x, 1.0)
                                * 0.85 * sc * 2.0 * 0.105 * 0.5;
             dg.r = static_cast<float>(std::clamp(halfW * 0.9, 0.02, 0.16));
-            const float force = g_pGlobalState->config.shimmerDrag
-                              ? static_cast<float>(**g_pGlobalState->config.shimmerDrag) : 0.35f;
+            // The force the slider used to control, fixed at the value it
+            // shipped tuned to. The knob became the window_physics toggle.
+            constexpr float force = 0.35f;
             dg.amount = std::min(dg.amount + static_cast<float>(mag) * 0.00035f * force,
-                                 0.05f * std::max(force, 0.05f));
+                                 0.05f * force);
         }
     }
 

@@ -48,7 +48,12 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_AGITATION, Config::FLOAT{0.5f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_VISCOSITY, Config::FLOAT{0.6f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_MURK, Config::FLOAT{0.0f});
-    addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_DRAG, Config::FLOAT{0.35f});
+    // Window physics is a TOGGLE, not a force slider (user's call): windows
+    // either disturb the water or they don't, and the force they were shipped
+    // with is the one that looked right. The mouse keeps a slider because how
+    // heavy a fingertip feels IS the thing people will disagree about.
+    addConfigValue<Config::Values::Int>(handle, ConfigKeys::SHIMMER_WINDOW_PHYSICS, Config::INTEGER{1});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_MOUSE, Config::FLOAT{0.3f});
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::SHIMMER_CURRENTS, Config::INTEGER{1});
     // Settings exposes this as a slider snapped to powers of two; any value in
     // the clamp range works though — the FBO alloc re-checks the size every
@@ -183,7 +188,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.shimmerAgitation        = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_AGITATION);
     config.shimmerViscosity        = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_VISCOSITY);
     config.shimmerMurk             = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_MURK);
-    config.shimmerDrag             = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_DRAG);
+    config.shimmerWindowPhysics    = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SHIMMER_WINDOW_PHYSICS);
+    config.shimmerMouse            = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_MOUSE);
     config.shimmerCurrents         = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SHIMMER_CURRENTS);
     config.shimmerCurrentsRes      = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SHIMMER_CURRENTS_RES);
     config.shimmerAbsorption       = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::SHIMMER_ABSORPTION);
