@@ -202,18 +202,11 @@ float waveH(vec2 q) {
     // real simulated water. GL_CLAMP_TO_EDGE only ever engages far outside the
     // window, where nothing is drawn.
     vec2 uv = 0.5 + (q - 0.5) * (2.0 * VIS);
-    // C1-CONTINUOUS read. Plain bilinear is only C0: at the magnification a
-    // high wave-size setting reaches (one sim texel across ~16 screen pixels)
-    // the caustic — built from SECOND derivatives — printed every texel cell
-    // as a tile of near-constant curvature, a blocky grid-scale residue that
-    // survived even the isotropic stencil. Re-mapping the sample point with a
-    // quintic ease inside each texel makes the interpolated surface C1 at
-    // texel borders for two ALU ops and zero extra taps.
-    vec2 p = uv / waveTexel - 0.5;
-    vec2 i = floor(p);
-    vec2 f = p - i;
-    f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    uv = (i + 0.5 + f) * waveTexel;
+    // NOTE: a quintic-ease "smooth bilinear" remap was tried here and REVERTED
+    // — it flattens each texel's interior and concentrates the change at the
+    // borders, which reads as a LOWER-resolution surface, not a smoother one.
+    // The right tool for magnification is a genuine bicubic, if it is ever
+    // worth its taps.
     // R is the newest state, G the one before it. Blending by how far we are
     // between them makes the motion continuous even when a simulation step
     // spans many frames — which is exactly the case at low speed. Without this,
