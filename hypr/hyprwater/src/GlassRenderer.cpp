@@ -571,7 +571,9 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     // wave appears where the edge actually is.
     {
         const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
-        static std::unordered_map<uint64_t, Vector2D> track;
+        // Two things per window: where it was last frame (for speed) and where
+        // it last threw a wave (to stop it throwing one every single frame).
+        static std::unordered_map<uint64_t, std::pair<Vector2D, Vector2D>> track;
         // Identity must be the WINDOW, not its shape. Keying on width/height
         // meant two same-sized windows shared one entry, so each one's position
         // overwrote the other's every frame and both produced huge fake
@@ -580,10 +582,24 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         // sample framebuffer, so that pointer is a genuine per-window identity.
         const uint64_t id = reinterpret_cast<uintptr_t>(sampleFramebuffer.get());
         auto& prev = track[id];
-        const Vector2D vel{here.x - prev.x, here.y - prev.y};
-        prev = here;
+        const Vector2D vel{here.x - prev.first.x, here.y - prev.first.y};
+        prev.first = here;
         const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
-        if (mag > 0.35 && mag < 260.0) {
+        // THE RATE IS THE WHOLE PROBLEM. This runs once per window per FRAME,
+        // so a drag was firing ~165 impulses a second into nearly the same spot
+        // while the simulation only spends about 120 -- energy compounding on
+        // itself until it detonated and wiped the surface flat. No amplitude is
+        // small enough to survive being applied that often.
+        //
+        // A real edge does not deposit a wave per frame either; it displaces
+        // water as it sweeps through it. So a wave is thrown only once the
+        // window has actually covered ground since the last one, which also
+        // makes fast drags produce more waves than slow ones for free.
+        const Vector2D sinceLast{here.x - prev.second.x, here.y - prev.second.y};
+        const double travelled = std::sqrt(sinceLast.x * sinceLast.x
+                                         + sinceLast.y * sinceLast.y);
+        if (mag > 0.35 && mag < 260.0 && travelled > 55.0) {
+            prev.second = here;
             const float sc = g_pGlobalState->config.shimmerScale
                            ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
             const Vector2D dir{vel.x / mag, vel.y / mag};
