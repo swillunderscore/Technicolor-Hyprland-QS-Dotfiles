@@ -622,6 +622,13 @@ void main() {
         // the particles, so it scales with murk AND depth, exactly like the
         // veil does. Four taps on a ring is a crude point-spread function, but
         // it is a spatial one, which the previous version was not at all.
+        // In-scattered light has to COME from somewhere. The veil was a fixed
+        // magnitude, so murk added glow to a black desktop out of nothing --
+        // which is why more of it went whitish-grey instead of dark. Scattering
+        // can only redirect light that is already present, so the veil is
+        // scaled by how much light is actually around. A dark scene gets a dark
+        // haze and keeps going toward black; a bright one goes milky.
+        vec3 ambient = color;
         if (b * path > 0.01) {
             float r = min(0.5 * b * path, 6.0) * 0.004;
             vec2  tp = uvG + domeUV;
@@ -630,6 +637,7 @@ void main() {
                          + sampleBlurred(tp + vec2( r, -r)).rgb
                          + sampleBlurred(tp + vec2(-r, -r)).rgb;
             around *= 0.25;
+            ambient = around;
             // How much of what you see arrived by scattering rather than
             // straight through. Same exponential as the veil, because it is
             // the same light.
@@ -637,7 +645,8 @@ void main() {
             color = mix(color, around, clamp(mixed, 0.0, 0.85));
         }
 
-        color = color * trans + veil;
+        float amb = dot(ambient, vec3(0.2126, 0.7152, 0.0722));
+        color = color * trans + veil * amb;
     }
 
     // ========================================

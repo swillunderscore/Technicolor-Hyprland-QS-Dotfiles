@@ -543,9 +543,14 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         // the origin offset already keeps the sheet continuous across them.
         desk   = mon->m_size;
     }
+    // rawBox, not transformedBox: rawBox is what gets projected to the target,
+    // so it is the one carrying the window's real position. transformedBox is
+    // relative to the sampled framebuffer, which is window-sized and therefore
+    // sits at the origin -- constant no matter where the window is, which is
+    // why nothing moved when the window did.
     glUniform2f(uniforms.winOrigin,
-                static_cast<float>(transformedBox.x + monOff.x),
-                static_cast<float>(transformedBox.y + monOff.y));
+                static_cast<float>(rawBox.x + monOff.x),
+                static_cast<float>(rawBox.y + monOff.y));
     glUniform2f(uniforms.deskSize,
                 static_cast<float>(desk.x), static_cast<float>(desk.y));
 
