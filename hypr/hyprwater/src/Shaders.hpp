@@ -69,6 +69,14 @@ uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
 uniform float waveTexel;     // 1 / simulation grid size, for the C1 read
+// Real-time bow wave of THIS window while it is being dragged. In a real
+// fluid the incompressible pressure response around a moving body is
+// INSTANTANEOUS — only the waves it sheds propagate at wave speed — so this
+// displacement rides with the window at full frame rate no matter how slowly
+// the simulation itself is running. The sim keeps the persistent wake; this
+// is the part that must never lag or tick.
+uniform vec4 winWake;        // xy = drag direction, z = strength (0 at rest)
+uniform vec4 winRectSim;     // xy = window centre, zw = half-extents (sim uv)
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
 // Where this window sits on the desktop, and how big the desktop is, both in
@@ -212,7 +220,22 @@ float waveH(vec2 q) {
     // spans many frames — which is exactly the case at low speed. Without this,
     // slowing the water down would make it tick between discrete states.
     vec2 hh = texture(waveTex, uv).rg - waveBias;
-    return mix(hh.y, hh.x, waveSubFrac);
+    float h = mix(hh.y, hh.x, waveSubFrac);
+    // Instantaneous bow wave of a dragged window: crest hugging the leading
+    // edge, trough behind, zero at the centre and far away. Analytic in the
+    // window's live position, so it rides with the drag at full frame rate
+    // regardless of how slowly the sim steps — in a real fluid the
+    // incompressible near-field response IS instantaneous; only shed waves
+    // (the sim's job) propagate slowly.
+    if (winWake.z > 0.001) {
+        vec2  bd  = (uv - winRectSim.xy) / max(winRectSim.zw, vec2(1e-5));
+        float box = max(abs(bd.x), abs(bd.y));            // 1.0 at the edge
+        float env = smoothstep(2.2, 1.0, box) * smoothstep(0.15, 0.75, box);
+        float along = clamp(dot(uv - winRectSim.xy, winWake.xy)
+                            / max(length(winRectSim.zw), 1e-5), -1.0, 1.0);
+        h += winWake.z * along * env * 0.16;
+    }
+    return h;
 }
 
 // Slope, for pulling the backdrop sample along the surface normal.
@@ -562,12 +585,32 @@ void main() {
             // Because the source is the pixel itself, this is multiplicative —
             // which is also the more honest model. Focused light scales what is
             // there; it does not paste a second copy on top.
-            vec3  lit = color;
+            // The light source is a SOFTENED read of the backdrop, not the
+            // razor-sharp pixel. A caustic vein focuses light gathered over an
+            // AREA of the illuminant — no single pixel of floor pattern owns
+            // it. Multiplying by the raw pixel stamped fine backdrop texture
+            // straight into the veins: on pixel-art wallpapers their 2x2
+            // checker DITHER printed through every filament (the "2x2 thing" —
+            // confirmed absent on a flat backdrop at identical settings).
+            // A 5-tap cross a couple of pixels wide integrates the dither out
+            // while leaving real color variation intact.
+            vec2 lo = 2.5 / fullSize;
+            vec2 lp2 = uvG + domeUV;
+            vec3  lit = (color
+                       + texture(tex, lp2 + vec2( lo.x, 0.0)).rgb
+                       + texture(tex, lp2 - vec2( lo.x, 0.0)).rgb
+                       + texture(tex, lp2 + vec2(0.0,  lo.y)).rgb
+                       + texture(tex, lp2 - vec2(0.0,  lo.y)).rgb) * 0.2;
             float lum = dot(lit, vec3(0.2126, 0.7152, 0.0722));
             // Still biased toward highlights: focused light comes from the
             // bright parts, not the average.
             vec3 gain    = c * shimmerIntensity * (0.35 + 1.15 * lum);
-            vec3 boosted = color * max(vec3(0.0), 1.0 + gain);
+            // The vein ADDS the softened light over the sharp base image: the
+            // warped backdrop keeps its honest detail, the focused light is
+            // area-integrated and smooth. (Multiplying the sharp pixel put the
+            // dither inside the veins; blowing out additively bleached their
+            // hue — this is the middle path, still capped below.)
+            vec3 boosted = max(color + lit * max(gain, vec3(-0.9)), vec3(0.0));
             // A vein may brighten a pixel to the ceiling OF ITS OWN COLOR,
             // never past it into white. The old additive form clipped every
             // strong vein to (1,1,1) — and pure white carries no trace of the

@@ -928,12 +928,41 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     // it took half a second or five.
     {
         const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
-        static std::unordered_map<uint64_t, Vector2D> track;
+        struct STrack { Vector2D prev{}; Vector2D smooth{}; };
+        static std::unordered_map<uint64_t, STrack> track;
         const uint64_t id = reinterpret_cast<uintptr_t>(sampleFramebuffer.get());
-        auto& prev = track[id];
+        auto& tr = track[id];
+        auto& prev = tr.prev;
         const Vector2D vel{here.x - prev.x, here.y - prev.y};
         prev = here;
         const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+
+        // Smoothed per-window velocity for the real-time bow wave. Rises fast
+        // while dragging, decays over a few frames when the window stops, so
+        // the crest melts back instead of vanishing.
+        tr.smooth.x = tr.smooth.x * 0.75 + vel.x * 0.25;
+        tr.smooth.y = tr.smooth.y * 0.75 + vel.y * 0.25;
+        const double smag = std::sqrt(tr.smooth.x * tr.smooth.x + tr.smooth.y * tr.smooth.y);
+        {
+            const float sc2 = g_pGlobalState->config.shimmerScale
+                            ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
+            const bool wp2 = !g_pGlobalState->config.shimmerWindowPhysics
+                          || **g_pGlobalState->config.shimmerWindowPhysics != 0;
+            // Strength saturates by ~12 px/frame; below ~0.5 it is off.
+            const float wake = (wp2 && smag > 0.5 && smag < 400.0)
+                             ? static_cast<float>(std::min(smag / 12.0, 1.0)) : 0.0f;
+            const double kk = 0.85 * sc2 * 2.0 * 0.105 / std::max(desk.x, 1.0);
+            const Vector2D c2{here.x + rawBox.width * 0.5, here.y + rawBox.height * 0.5};
+            glUniform4f(uniforms.winWake,
+                        smag > 1e-5 ? static_cast<float>(tr.smooth.x / smag) : 0.0f,
+                        smag > 1e-5 ? static_cast<float>(tr.smooth.y / smag) : 0.0f,
+                        wake, 0.0f);
+            glUniform4f(uniforms.winRectSim,
+                        static_cast<float>(0.5 + (c2.x - desk.x * 0.5) * kk),
+                        static_cast<float>(0.5 + (c2.y - desk.y * 0.5) * kk),
+                        static_cast<float>(std::max(rawBox.width  * 0.5 * kk, 1e-4)),
+                        static_cast<float>(std::max(rawBox.height * 0.5 * kk, 1e-4)));
+        }
         // A toggle, not a force slider: windows either sit in the water or
         // they don't. Position tracking above still runs while off, so
         // flipping it on mid-drag doesn't read the accumulated gap as one
