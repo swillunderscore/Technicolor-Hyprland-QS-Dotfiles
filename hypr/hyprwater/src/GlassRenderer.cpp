@@ -258,6 +258,36 @@ static void stepFluidOnce(const SGlobalState::SDrag& dragNow, const int res) {
     }
 }
 
+// A click is a TAP on the surface: a small round press-in at the cursor,
+// spent by the next simulation step. Strength rides the same mouse slider as
+// the trailing wake — the weight of the fingertip governs both — so there is
+// no separate toggle to find; slider at zero lifts the whole hand off.
+// Called from the mouse-button listener in main.cpp on every press.
+void queueClickSplash() {
+    if (!g_pGlobalState)
+        return;
+    const auto& cfg = g_pGlobalState->config;
+    const bool on = cfg.shimmerEnabled && **cfg.shimmerEnabled != 0;
+    const float mforce = cfg.shimmerMouse
+                       ? std::clamp(static_cast<float>(**cfg.shimmerMouse), 0.0f, 1.0f) : 0.0f;
+    if (!on || mforce <= 0.001f || !g_pInputManager)
+        return;
+    const Vector2D cur  = g_pInputManager->getMouseCoordsInternal();
+    const auto&    desk = g_pGlobalState->deskMax;
+    const float    sc   = cfg.shimmerScale ? static_cast<float>(**cfg.shimmerScale) : 1.0f;
+    const Vector2D g{(cur.x - desk.x * 0.5) / std::max(desk.x, 1.0),
+                     (cur.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
+    auto& ck = g_pGlobalState->click;
+    ck.x  = static_cast<float>(0.5 + g.x * 0.85 * sc * 2.0 * 0.105);
+    ck.y  = static_cast<float>(0.5 + g.y * 0.85 * sc * 2.0 * 0.105);
+    ck.dx = 0.0f;   // zero direction = the shader's ROUND splash, not a dipole
+    ck.dy = 0.0f;
+    ck.r  = 0.016f;
+    // Rapid clicks stack a little, capped: a drum-roll is a bigger splash,
+    // not an unbounded one.
+    ck.amount = std::min(ck.amount + 0.05f + 0.13f * mforce, 0.36f);
+}
+
 void stepWaveSim() {
     static constexpr int SIM = 1024;
 
@@ -629,6 +659,14 @@ void stepWaveSim() {
             glUniform2f(u.impulseDir, 0.0f, 0.0f);
             glUniform4f(u.impulse, 0.5f + std::cos(ang) * rr, 0.5f + std::sin(ang) * rr,
                         rad, amp);
+        } else if (g_pGlobalState->click.amount > 1e-5f) {
+            // A tap presses IN — negative amplitude — and the rebound ring is
+            // the ripple. Taps outrank the drag spend because they are rare,
+            // discrete events; the drag keeps its accumulation for next step.
+            auto& ck = g_pGlobalState->click;
+            glUniform2f(u.impulseDir, 0.0f, 0.0f);
+            glUniform4f(u.impulse, ck.x, ck.y, ck.r > 0.0f ? ck.r : 0.016f, -ck.amount);
+            ck.amount = 0.0f;
         } else if (g_pGlobalState->drag.amount > 1e-5f) {
             // Spend everything the drag has built up, as one dipole.
             auto& dg = g_pGlobalState->drag;

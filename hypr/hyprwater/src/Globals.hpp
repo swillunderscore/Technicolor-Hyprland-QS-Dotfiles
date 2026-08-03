@@ -50,6 +50,9 @@ struct SGlobalState {
     // The mouse's own wake — same accumulator shape, far lighter touch. A
     // cursor is a fingertip trailed in the pool, not a hull.
     SDrag mouse;
+    // Clicks are TAPS: a small round press-in at the cursor, queued by the
+    // mouse-button listener and spent by the next simulation step.
+    SDrag click;
 
     // Logical desktop bounds, accumulated as monitors render (no compositor-
     // wide list is in scope here). Shared by the window-drag mapping and the

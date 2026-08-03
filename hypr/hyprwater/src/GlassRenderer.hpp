@@ -12,6 +12,7 @@
 namespace GlassRenderer {
 
 void stepWaveSim();
+void queueClickSplash();
 
 inline constexpr int SAMPLE_PADDING_PX = 60;
 
