@@ -168,7 +168,7 @@ PanelWindow {
     function pad3(n) { return ("  " + n).slice(-3) }
     // Perceptual (WCAG relative) luminance — gamma-linearized sRGB with BT.709
     // weights (blue ≈ 0.07). Matches gen-discord-theme.py's rel_lum so the bar
-    // and the themed apps agree on light-vs-dark for every colour, deep blue
+    // and the themed apps agree on light-vs-dark for every color, deep blue
     // included (a non-linearized metric over-reads saturated mid-tones).
     function _lin(v)   { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
     function relLum(c) { return 0.2126 * _lin(c.r) + 0.7152 * _lin(c.g) + 0.0722 * _lin(c.b) }
@@ -1414,10 +1414,10 @@ PanelWindow {
     readonly property color netColor:  lerpColor(0.425)
     readonly property color diskColor: lerpColor(0.50)
 
-    // Circular usage meter — full-height ring drawn in a single solid colour
+    // Circular usage meter — full-height ring drawn in a single solid color
     // (`fg`): a thin full-circle track plus a thick progress arc, no opacity
     // tricks. Usage % sits in the centre of the ring; title (and optional
-    // second line, e.g. temp) sit to the side at the same size/colour.
+    // second line, e.g. temp) sit to the side at the same size/color.
     component Ring: RowLayout {
         id: ring
         property real value: 0
@@ -1449,7 +1449,7 @@ PanelWindow {
                     var prog = isPrimary ? 3.5 : 2.5
                     var r = width / 2 - prog / 2 - 0.5
                     if (r < 1) return
-                    // thin full-circle track (same colour, lighter line weight)
+                    // thin full-circle track (same color, lighter line weight)
                     ctx.beginPath()
                     ctx.arc(cx, cy, r, 0, Math.PI * 2)
                     ctx.strokeStyle = ring.fg
@@ -1497,7 +1497,7 @@ PanelWindow {
         Component.onCompleted: ringCanvas.requestPaint()
     }
 
-    // Scrolling sparkline — two solid-line series in contrasting colours
+    // Scrolling sparkline — two solid-line series in contrasting colors
     // (`fg` and `fg2`). Newest sample pinned to the right edge. Labels carry
     // the live rates, coloured to match their line.
     component IoChart: Item {
@@ -3659,22 +3659,22 @@ PanelWindow {
                     }
                 }
 
-                // Cycle wallpaper (3/4) + Settings (1/4), side by side.
+                // Cycle wallpaper + water/glass kill pill + Settings, side by side.
                 Row {
                     width: parent.width; height: isPrimary ? 32 : 24
                     spacing: isPrimary ? 6 : 4
 
-                    // ── Cycle wallpaper (3/4) — mirrors $mainMod+W; leaves the
+                    // ── Cycle wallpaper — mirrors $mainMod+W; leaves the
                     // launcher open so you can keep clicking to find one.
                     Rectangle {
-                        width: (parent.width - parent.spacing) * 0.75
+                        width: (parent.width - 2 * parent.spacing) * 0.45
                         height: parent.height; radius: height / 2
                         color: wallCycleMouse.containsMouse ? launcherShape.rowHover : launcherShape.rowBg
                         Behavior on color { ColorAnimation { duration: 80 } }
                         Row {
                             anchors.centerIn: parent; spacing: isPrimary ? 8 : 5
                             Text { text: String.fromCodePoint(0xF03E); color: launcherShape.fg; font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "Cycle wallpaper"; color: launcherShape.fg; font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "Wallpaper"; color: launcherShape.fg; font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
                         }
                         MouseArea {
                             id: wallCycleMouse
@@ -3686,9 +3686,139 @@ PanelWindow {
                         }
                     }
 
-                    // ── Settings (1/4) — opens the tabbed settings window.
+                    // ── Water / glass kill pill — two halves. Left = the water sim
+                    // (shimmer:enabled), right = the entire glass pipeline
+                    // (plugin:hyprwater:enabled). Persisted through hyprwater-set.sh,
+                    // same as the Settings sliders, so state agrees everywhere and
+                    // survives reloads. Icons are drawn, not glyphs: a slash through
+                    // the icon means OFF.
                     Rectangle {
-                        width: (parent.width - parent.spacing) * 0.25
+                        id: fxPill
+                        width: (parent.width - 2 * parent.spacing) * 0.30
+                        height: parent.height; radius: height / 2
+                        color: launcherShape.rowBg
+                        property bool waterOn: true
+                        property bool glassOn: true
+                        onVisibleChanged: if (visible) fxStateProc.running = true
+                        Component.onCompleted: fxStateProc.running = true
+                        Process {
+                            id: fxStateProc
+                            command: ["bash", "-c",
+                                "hyprctl getoption -j plugin:hyprwater:shimmer:enabled | jq -r '.int'; " +
+                                "hyprctl getoption -j plugin:hyprwater:enabled | jq -r '.int'"]
+                            stdout: StdioCollector {
+                                onStreamFinished: {
+                                    var l = this.text.trim().split("\n")
+                                    if (l.length >= 2) { fxPill.waterOn = l[0] === "1"; fxPill.glassOn = l[1] === "1" }
+                                }
+                            }
+                        }
+                        Row {
+                            anchors.fill: parent
+                            Item {
+                                width: parent.width / 2; height: parent.height
+                                Rectangle {
+                                    anchors.fill: parent; anchors.margins: 2; radius: height / 2
+                                    color: waterHalfM.containsMouse ? launcherShape.rowHover : "transparent"
+                                    Behavior on color { ColorAnimation { duration: 80 } }
+                                }
+                                Canvas {
+                                    id: waterIcon
+                                    anchors.centerIn: parent
+                                    width: isPrimary ? 16 : 12; height: width
+                                    property bool on: fxPill.waterOn
+                                    property color c: launcherShape.fg
+                                    onOnChanged: requestPaint()
+                                    onCChanged: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d"); ctx.reset()
+                                        var w = width, h = height, cx = w / 2
+                                        ctx.lineWidth = 1.4; ctx.lineCap = "round"; ctx.lineJoin = "round"
+                                        ctx.strokeStyle = Qt.rgba(c.r, c.g, c.b, on ? 1.0 : 0.4)
+                                        var top = h * 0.06, r = w * 0.30, cy = h * 0.58
+                                        ctx.beginPath()
+                                        ctx.moveTo(cx, top)
+                                        ctx.bezierCurveTo(cx + r * 1.25, cy - r * 0.15, cx + r, cy + r * 0.85, cx, cy + r * 0.95)
+                                        ctx.bezierCurveTo(cx - r, cy + r * 0.85, cx - r * 1.25, cy - r * 0.15, cx, top)
+                                        ctx.stroke()
+                                        if (!on) {
+                                            ctx.strokeStyle = Qt.rgba(c.r, c.g, c.b, 1.0)
+                                            ctx.lineWidth = 1.6
+                                            ctx.beginPath()
+                                            ctx.moveTo(w * 0.06, h * 0.06); ctx.lineTo(w * 0.94, h * 0.94)
+                                            ctx.stroke()
+                                        }
+                                    }
+                                }
+                                MouseArea {
+                                    id: waterHalfM
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                    onPressed: {
+                                        fxPill.waterOn = !fxPill.waterOn
+                                        Quickshell.execDetached(["sh", "-c",
+                                            "~/.config/hypr/hyprwater-set.sh shimmer:enabled " + (fxPill.waterOn ? "1" : "0")])
+                                    }
+                                }
+                            }
+                            Item {
+                                width: parent.width / 2; height: parent.height
+                                Rectangle {
+                                    anchors.fill: parent; anchors.margins: 2; radius: height / 2
+                                    color: glassHalfM.containsMouse ? launcherShape.rowHover : "transparent"
+                                    Behavior on color { ColorAnimation { duration: 80 } }
+                                }
+                                Canvas {
+                                    id: glassIcon
+                                    anchors.centerIn: parent
+                                    width: isPrimary ? 16 : 12; height: width
+                                    property bool on: fxPill.glassOn
+                                    property color c: launcherShape.fg
+                                    onOnChanged: requestPaint()
+                                    onCChanged: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d"); ctx.reset()
+                                        var w = width, h = height
+                                        ctx.lineWidth = 1.4; ctx.lineCap = "round"; ctx.lineJoin = "round"
+                                        ctx.strokeStyle = Qt.rgba(c.r, c.g, c.b, on ? 1.0 : 0.4)
+                                        // a pane with a diagonal sheen
+                                        var x0 = w * 0.14, y0 = h * 0.16, w0 = w * 0.72, h0 = h * 0.68
+                                        ctx.beginPath()
+                                        ctx.roundedRect(x0, y0, w0, h0, w * 0.12, w * 0.12)
+                                        ctx.stroke()
+                                        ctx.strokeStyle = Qt.rgba(c.r, c.g, c.b, (on ? 1.0 : 0.4) * 0.6)
+                                        ctx.beginPath()
+                                        ctx.moveTo(x0 + w0 * 0.30, y0 + h0 * 0.76); ctx.lineTo(x0 + w0 * 0.64, y0 + h0 * 0.24)
+                                        ctx.stroke()
+                                        if (!on) {
+                                            ctx.strokeStyle = Qt.rgba(c.r, c.g, c.b, 1.0)
+                                            ctx.lineWidth = 1.6
+                                            ctx.beginPath()
+                                            ctx.moveTo(w * 0.06, h * 0.06); ctx.lineTo(w * 0.94, h * 0.94)
+                                            ctx.stroke()
+                                        }
+                                    }
+                                }
+                                MouseArea {
+                                    id: glassHalfM
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                    onPressed: {
+                                        fxPill.glassOn = !fxPill.glassOn
+                                        Quickshell.execDetached(["sh", "-c",
+                                            "~/.config/hypr/hyprwater-set.sh enabled " + (fxPill.glassOn ? "1" : "0")])
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle {   // divider between the halves
+                            anchors.centerIn: parent
+                            width: 1; height: parent.height * 0.5
+                            color: Qt.rgba(launcherShape.fg.r, launcherShape.fg.g, launcherShape.fg.b, 0.18)
+                        }
+                    }
+
+                    // ── Settings — opens the tabbed settings window.
+                    Rectangle {
+                        width: (parent.width - 2 * parent.spacing) * 0.25
                         height: parent.height; radius: height / 2
                         color: settingsBtnMouse.containsMouse ? launcherShape.rowHover : launcherShape.rowBg
                         Behavior on color { ColorAnimation { duration: 80 } }

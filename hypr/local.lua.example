@@ -1,0 +1,18 @@
+-- Machine-local Lua config — copy to local.lua (gitignored) for binds and
+-- other Lua that should not ship with your dotfiles.
+--
+-- local.lua receives the keybind machinery from hyprland.lua, so binds
+-- registered here appear in Settings → Hotkeys and are rebindable exactly
+-- like the shipped ones:
+--
+--   bind(id, category, label, combo, dispatcher [, opts [, meta]])
+--
+-- id must be unique and STABLE (rebinds are stored against it). Categories
+-- shown in Settings: Apps, Windows, Focus & layout, Workspaces, Wallpaper,
+-- Screenshots, Voice & transcription, Media, System, Other.
+local ctx = ...
+local hl, bind, exec, mainMod, H = ctx.hl, ctx.bind, ctx.exec, ctx.mainMod, ctx.H
+
+-- Example: a personal script on Super+N
+-- bind("my-notes", "Apps", "Open notes",
+--      mainMod .. " + N", exec(H .. "/bin/notes.sh"))

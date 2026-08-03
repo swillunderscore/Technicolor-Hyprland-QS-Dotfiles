@@ -1,6 +1,7 @@
 # Per-machine / personal — created by install.sh or the Settings app from the
 # .example files (sensible defaults apply when absent)
 hypr/local.conf
+hypr/local.lua
 hypr/monitors.conf
 hypr/colors.conf
 hypr/color-tuning.conf

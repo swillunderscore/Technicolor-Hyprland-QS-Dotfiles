@@ -453,26 +453,6 @@ bind("app-launcher", "Apps", "App launcher",
 bind("toggle-tiling", "Windows", "Toggle tiling",
      mainMod .. " + SPACE",  exec(H .. "/.config/hypr/window-action.sh float"))
 
--- Voice dictation (offline)
-bind("dictate", "Voice & transcription", "Voice dictation (cleaned up)",
-     mainMod .. " + D",        exec(H .. "/.config/hypr/voice-dictate.sh clean"))
-bind("dictate-raw", "Voice & transcription", "Voice dictation (verbatim)",
-     mainMod .. " + SHIFT + D",  exec(H .. "/.config/hypr/voice-dictate.sh raw"))
-bind("dictate-cancel", "Voice & transcription", "Cancel dictation",
-     mainMod .. " + ALT + D",    exec(H .. "/.config/hypr/voice-dictate.sh cancel"))
-bind("dictate-undo", "Voice & transcription", "Undo last dictation",
-     mainMod .. " + CTRL + D",   exec(H .. "/.config/hypr/voice-dictate.sh undo"))
-
--- Desktop-audio transcription (lectures / videos you don't want to sit through).
--- Records what you HEAR (monitor of the sink that's actually playing), then runs the
--- same whisper.cpp Vulkan build + large-v3-turbo model as the dictation above and
--- drops a .txt in ~/Documents. Toggle start/stop; transcription runs detached so a
--- multi-hour recording is fine.
-bind("transcribe-desktop", "Voice & transcription", "Transcribe desktop audio (toggle)",
-     mainMod .. " + SHIFT + T", exec(H .. "/.config/hypr/transcribe-desktop.sh"))
-bind("transcribe-cancel", "Voice & transcription", "Cancel transcription",
-     mainMod .. " + ALT + T",   exec(H .. "/.config/hypr/transcribe-desktop.sh cancel"))
-
 -- Screenshots (note: original used $shiftMod which was undefined → SHIFT)
 bind("screenshot-region", "Screenshots", "Screenshot a region",
      "SHIFT + PRINT", exec([[grim -g "$(slurp)" -t ppm - | satty --filename - --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
@@ -537,6 +517,22 @@ bind("media-prev",  "Media", "Previous track", "XF86AudioPrev", exec("playerctl 
 -- AI background-task kill switch
 bind("ai-kill", "System", "Kill AI background tasks",
      "CTRL + ALT + " .. mainMod .. " + A", exec("tmux kill-server"))
+
+-- Machine-local binds (gitignored, like local.conf): local.lua runs with the
+-- bind machinery handed in, so binds for personal tooling that does not ship
+-- with the dotfiles still show up in Settings → Hotkeys and rebind like the
+-- shipped ones. See local.lua.example.
+do
+    local fn = loadfile(H .. "/.config/hypr/local.lua")
+    if fn then
+        local ok, err = pcall(fn, { hl = hl, bind = bind, exec = exec, mainMod = mainMod, H = H })
+        if not ok then
+            pcall(function()
+                hl.notification.create({ text = "local.lua error: " .. tostring(err), timeout = 8000 })
+            end)
+        end
+    end
+end
 
 -- Everything registered above is now known; hand the list to Settings.
 write_kb_manifest()
