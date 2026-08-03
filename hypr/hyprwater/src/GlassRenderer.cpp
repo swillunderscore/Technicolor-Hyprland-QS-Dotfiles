@@ -583,7 +583,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         const Vector2D vel{here.x - prev.x, here.y - prev.y};
         prev = here;
         const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
-        if (mag > 0.8 && mag < 260.0) {
+        if (mag > 0.35 && mag < 260.0) {
             const float sc = g_pGlobalState->config.shimmerScale
                            ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
             const Vector2D dir{vel.x / mag, vel.y / mag};
@@ -595,8 +595,16 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             g_pGlobalState->sloshQueue.push_back(
                 {static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105),
                  static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105),
-                 0.055f,
-                 static_cast<float>(std::min(0.03 + mag * 0.006, 0.20))});
+                 // Wider than a splash: an edge pushes a broad front of water,
+                 // so a compact source reads as a dropped stone instead.
+                 0.085f,
+                 // Strictly proportional to how fast the edge is moving, with
+                 // no floor. The old form added a fixed 0.03 to everything and
+                 // saturated almost immediately, so a slow drag hit nearly as
+                 // hard as a fast one -- it did not track the drag at all, it
+                 // just fired. Much gentler overall, too: this is water being
+                 // pushed aside, not something thrown into it.
+                 static_cast<float>(std::min(mag * 0.0022, 0.075))});
             if (g_pGlobalState->sloshQueue.size() > 6)
                 g_pGlobalState->sloshQueue.erase(g_pGlobalState->sloshQueue.begin());
         }
