@@ -234,6 +234,18 @@ static void stepFluidAdvect(const SGlobalState::SDrag& dragNow, const int res, c
     const auto& fu = st.shaderManager.fluidUniforms;
     const float texel = 1.0f / res;
 
+    // Snapshot the last completed field before this step overwrites it: the
+    // glass cross-fades prev→current by waveSubFrac so the advected
+    // interpolation's slide RATE is continuous across the step boundary.
+    // Without it the whip's per-step momentum lump changes the water's
+    // apparent motion in step-rate beats even though every frame renders.
+    if (st.fluidVelPrevFb && fbId(st.fluidVelPrevFb) != 0
+        && static_cast<int>(st.fluidVelPrevFb->m_size.x) == res) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(st.fluidVelFb[st.fluidVelCurrent]));
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(st.fluidVelPrevFb));
+        glBlitFramebuffer(0, 0, res, res, 0, 0, res, res, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
     g_pHyprOpenGL->setViewport(0, 0, res, res);
 
     // 1) Advect the velocity by itself + inject the drag's momentum + bleed.
@@ -713,10 +725,10 @@ void stepWaveSim() {
             const int res = fluidRes();
             SP<Render::IFramebuffer>* fbs[] = {&st.fluidVelFb[0], &st.fluidVelFb[1],
                                                &st.fluidPrsFb[0], &st.fluidPrsFb[1],
-                                               &st.fluidDivFb};
+                                               &st.fluidDivFb, &st.fluidVelPrevFb};
             const char* names[] = {"hyprwater-vel-a", "hyprwater-vel-b",
                                    "hyprwater-prs-a", "hyprwater-prs-b",
-                                   "hyprwater-div"};
+                                   "hyprwater-div", "hyprwater-vel-prev"};
             for (size_t i = 0; i < std::size(names); i++) {
                 auto& fb = *fbs[i];
                 if (!fb)
@@ -1379,12 +1391,21 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // forced to 0 whenever the texture is unusable so the shader
             // falls back to the plain crossfade.
             glUniform1i(uniforms.velTexG, 6);
+            glUniform1i(uniforms.velTexPrev, 7);
             auto& vfb = g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent];
-            const bool velOk = g_pGlobalState->flowDt > 0.0f && vfb && vfb->getTexture();
+            auto& pfb = g_pGlobalState->fluidVelPrevFb;
+            const bool velOk = g_pGlobalState->flowDt > 0.0f && vfb && vfb->getTexture()
+                            && pfb && pfb->getTexture();
             glUniform1f(uniforms.flowShift, velOk ? g_pGlobalState->flowDt : 0.0f);
             if (velOk) {
                 glActiveTexture(GL_TEXTURE6);
                 vfb->getTexture()->bind();
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glActiveTexture(GL_TEXTURE7);
+                pfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

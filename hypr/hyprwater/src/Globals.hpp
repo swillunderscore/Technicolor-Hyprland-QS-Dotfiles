@@ -110,6 +110,11 @@ struct SGlobalState {
     SP<Render::IFramebuffer> fluidVelFb[2];
     SP<Render::IFramebuffer> fluidPrsFb[2];
     SP<Render::IFramebuffer> fluidDivFb;
+    // Snapshot of the last completed (projected) velocity, taken just before
+    // each step's advection overwrites it. The glass cross-fades prev→current
+    // by waveSubFrac so the advected interpolation's slide RATE stays
+    // continuous across step boundaries (see velTexPrev in liquidglass.frag).
+    SP<Render::IFramebuffer> fluidVelPrevFb;
     int fluidVelCurrent = 0;
     int fluidPrsCurrent = 0;
 
