@@ -5122,6 +5122,36 @@ PanelWindow {
     property bool ddcRestored: false
     Process { id: ddcRestoreProc; onRunningChanged: if (!running) bar.readAllBrightness() }
 
+    // Some monitors reset DDC brightness to 100 whenever they are power-cycled
+    // at the button (the left one here does — confirmed the morning after a
+    // normal monitors-off night, no crash involved). There is no hotplug event
+    // to hook: the connector-force service hides HPD from the whole stack on
+    // purpose. So enforce by polling: a monitor reading EXACTLY 100 while its
+    // saved value says otherwise gets snapped back. A deliberate 100 is safe
+    // (the slider persists saved=100 and the guard stops), and OSD tweaks to
+    // any other value are never touched.
+    Timer {
+        interval: 15000; running: true; repeat: true
+        onTriggered: {
+            if (!bar.ddcMonitors.length || ddcEnforceProc.running) return
+            var cmd = "fixed=0; "
+            for (var i = 0; i < bar.ddcMonitors.length; i++) {
+                var m = bar.ddcMonitors[i]
+                cmd += "f=\"$HOME/.config/hypr/.ddc-brightness-" + m.name + "\"; " +
+                       "if [ -f \"$f\" ]; then s=$(cat \"$f\"); if [ \"$s\" != 100 ]; then " +
+                       "v=$(ddcutil getvcp 10 --bus " + m.bus + " --brief 2>/dev/null | awk '{print $4}'); " +
+                       "if [ \"$v\" = 100 ]; then ddcutil setvcp 10 \"$s\" --bus " + m.bus + "; fixed=1; fi; fi; fi; "
+            }
+            cmd += "echo $fixed"
+            ddcEnforceProc.command = ["bash", "-c", cmd]
+            ddcEnforceProc.running = true
+        }
+    }
+    Process {
+        id: ddcEnforceProc
+        stdout: StdioCollector { onStreamFinished: if (this.text.trim() === "1") bar.readAllBrightness() }
+    }
+
     function readAllBrightness() {
         if (!ddcMonitors.length) return
         var buses = ddcMonitors.map(function (m) { return m.bus }).join(" ")
