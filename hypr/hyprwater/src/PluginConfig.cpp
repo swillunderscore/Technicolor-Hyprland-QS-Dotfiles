@@ -50,10 +50,9 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_MURK, Config::FLOAT{0.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_DRAG, Config::FLOAT{0.35f});
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::SHIMMER_CURRENTS, Config::INTEGER{1});
-    // Deliberately a config key with NO Settings slider (same as bed_variation):
-    // "how coarse would you like the fluid grid" is not a physical property of
-    // water, so it does not earn UI. It is here so the default can be argued
-    // with from the write-in box without recompiling.
+    // Settings exposes this as a slider snapped to powers of two; any value in
+    // the clamp range works though — the FBO alloc re-checks the size every
+    // step, so a change reallocates live and restarts from still water.
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::SHIMMER_CURRENTS_RES, Config::INTEGER{512});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_ABSORPTION, Config::FLOAT{1.0f});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::SHIMMER_BED, Config::FLOAT{0.45f});

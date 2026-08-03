@@ -2377,6 +2377,48 @@ FloatingWindow {
                                 }
                             }
 
+                            Column {
+                                id: curResCol
+                                width: fxCol.width; spacing: 2
+                                // Powers of two only: the fluid FBOs realloc live on any value,
+                                // but between detents nothing changes visibly enough to earn the
+                                // in-between positions — so the slider SNAPS.
+                                property var steps: [128, 256, 512, 1024, 2048]
+                                property int val: 512
+                                function sync() {
+                                    const v = win.glassValue({ key: "shimmer:currents_resolution", def: 512 });
+                                    let best = 0;
+                                    for (let i = 0; i < steps.length; i++)
+                                        if (Math.abs(steps[i] - v) < Math.abs(steps[best] - v)) best = i;
+                                    val = steps[best];
+                                }
+                                Component.onCompleted: sync()
+                                Connections { target: win; function onGlassValuesChanged() { curResCol.sync() } }
+                                Item {
+                                    width: parent.width; height: 20
+                                    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                           text: "Whirlpool detail"; color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                                    Text { anchors.right: curResReset.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                                           text: curResCol.val + " × " + curResCol.val
+                                           color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                                    Rectangle { id: curResReset; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                        width: 48; height: 20; radius: 6; color: curResRm.containsMouse ? win.rowHover : win.rowBg
+                                        Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 10; font.family: win.ff }
+                                        MouseArea { id: curResRm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            onClicked: { curResCol.val = 512; win.glassSet("shimmer:currents_resolution", 512); win.loadGlass() } }
+                                    }
+                                }
+                                TcSlider {
+                                    width: parent.width
+                                    from: 0; to: curResCol.steps.length - 1
+                                    value: Math.max(0, curResCol.steps.indexOf(curResCol.val))
+                                    onMoved: (v) => curResCol.val = curResCol.steps[Math.round(Math.max(0, Math.min(curResCol.steps.length - 1, v)))]
+                                    onCommitted: (v) => { win.glassSet("shimmer:currents_resolution", curResCol.val); win.loadGlass() }
+                                }
+                                Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                                       text: "Grid resolution of the velocity field. Finer grids hold smaller, tighter whirlpools; coarser ones smear the same momentum into broad slow swirls. Changing it restarts the currents from still water." }
+                            }
+
                             Repeater {
                                 model: win.shimmerSpecs
                                 delegate: Item {
