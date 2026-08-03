@@ -284,8 +284,10 @@ void queueClickSplash() {
     ck.dy = 0.0f;
     ck.r  = 0.016f;
     // Rapid clicks stack a little, capped: a drum-roll is a bigger splash,
-    // not an unbounded one.
-    ck.amount = std::min(ck.amount + 0.05f + 0.13f * mforce, 0.36f);
+    // not an unbounded one. Mostly slider-proportional with only a whisper of
+    // a floor — the first cut had a fat constant base, which at a low slider
+    // made every click dwarf the wake it was supposed to accompany.
+    ck.amount = std::min(ck.amount + 0.012f + 0.06f * mforce, 0.20f);
 }
 
 void stepWaveSim() {
