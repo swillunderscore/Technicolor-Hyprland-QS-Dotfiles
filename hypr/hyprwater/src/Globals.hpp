@@ -83,6 +83,10 @@ struct SGlobalState {
     float ambX = 0, ambY = 0, ambR = 1;
     float ambLeft = 0, ambChunk = 0;
 
+    // One sim step's advection time, for the glass shader's advected
+    // interpolation between states (0 while currents are off).
+    float flowDt = 0.0f;
+
     // Logical desktop bounds, accumulated as monitors render (no compositor-
     // wide list is in scope here). Shared by the window-drag mapping and the
     // mouse-wake mapping so both live on the same sheet of water.

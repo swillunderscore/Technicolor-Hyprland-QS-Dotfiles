@@ -730,6 +730,7 @@ void stepWaveSim() {
     // it, so a disabled field costs one compare and no texture read.
     glUniform1i(u.velTex, 4);
     glUniform1f(u.flowAdvect, fluidOn ? 1.0f / (120.0f * SUB) : 0.0f);
+    g_pGlobalState->flowDt = fluidOn ? 1.0f / (120.0f * SUB) : 0.0f;
     // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
     // in physics and wrong in use: at speed 0.002 it worked out to one
     // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is
@@ -1234,6 +1235,22 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             if (tfb && tfb->getTexture()) {
                 glActiveTexture(GL_TEXTURE5);
                 tfb->getTexture()->bind();
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glActiveTexture(GL_TEXTURE0);
+            }
+            // Velocity field for advected interpolation, unit 6. flowShift is
+            // forced to 0 whenever the texture is unusable so the shader
+            // falls back to the plain crossfade.
+            glUniform1i(uniforms.velTexG, 6);
+            auto& vfb = g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent];
+            const bool velOk = g_pGlobalState->flowDt > 0.0f && vfb && vfb->getTexture();
+            glUniform1f(uniforms.flowShift, velOk ? g_pGlobalState->flowDt : 0.0f);
+            if (velOk) {
+                glActiveTexture(GL_TEXTURE6);
+                vfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

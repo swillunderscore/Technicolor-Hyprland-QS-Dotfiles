@@ -83,6 +83,15 @@ uniform vec4 winRectSim;     // xy = window centre, zw = half-extents (sim uv)
 // rate — so a hard whip at minimum speed stays a fine smooth curve instead
 // of a chain of step-rate chords.
 uniform sampler2D trailTex;
+// The velocity field, for ADVECTED interpolation between sim states. With
+// currents on, each sim step shifts the height field along the flow; a plain
+// crossfade between two SHIFTED copies dissolves instead of sliding, which
+// reads as delayed, ticking motion at low sim speed — worst exactly where a
+// drag just injected currents. Sampling the old state slid forward by the
+// elapsed fraction of a step and the new state slid back by the remainder
+// makes advected water glide continuously between steps.
+uniform sampler2D velTexG;
+uniform float     flowShift;   // one step's advection time; 0 = currents off
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
 // Where this window sits on the desktop, and how big the desktop is, both in
@@ -225,8 +234,17 @@ float waveH(vec2 q) {
     // between them makes the motion continuous even when a simulation step
     // spans many frames — which is exactly the case at low speed. Without this,
     // slowing the water down would make it tick between discrete states.
-    vec2 hh = texture(waveTex, uv).rg - waveBias;
-    float h = mix(hh.y, hh.x, waveSubFrac);
+    float h;
+    if (flowShift > 0.0) {
+        // Advected interpolation (see velTexG above): slide, don't dissolve.
+        vec2 dv = texture(velTexG, uv).rg * flowShift;
+        float hp = texture(waveTex, uv - dv * waveSubFrac).g - waveBias;
+        float hc = texture(waveTex, uv + dv * (1.0 - waveSubFrac)).r - waveBias;
+        h = mix(hp, hc, waveSubFrac);
+    } else {
+        vec2 hh = texture(waveTex, uv).rg - waveBias;
+        h = mix(hh.y, hh.x, waveSubFrac);
+    }
     // Instantaneous bow wave of a dragged window: crest hugging the leading
     // edge, trough behind, zero at the centre and far away. Analytic in the
     // window's live position, so it rides with the drag at full frame rate
