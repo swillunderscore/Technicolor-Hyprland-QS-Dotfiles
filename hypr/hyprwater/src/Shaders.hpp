@@ -234,20 +234,27 @@ float waveH(vec2 q) {
     // between them makes the motion continuous even when a simulation step
     // spans many frames — which is exactly the case at low speed. Without this,
     // slowing the water down would make it tick between discrete states.
-    float h;
-    if (flowShift > 0.0) {
-        // Advected interpolation (see velTexG above): slide, don't dissolve.
-        // The velocity itself is continuous in time (the fluid integrates on
-        // a real-time tick, not per wave step), so sampling it directly is
-        // already smooth.
-        vec2 dv = texture(velTexG, uv).rg * flowShift;
-        float hp = texture(waveTex, uv - dv * waveSubFrac).g - waveBias;
-        float hc = texture(waveTex, uv + dv * (1.0 - waveSubFrac)).r - waveBias;
-        h = mix(hp, hc, waveSubFrac);
-    } else {
-        vec2 hh = texture(waveTex, uv).rg - waveBias;
-        h = mix(hh.y, hh.x, waveSubFrac);
-    }
+    // ADVECTION CATCH-UP. The sim advects the whole height field by one step's
+    // worth of flow, in a single jump, when it steps — at the bottom of the
+    // speed slider that is one lurch per SECOND, and it was the low-speed tick
+    // (proven by bisection: disabling this advection removed it, disabling the
+    // interpolation below did not). The two height channels are BOTH read at
+    // the advected point by the sim, so the pair the mix() blends are already
+    // in the same spatial frame as each other. The earlier code slid them in
+    // OPPOSITE directions, inventing a displacement between two co-located
+    // fields while leaving the real per-step jump uncompensated.
+    //
+    // Both taps therefore ride the SAME offset: walk the whole field forward
+    // by the fraction of a step already elapsed, so by the time the step lands
+    // the picture is already exactly where the sim is about to put it and the
+    // jump is spent. Live velocity, not a per-step snapshot: what has to match
+    // at the boundary is the flow the NEXT step will advect by, and the live
+    // field an instant before that step is the best estimate of it.
+    vec2 duv = flowShift > 0.0
+             ? texture(velTexG, uv).rg * (flowShift * waveSubFrac)
+             : vec2(0.0);
+    vec2 hh = texture(waveTex, uv - duv).rg - waveBias;
+    float h = mix(hh.y, hh.x, waveSubFrac);
     // Instantaneous bow wave of a dragged window: crest hugging the leading
     // edge, trough behind, zero at the centre and far away. Analytic in the
     // window's live position, so it rides with the drag at full frame rate
