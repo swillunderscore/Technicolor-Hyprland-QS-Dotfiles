@@ -385,14 +385,17 @@ void stepWaveSim() {
             // GENTLY -- a lake gets a stray ripple, not a cannonball every ten
             // seconds. Without this the low end read as rare violent splashes.
             const float amp = (0.10f + 0.16f * fr(48)) * (0.45f + 0.55f * ag);
+            glUniform2f(u.impulseDir, 0.0f, 0.0f);
             glUniform4f(u.impulse, 0.5f + std::cos(ang) * rr, 0.5f + std::sin(ang) * rr,
                         rad, amp);
-        } else if (!g_pGlobalState->sloshQueue.empty()) {
-            // A window moved: spend one queued slosh this step.
-            const auto sl = g_pGlobalState->sloshQueue.back();
-            g_pGlobalState->sloshQueue.pop_back();
-            glUniform4f(u.impulse, sl.x, sl.y, sl.r, sl.amp);
+        } else if (g_pGlobalState->drag.amount > 1e-5f) {
+            // Spend everything the drag has built up, as one dipole.
+            auto& dg = g_pGlobalState->drag;
+            glUniform2f(u.impulseDir, dg.dx, dg.dy);
+            glUniform4f(u.impulse, dg.x, dg.y, 0.045f, dg.amount);
+            dg.amount = 0.0f;
         } else {
+            glUniform2f(u.impulseDir, 0.0f, 0.0f);
             glUniform4f(u.impulse, 0.0f, 0.0f, 1.0f, 0.0f);
         }
 
@@ -565,27 +568,37 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                 static_cast<float>(rawBox.x + monOff.x),
                 static_cast<float>(rawBox.y + monOff.y));
 
-    // WINDOW-MOTION WAVES: OFF. Three attempts, all wrong in the same way, so
-    // this is a design note rather than a constant waiting to be tuned.
-    //
-    // A Gaussian height bump IS a splash -- a stone dropped in. It can never
-    // read as dragging however small or rare it is made. Dragging looks the way
-    // it does because water piles against the advancing face and leaves a
-    // trough behind that flows back in, which is a DIPOLE: positive ahead of
-    // the edge, negative behind it, oriented along the motion.
-    //
-    // The energy was also accounted against the wrong variable. Displacement
-    // belongs to DISTANCE MOVED, deposited every frame in tiny amounts, so a
-    // 500px drag delivers the same total whether it takes half a second or
-    // five. Mine was per-event and therefore proportional to TIME, which is
-    // why speed made it detonate instead of making it stronger.
-    //
-    // Doing it properly: accumulate this frame's displacement, apply ONE dipole
-    // per simulation step scaled by distance covered since the last step (not a
-    // queue of discrete splashes -- the render loop runs faster than the sim,
-    // so any queue either overflows or lags), and give the impulse an
-    // anisotropic shape stretched across the direction of travel so it reads as
-    // an edge rather than a point.
+    // A dragged edge sweeps water aside. What it deposits is proportional to
+    // the DISTANCE it covered, not to how long it spent covering it, so this
+    // adds a little every frame and the simulation spends whatever has built up
+    // when it next steps. Dragging 500px delivers the same displacement whether
+    // it took half a second or five.
+    {
+        const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
+        static std::unordered_map<uint64_t, Vector2D> track;
+        const uint64_t id = reinterpret_cast<uintptr_t>(sampleFramebuffer.get());
+        auto& prev = track[id];
+        const Vector2D vel{here.x - prev.x, here.y - prev.y};
+        prev = here;
+        const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+        if (mag > 0.3 && mag < 400.0) {
+            const float sc = g_pGlobalState->config.shimmerScale
+                           ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
+            // Centre, not leading edge: the dipole already puts the crest ahead
+            // and the trough behind on its own.
+            const Vector2D c{here.x + rawBox.width * 0.5, here.y + rawBox.height * 0.5};
+            const Vector2D g{(c.x - desk.x * 0.5) / std::max(desk.x, 1.0),
+                             (c.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
+            const Vector2D wp{0.5 + g.x * 0.85 * sc, 0.5 + g.y * 0.85 * sc};
+            auto& dg = g_pGlobalState->drag;
+            dg.x  = static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105);
+            dg.y  = static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105);
+            dg.dx = static_cast<float>(vel.x / mag);
+            dg.dy = static_cast<float>(vel.y / mag);
+            dg.amount = std::min(dg.amount + static_cast<float>(mag) * 0.00035f, 0.05f);
+        }
+    }
+
     glUniform2f(uniforms.winSize,
                 static_cast<float>(rawBox.width), static_cast<float>(rawBox.height));
     glUniform2f(uniforms.deskSize,

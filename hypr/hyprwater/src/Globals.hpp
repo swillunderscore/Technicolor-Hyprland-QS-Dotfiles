@@ -40,8 +40,13 @@ struct SGlobalState {
     // Impulses queued by window motion. A window is a bucket: accelerate it and
     // the water inside piles up against the trailing wall. Filled while drawing
     // each window, drained by the next simulation step.
-    struct SSlosh { float x, y, r, amp; };
-    std::vector<SSlosh> sloshQueue;
+    // Displacement waiting to be handed to the simulation. NOT a queue: the
+    // render loop runs faster than the sim, so discrete events either pile up
+    // or fall behind. This accumulates how far an edge has swept since the last
+    // step and spends the lot in one go, which also makes the total depend on
+    // DISTANCE covered rather than on how long the drag took.
+    struct SDrag { float x = 0, y = 0, dx = 0, dy = 0, amount = 0; };
+    SDrag drag;
 
     // Layer surface glass state (one per tracked layer, keyed by raw pointer).
     // shared_ptr so CGlassLayerPassElement can hold a copy that survives map erasure mid-frame.

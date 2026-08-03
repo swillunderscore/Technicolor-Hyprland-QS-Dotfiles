@@ -735,6 +735,14 @@ uniform vec2  texelSize;
 uniform float waveSpeed;      // (c*dt/dx)^2 — MUST stay < 0.5 or it explodes
 uniform float damping;        // per-step energy retention, slightly below 1
 uniform vec4  impulse;        // xy = position (uv), z = radius, w = strength
+// Direction of a DRAGGED edge, zero for an ordinary splash. A dragged edge does
+// not make a splash: it piles water against its advancing face and leaves a
+// trough behind that flows back in. That shape is a dipole -- positive one side,
+// negative the other -- and the derivative of a Gaussian is exactly that, so
+// differentiating an elliptical bump along the direction of travel gives the
+// whole thing in one expression. Stretching the ellipse ACROSS that direction is
+// what makes it read as an edge sweeping through rather than a point source.
+uniform vec2  impulseDir;
 uniform float bedVariation;   // 0 = flat bottom, 1 = strongly uneven
 uniform float viscosity;      // how fast SHORT waves die relative to long ones
 uniform float maxSpeed;       // largest stable speed for THIS viscosity
@@ -828,8 +836,25 @@ void main() {
     // Energy arrives later, from a direction, and then fades: the pacing the
     // constant-amplitude sine sum could never produce.
     if (impulse.w != 0.0) {
-        float d = length((uv - impulse.xy) * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6)));
-        hNext += exp(-(d * d) / max(impulse.z * impulse.z, 1e-9)) * impulse.w;
+        vec2  q  = (uv - impulse.xy) * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
+        float ra = max(impulse.z, 1e-9);
+        if (dot(impulseDir, impulseDir) < 0.5) {
+            // Ordinary splash: round bump, unchanged.
+            float d = length(q);
+            hNext += exp(-(d * d) / (ra * ra)) * impulse.w;
+        } else {
+            // Along the motion it is narrow, across it is broad -- an edge is a
+            // line, not a dot.
+            float along  = dot(q, impulseDir);
+            float across = dot(q, vec2(-impulseDir.y, impulseDir.x));
+            float rb = ra * 3.5;
+            float e  = exp(-(along * along) / (ra * ra)
+                           - (across * across) / (rb * rb));
+            // d/d(along) of that bump: positive ahead of the edge, negative
+            // behind it, and it integrates to zero, so a drag displaces water
+            // rather than adding any.
+            hNext += impulse.w * (along / ra) * e * 2.0;
+        }
     }
 
     hNext = clamp(hNext, -0.49, 0.49);
