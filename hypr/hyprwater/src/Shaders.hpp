@@ -77,6 +77,10 @@ uniform float waveTexel;     // 1 / simulation grid size, for the C1 read
 // is the part that must never lag or tick.
 uniform vec4 winWake;        // xy = drag direction, z = strength (0 at rest)
 uniform vec4 winRectSim;     // xy = window centre, zw = half-extents (sim uv)
+// The drag deposit accumulated since the last simulation step, rendered
+// analytically until the sim absorbs it (see waveH).
+uniform vec4 pendStroke;     // xy = stroke start, zw = stroke end (sim uv)
+uniform vec4 pendStroke2;    // xy = direction, z = radius, w = amplitude
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
 uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
 // Where this window sits on the desktop, and how big the desktop is, both in
@@ -229,11 +233,41 @@ float waveH(vec2 q) {
     // (the sim's job) propagate slowly.
     if (winWake.z > 0.001) {
         vec2  bd  = (uv - winRectSim.xy) / max(winRectSim.zw, vec2(1e-5));
-        float box = max(abs(bd.x), abs(bd.y));            // 1.0 at the edge
-        float env = smoothstep(2.2, 1.0, box) * smoothstep(0.15, 0.75, box);
+        // Smooth p=4 superellipse metric. max(|x|,|y|) has gradient CREASES
+        // along the diagonals, and the caustic pass printed them as a bright
+        // X across every dragged window. A p-norm rounds the corners and is
+        // smooth everywhere the envelope is nonzero.
+        vec2  b2  = bd * bd;
+        vec2  b4  = b2 * b2;
+        float box = pow(b4.x + b4.y, 0.25);
+        // Crest INSIDE the border: the outer falloff ends just past the edge
+        // so the displacement never asks the backdrop sampler for pixels far
+        // outside its padded region — pushing height right AT the border was
+        // resurrecting the old top-edge smear on tall windows.
+        float env = smoothstep(1.35, 0.95, box) * smoothstep(0.25, 0.8, box);
         float along = clamp(dot(uv - winRectSim.xy, winWake.xy)
                             / max(length(winRectSim.zw), 1e-5), -1.0, 1.0);
-        h += winWake.z * along * env * 0.16;
+        h += winWake.z * along * env * 0.10;
+    }
+    // The stroke a drag has deposited since the last simulation step, rendered
+    // analytically until the sim absorbs it. The spend zeroes the pending
+    // amount in the same frame the deposit lands in the texture, so the
+    // handoff is seamless — and slow water responds to dragging continuously
+    // at ANY simulation speed, instead of ticking once per rare step. This is
+    // the piece sub-stepping alone could not provide at the bottom of the
+    // speed slider.
+    if (pendStroke2.w != 0.0) {
+        vec2  A2  = pendStroke.xy;
+        vec2  AB2 = pendStroke.zw - A2;
+        float l22 = dot(AB2, AB2);
+        float t2  = l22 > 1e-12 ? clamp(dot(uv - A2, AB2) / l22, 0.0, 1.0) : 0.0;
+        vec2  r2  = uv - (A2 + t2 * AB2);
+        float alo = dot(r2, pendStroke2.xy);
+        float acr = dot(r2, vec2(-pendStroke2.y, pendStroke2.x));
+        float ra2 = max(pendStroke2.z, 1e-5);
+        float rb2 = ra2 * 3.5;
+        h += pendStroke2.w * (alo / ra2)
+           * exp(-(alo * alo) / (ra2 * ra2) - (acr * acr) / (rb2 * rb2)) * 2.0;
     }
     return h;
 }

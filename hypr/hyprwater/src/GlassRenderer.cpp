@@ -962,6 +962,22 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                         static_cast<float>(0.5 + (c2.y - desk.y * 0.5) * kk),
                         static_cast<float>(std::max(rawBox.width  * 0.5 * kk, 1e-4)),
                         static_cast<float>(std::max(rawBox.height * 0.5 * kk, 1e-4)));
+
+            // Pending drag stroke — whatever has accumulated since the sim
+            // last spent it, rendered analytically until absorbed (stepWaveSim
+            // ran BEFORE these uploads, so this is the true post-spend state
+            // and the handoff frame is seamless).
+            const auto& pd = g_pGlobalState->drag;
+            if (pd.amount > 1e-5f) {
+                const float ra  = pd.r > 0.0f ? pd.r : 0.045f;
+                const float len = std::hypot(pd.x - pd.px, pd.y - pd.py);
+                glUniform4f(uniforms.pendStroke,  pd.px, pd.py, pd.x, pd.y);
+                glUniform4f(uniforms.pendStroke2, pd.dx, pd.dy, ra,
+                            pd.amount / (1.0f + 0.6f * len / ra));
+            } else {
+                glUniform4f(uniforms.pendStroke,  0.0f, 0.0f, 0.0f, 0.0f);
+                glUniform4f(uniforms.pendStroke2, 0.0f, 0.0f, 1.0f, 0.0f);
+            }
         }
         // A toggle, not a force slider: windows either sit in the water or
         // they don't. Position tracking above still runs while off, so
