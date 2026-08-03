@@ -755,6 +755,14 @@ uniform float maxSpeed;       // largest stable speed for THIS viscosity
 // a pixel-scale dither. Only the UNORM fallback, which cannot hold a negative
 // number at all, still needs the offset.
 uniform float hBias;
+// CURRENTS. RG = velocity in uv per simulated second, from the Stable Fluids
+// passes. The whole 5-tap stencil below is looked up at the point this texel's
+// water CAME FROM, so waves are carried by the flow — a swirl left behind a
+// dragged window visibly bends the wavefronts crossing it. flowAdvect is the
+// step dt while currents are on and exactly 0 while they are off, so a
+// disabled field costs one uniform compare and nothing else.
+uniform sampler2D velTex;
+uniform float flowAdvect;
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -779,6 +787,11 @@ float bedDepth(vec2 p) {
 
 void main() {
     vec2 uv = v_texcoord;
+    // Semi-Lagrangian: shift the whole stencil to where this texel's water was
+    // one step ago. Both height channels ride together so the wave equation's
+    // h/h_prev relationship survives the move.
+    if (flowAdvect > 0.0)
+        uv -= texture(velTex, uv).rg * flowAdvect;
     vec4 c  = texture(tex, uv);
     float h      = c.r - hBias;
     float hPrev  = c.g - hBias;
@@ -815,8 +828,10 @@ void main() {
     // the majority of the area -- and an uneven bottom that is uniform in
     // practice is what lets wavefronts stay perfect arcs. This way the whole
     // range lives under the limit no matter how thick the water is set.
+    // v_texcoord, not the advected uv: the bed is the FLOOR. It does not flow
+    // with the water above it.
     float localSpeed = maxSpeed * waveSpeed
-                     * (0.65 + 0.35 * bedVariation * bedDepth(uv));
+                     * (0.65 + 0.35 * bedVariation * bedDepth(v_texcoord));
     localSpeed = clamp(localSpeed, 0.01, maxSpeed);
 
     // VISCOSITY. A single multiplicative damping factor removes the same
@@ -836,7 +851,9 @@ void main() {
     // Energy arrives later, from a direction, and then fades: the pacing the
     // constant-amplitude sine sum could never produce.
     if (impulse.w != 0.0) {
-        vec2  q  = (uv - impulse.xy) * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
+        // v_texcoord again: the thing splashing is an external object at a
+        // fixed place, not a parcel of the flowing sheet.
+        vec2  q  = (v_texcoord - impulse.xy) * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
         float ra = max(impulse.z, 1e-9);
         if (dot(impulseDir, impulseDir) < 0.5) {
             // Ordinary splash: round bump, unchanged.
@@ -859,6 +876,136 @@ void main() {
 
     hNext = clamp(hNext, -0.49, 0.49);
     fragColor = vec4(hNext + hBias, h + hBias, 0.0, 1.0);
+}
+)GLSL"},
+
+/*
+ * CURRENTS — Stam's Stable Fluids, four passes over a 256x256 velocity field.
+ *
+ * The wave equation above is a SCALAR height field: vorticity (curl v) is
+ * undefined on it — you cannot curl a scalar — so no amount of tuning it will
+ * ever produce an eddy. Eddies need a velocity field. These passes maintain
+ * one: advect it by itself, push it where a window dragged, then project it
+ * back to divergence-free. The projection IS mass conservation: a force can
+ * move water around but can never create or destroy it, which is what makes
+ * permeable window edges safe — overlapping windows are two viewports onto the
+ * same fluid, nothing is ever trapped or compressed.
+ *
+ * Convention shared by all four passes and the numpy prototype they were
+ * verified against: velocity in uv per SIMULATED SECOND, dx = one texel in uv,
+ * all derivatives central differences on clamped edges.
+ * Divergence solves  lap(q) = div(v)  and then  v -= grad(q); the residual a
+ * 24-iteration Jacobi leaves is texel-scale checkerboard (the collocated-grid
+ * null space), which the 4x bilinear upsample into the wave grid filters out.
+ */
+    {"fluid_advect.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// PASS 1: SEMI-LAGRANGIAN ADVECTION + FORCE + DISSIPATION.
+// "Where did the fluid at this texel come from?" — walk backward along the
+// local velocity and take what was there. Unconditionally stable at any speed
+// (it interpolates history rather than extrapolating a derivative), at the
+// price of being slightly diffusive — which for water read through a caustic
+// is a feature, not a bug.
+uniform sampler2D tex;      // velocity, RG = (vx, vy) in uv/second, signed
+uniform float dt;
+uniform float dissipation;  // per-step momentum retention, slightly below 1
+uniform vec4  force;        // xy = position (uv), z = radius, w = impulse (uv/s at peak)
+uniform vec2  forceDir;     // unit direction of the push
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2 uv = v_texcoord;
+    vec2 v0 = texture(tex, uv).rg;
+    vec2 v  = texture(tex, uv - v0 * dt).rg * dissipation;
+    // A dragged window edge is momentum arriving in the water — this splat is
+    // the real thing the height dipole approximates. The projection pass will
+    // reshape it into a divergence-free swirl: a vortex pair at the ends of
+    // the swept region, which is exactly the corner-whirlpool look.
+    if (force.w != 0.0) {
+        vec2 d = uv - force.xy;
+        v += forceDir * force.w * exp(-dot(d, d) / (force.z * force.z));
+    }
+    fragColor = vec4(v, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"fluid_divergence.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// PASS 2: DIVERGENCE of the advected velocity — how much each cell is being
+// pumped into or drained, per second. This is what the pressure solve must
+// cancel.
+uniform sampler2D tex;      // velocity
+uniform vec2 texelSize;
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2 uv = v_texcoord;
+    float vL = texture(tex, uv - vec2(texelSize.x, 0.0)).r;
+    float vR = texture(tex, uv + vec2(texelSize.x, 0.0)).r;
+    float vD = texture(tex, uv - vec2(0.0, texelSize.y)).g;
+    float vU = texture(tex, uv + vec2(0.0, texelSize.y)).g;
+    fragColor = vec4((vR - vL + vU - vD) / (2.0 * texelSize.x), 0.0, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"fluid_jacobi.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// PASS 3 (iterated): one Jacobi relaxation of  lap(q) = div. Information moves
+// one texel per iteration, so 24 iterations cannot flatten a domain-sized mode
+// in one frame — but q is WARM-STARTED from the previous step, so across a few
+// frames the effective iteration count is whatever it needs to be.
+uniform sampler2D tex;      // q from the previous iteration
+uniform sampler2D divTex;   // divergence, fixed for the whole solve
+uniform vec2 texelSize;
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2 uv = v_texcoord;
+    float qL = texture(tex, uv - vec2(texelSize.x, 0.0)).r;
+    float qR = texture(tex, uv + vec2(texelSize.x, 0.0)).r;
+    float qD = texture(tex, uv - vec2(0.0, texelSize.y)).r;
+    float qU = texture(tex, uv + vec2(0.0, texelSize.y)).r;
+    float d  = texture(divTex, uv).r;
+    fragColor = vec4((qL + qR + qD + qU - d * texelSize.x * texelSize.x) * 0.25,
+                     0.0, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"fluid_gradient.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// PASS 4: subtract grad(q) — remove the compressive part of the field and
+// keep the swirl. What survives this pass is by construction divergence-free:
+// pure rotation and shear, the only motions incompressible water can do.
+uniform sampler2D tex;      // velocity
+uniform sampler2D prsTex;   // solved q
+uniform vec2 texelSize;
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2 uv = v_texcoord;
+    float qL = texture(prsTex, uv - vec2(texelSize.x, 0.0)).r;
+    float qR = texture(prsTex, uv + vec2(texelSize.x, 0.0)).r;
+    float qD = texture(prsTex, uv - vec2(0.0, texelSize.y)).r;
+    float qU = texture(prsTex, uv + vec2(0.0, texelSize.y)).r;
+    vec2 v = texture(tex, uv).rg
+           - vec2(qR - qL, qU - qD) / (2.0 * texelSize.x);
+    fragColor = vec4(v, 0.0, 1.0);
 }
 )GLSL"},
 

@@ -57,6 +57,22 @@ struct SWaveSimUniforms {
     GLint viscosity    = -1;
     GLint maxSpeed     = -1;
     GLint hBias        = -1;
+    GLint velTex       = -1;
+    GLint flowAdvect   = -1;
+};
+
+// One struct for all four Stable Fluids passes, prefixed by pass:
+// a = advect, d = divergence, j = jacobi, g = gradient.
+struct SFluidUniforms {
+    GLint aDt          = -1;
+    GLint aDissipation = -1;
+    GLint aForce       = -1;
+    GLint aForceDir    = -1;
+    GLint dTexelSize   = -1;
+    GLint jTexelSize   = -1;
+    GLint jDivTex      = -1;
+    GLint gTexelSize   = -1;
+    GLint gPrsTex      = -1;
 };
 
 class CShaderManager {
@@ -75,6 +91,12 @@ class CShaderManager {
     SP<CShader>      waveSimShader = makeShared<CShader>();
     SWaveSimUniforms waveSimUniforms;
 
+    SP<CShader>    fluidAdvectShader     = makeShared<CShader>();
+    SP<CShader>    fluidDivergenceShader = makeShared<CShader>();
+    SP<CShader>    fluidJacobiShader     = makeShared<CShader>();
+    SP<CShader>    fluidGradientShader   = makeShared<CShader>();
+    SFluidUniforms fluidUniforms;
+
   private:
     bool m_initialized = false;
 
@@ -82,4 +104,5 @@ class CShaderManager {
     [[nodiscard]] bool compileGlassShader();
     [[nodiscard]] bool compileBlurShader();
     [[nodiscard]] bool compileWaveSimShader();
+    [[nodiscard]] bool compileFluidShaders();
 };

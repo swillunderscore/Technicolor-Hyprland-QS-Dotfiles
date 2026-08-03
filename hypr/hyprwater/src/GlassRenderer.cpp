@@ -117,6 +117,136 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
 //  Small grid on purpose: 512x512 costs ~260k texels x 5 taps once per frame,
 //  which is nothing beside the caustic pass running over every glass pixel.
 // ============================================================================
+// Shared by the wave step and the fluid passes: draw one quad over the whole
+// target, no window geometry involved.
+static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
+    2.0f, 0.0f, 0.0f,
+    0.0f, 2.0f, 0.0f,
+   -1.0f,-1.0f, 1.0f,
+};
+
+// ============================================================================
+//  CURRENTS — one Stable Fluids step (Stam 1999): advect, force, project.
+//
+//  The wave sim above this is a SCALAR height field; curl of a scalar is
+//  undefined, so it structurally cannot hold an eddy — the user's whirlpools
+//  need an actual velocity field. This maintains one at low resolution
+//  (velocity fields are smooth; the projection smooths them further) and the
+//  wave step samples it bilinearly, so currents bend and carry the waves.
+//
+//  Deliberately NOT moving solid boundaries: window edges inject FORCE into
+//  one shared sheet (they are permeable — windows contain nothing, overlapping
+//  windows are two viewports onto the same fluid). A force can move water but
+//  never create it; the pressure projection enforcing div v = 0 IS the mass
+//  conservation that makes this safe. Real moving walls would need solid-fluid
+//  coupling and can trap and compress fluid — that case is intentionally out.
+//
+//  Cost: (2 + 24 + 1) draws over 256^2 per step ≈ 2M texel updates, against a
+//  caustic pass doing ~18 BILLION reads/sec. Invisible. Verified against a
+//  numpy prototype first: vortex dipole forms behind a drag, a wave packet is
+//  carried at the current's speed, and 4000 steps stay bounded.
+// ============================================================================
+static constexpr int FLUID        = 256;
+static constexpr int FLUID_JACOBI = 24;
+
+static void bindSimTexture(int unit, const SP<Render::IFramebuffer>& fb) {
+    // Explicit filtering EVERY bind, same lesson as the wave texture: nothing
+    // else sets these, and NEAREST prints the grid. CLAMP keeps the boundary
+    // from wrapping to the far side. LINEAR is exact at texel centers, so the
+    // whole-texel offsets of the derivative stencils are unaffected.
+    glActiveTexture(GL_TEXTURE0 + unit);
+    fb->getTexture()->bind();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+static void stepFluidOnce(const SGlobalState::SDrag& dragNow) {
+    auto& st = *g_pGlobalState;
+    const auto& fu = st.shaderManager.fluidUniforms;
+    const float texel = 1.0f / FLUID;
+
+    g_pHyprOpenGL->setViewport(0, 0, FLUID, FLUID);
+
+    // 1) Advect the velocity by itself + inject the drag's momentum + bleed.
+    {
+        auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidAdvectShader);
+        sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        sh->setUniformInt(SHADER_TEX, 3);
+        glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
+        glUniform1f(fu.aDt, 1.0f / 120.0f);
+        // ~4 s momentum half-life on top of what the projection and the
+        // semi-Lagrangian interpolation already dissipate: eddies outlive the
+        // drag that made them by a few seconds, then the water goes still.
+        glUniform1f(fu.aDissipation, 0.998f);
+        if (dragNow.amount > 1e-5f) {
+            // Same spot, direction and window-width radius as the height
+            // dipole this step will fire — the dipole is the bow wave, this is
+            // the momentum the hull leaves in the water. The dipole amplitude
+            // (~0.002-0.05 per spend) maps to a peak velocity kick of
+            // ~0.02-0.6 uv/s, the range the prototype showed makes visible
+            // swirls without outrunning the advection.
+            glUniform2f(fu.aForceDir, dragNow.dx, dragNow.dy);
+            glUniform4f(fu.aForce, dragNow.x, dragNow.y,
+                        dragNow.r > 0.0f ? dragNow.r : 0.045f,
+                        dragNow.amount * 12.0f);
+        } else {
+            glUniform2f(fu.aForceDir, 0.0f, 0.0f);
+            glUniform4f(fu.aForce, 0.0f, 0.0f, 1.0f, 0.0f);
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidVelFb[1 - st.fluidVelCurrent]));
+        bindSimTexture(3, st.fluidVelFb[st.fluidVelCurrent]);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        st.fluidVelCurrent = 1 - st.fluidVelCurrent;
+    }
+
+    // 2) How much each cell is now being pumped or drained.
+    {
+        auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidDivergenceShader);
+        sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        sh->setUniformInt(SHADER_TEX, 3);
+        glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
+        glUniform2f(fu.dTexelSize, texel, texel);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidDivFb));
+        bindSimTexture(3, st.fluidVelFb[st.fluidVelCurrent]);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    // 3) Relax lap(q) = div. q is warm-started from the previous step, so the
+    //    iterations compound across frames instead of starting from scratch.
+    {
+        auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidJacobiShader);
+        sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        sh->setUniformInt(SHADER_TEX, 3);
+        glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
+        glUniform2f(fu.jTexelSize, texel, texel);
+        glUniform1i(fu.jDivTex, 4);
+        bindSimTexture(4, st.fluidDivFb);
+        for (int j = 0; j < FLUID_JACOBI; j++) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidPrsFb[1 - st.fluidPrsCurrent]));
+            bindSimTexture(3, st.fluidPrsFb[st.fluidPrsCurrent]);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            st.fluidPrsCurrent = 1 - st.fluidPrsCurrent;
+        }
+    }
+
+    // 4) Keep only the swirl.
+    {
+        auto sh = g_pHyprOpenGL->useShader(st.shaderManager.fluidGradientShader);
+        sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        sh->setUniformInt(SHADER_TEX, 3);
+        glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
+        glUniform2f(fu.gTexelSize, texel, texel);
+        glUniform1i(fu.gPrsTex, 4);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidVelFb[1 - st.fluidVelCurrent]));
+        bindSimTexture(3, st.fluidVelFb[st.fluidVelCurrent]);
+        bindSimTexture(4, st.fluidPrsFb[st.fluidPrsCurrent]);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        st.fluidVelCurrent = 1 - st.fluidVelCurrent;
+    }
+}
+
 void stepWaveSim() {
     static constexpr int SIM = 1024;
 
@@ -243,12 +373,50 @@ void stepWaveSim() {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevVp);
 
-
-    static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
-        2.0f, 0.0f, 0.0f,
-        0.0f, 2.0f, 0.0f,
-       -1.0f,-1.0f, 1.0f,
-    };
+    // ---- Currents: velocity-field housekeeping ---------------------------
+    // Gated on the half-float path: velocity is SIGNED and small, and unlike
+    // the height field it has no bias trick worth doing on a UNORM target —
+    // quantised velocity reads as the water jittering in place. No fallback,
+    // the toggle just does nothing on hardware that can't render to fp16.
+    bool fluidOn = fmt == DRM_FORMAT_ABGR16161616F
+                && g_pGlobalState->config.shimmerCurrents
+                && **g_pGlobalState->config.shimmerCurrents != 0;
+    {
+        static bool currentsWere = false;
+        bool freshFluid = fresh;
+        if (fluidOn && !currentsWere)
+            freshFluid = true;   // stale field from before the toggle flipped
+        currentsWere = fluidOn;
+        if (fluidOn) {
+            auto& st = *g_pGlobalState;
+            SP<Render::IFramebuffer>* fbs[] = {&st.fluidVelFb[0], &st.fluidVelFb[1],
+                                               &st.fluidPrsFb[0], &st.fluidPrsFb[1],
+                                               &st.fluidDivFb};
+            const char* names[] = {"hyprwater-vel-a", "hyprwater-vel-b",
+                                   "hyprwater-prs-a", "hyprwater-prs-b",
+                                   "hyprwater-div"};
+            for (size_t i = 0; i < std::size(names); i++) {
+                auto& fb = *fbs[i];
+                if (!fb)
+                    fb = g_pHyprRenderer->createFB(names[i]);
+                if (fb->m_size.x != FLUID || fb->m_size.y != FLUID) {
+                    fb->alloc(FLUID, FLUID, fmt);
+                    freshFluid = true;
+                }
+                if (!fb || !fb->getTexture() || fbId(fb) == 0)
+                    fluidOn = false;
+            }
+            // Zero is genuinely zero here (still water, no pressure), unlike
+            // the height textures whose flat state is the bias value.
+            if (fluidOn && freshFluid) {
+                for (auto* fb : fbs) {
+                    glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
+                    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                }
+            }
+        }
+    }
 
     const auto& u = shaderManager.waveSimUniforms;
     auto shader = g_pHyprOpenGL->useShader(shaderManager.waveSimShader);
@@ -347,6 +515,10 @@ void stepWaveSim() {
     glUniform1f(u.hBias, g_pGlobalState->waveBias);
     glUniform1f(u.viscosity, visc);
     glUniform1f(u.maxSpeed, uRoot * uRoot);
+    // Exactly 0 when currents are off: the shader's advection branch keys on
+    // it, so a disabled field costs one compare and no texture read.
+    glUniform1i(u.velTex, 4);
+    glUniform1f(u.flowAdvect, fluidOn ? 1.0f / 120.0f : 0.0f);
     // DELIBERATELY NOT scaled by speed. Tying it to simulated time was correct
     // in physics and wrong in use: at speed 0.002 it worked out to one
     // disturbance every ~6 MINUTES, so the surface just sat there. "Slow" is
@@ -355,8 +527,6 @@ void stepWaveSim() {
     // texture that is still fed, and "How often" stays an independent control.
 
 
-    glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
-    g_pHyprOpenGL->setViewport(0, 0, SIM, SIM);
     g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
 
     for (int i = 0; i < steps; i++) {
@@ -364,6 +534,24 @@ void stepWaveSim() {
         auto& d0 = g_pGlobalState->waveFb[1 - g_pGlobalState->waveCurrent];
         if (!s0 || !s0->getTexture() || fbId(d0) == 0)
             break;
+
+        // Currents advance FIRST so this wave step reads the freshly projected
+        // field. The drag state is read here and spent (zeroed) by the wave
+        // impulse branch below — the same drag feeds both on the same step:
+        // the height dipole is the bow wave, the velocity splat is the
+        // momentum left in the water. The dipole stays even with currents on
+        // because a divergence-free field advecting a FLAT surface leaves it
+        // flat — momentum alone cannot raise water here, so without the dipole
+        // a drag across calm water would be invisible.
+        if (fluidOn) {
+            stepFluidOnce(g_pGlobalState->drag);
+            // The fluid passes bound their own programs; the wave uniforms set
+            // above still live in the wave program's state, so rebinding is
+            // all that is needed.
+            shader = g_pHyprOpenGL->useShader(shaderManager.waveSimShader);
+        }
+        glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+        g_pHyprOpenGL->setViewport(0, 0, SIM, SIM);
 
         // Impulses are decided per STEP, so their rate follows simulated time
         // rather than however many frames happened to get drawn.
@@ -417,6 +605,12 @@ void stepWaveSim() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        // The freshly projected velocity, for the advection lookup. Unit 4 —
+        // unit 0 is the glass backdrop, unit 3 is the height field.
+        if (fluidOn) {
+            bindSimTexture(4, g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent]);
+            glActiveTexture(GL_TEXTURE3);
+        }
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         g_pGlobalState->waveCurrent = 1 - g_pGlobalState->waveCurrent;
     }

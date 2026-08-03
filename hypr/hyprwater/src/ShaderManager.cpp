@@ -110,6 +110,46 @@ bool CShaderManager::compileWaveSimShader() {
     waveSimUniforms.viscosity    = glGetUniformLocation(program, "viscosity");
     waveSimUniforms.maxSpeed     = glGetUniformLocation(program, "maxSpeed");
     waveSimUniforms.hBias        = glGetUniformLocation(program, "hBias");
+    waveSimUniforms.velTex       = glGetUniformLocation(program, "velTex");
+    waveSimUniforms.flowAdvect   = glGetUniformLocation(program, "flowAdvect");
+
+    return true;
+}
+
+bool CShaderManager::compileFluidShaders() {
+    SP<CShader>* shaders[] = {&fluidAdvectShader, &fluidDivergenceShader,
+                              &fluidJacobiShader, &fluidGradientShader};
+    const char*  files[]   = {"fluid_advect.frag", "fluid_divergence.frag",
+                              "fluid_jacobi.frag", "fluid_gradient.frag"};
+    for (size_t i = 0; i < std::size(files); i++) {
+        if (!(*shaders[i])->createProgram(
+                g_pHyprOpenGL->m_shaders->TEXVERTSRC,
+                loadShaderSource(files[i]),
+                true
+            )) {
+            HyprlandAPI::addNotification(PHANDLE,
+                std::format("[{}] Failed to compile {}", PLUGIN_NAME, files[i]),
+                CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+            return false;
+        }
+    }
+
+    auto program = fluidAdvectShader->program();
+    fluidUniforms.aDt          = glGetUniformLocation(program, "dt");
+    fluidUniforms.aDissipation = glGetUniformLocation(program, "dissipation");
+    fluidUniforms.aForce       = glGetUniformLocation(program, "force");
+    fluidUniforms.aForceDir    = glGetUniformLocation(program, "forceDir");
+
+    program = fluidDivergenceShader->program();
+    fluidUniforms.dTexelSize   = glGetUniformLocation(program, "texelSize");
+
+    program = fluidJacobiShader->program();
+    fluidUniforms.jTexelSize   = glGetUniformLocation(program, "texelSize");
+    fluidUniforms.jDivTex      = glGetUniformLocation(program, "divTex");
+
+    program = fluidGradientShader->program();
+    fluidUniforms.gTexelSize   = glGetUniformLocation(program, "texelSize");
+    fluidUniforms.gPrsTex      = glGetUniformLocation(program, "prsTex");
 
     return true;
 }
@@ -127,11 +167,19 @@ void CShaderManager::initializeIfNeeded() {
     if (!compileWaveSimShader())
         return;
 
+    if (!compileFluidShaders())
+        return;
+
     m_initialized = true;
 }
 
 void CShaderManager::destroy() noexcept {
     glassShader->destroy();
     blurShader->destroy();
+    waveSimShader->destroy();
+    fluidAdvectShader->destroy();
+    fluidDivergenceShader->destroy();
+    fluidJacobiShader->destroy();
+    fluidGradientShader->destroy();
     m_initialized = false;
 }

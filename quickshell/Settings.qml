@@ -2358,6 +2358,25 @@ FloatingWindow {
                                 }
                             }
 
+                            Rectangle {
+                                width: parent.width; height: Math.max(50, curCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                                Column {
+                                    id: curCol
+                                    anchors.left: parent.left; anchors.leftMargin: 12
+                                    anchors.right: curTg.left; anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                    Text { text: "Currents"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                    Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                           text: "A velocity field under the surface. Dragging a window leaves real momentum in the water — whirlpools spin off its corners and linger for a few seconds, and waves crossing a current get bent and carried by it. Off, the water still waves but never flows." }
+                                }
+                                TcToggle {
+                                    id: curTg
+                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    on: win.glassValue({ key: "shimmer:currents", def: 1 }) >= 0.5
+                                    onToggled: (v) => { win.glassSet("shimmer:currents", v ? 1 : 0); win.loadGlass() }
+                                }
+                            }
+
                             Repeater {
                                 model: win.shimmerSpecs
                                 delegate: Item {

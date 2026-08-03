@@ -48,6 +48,17 @@ struct SGlobalState {
     struct SDrag { float x = 0, y = 0, dx = 0, dy = 0, amount = 0, r = 0; };
     SDrag drag;
 
+    // Currents (Stable Fluids) state. The height field above is a SCALAR — it
+    // has no curl, so it cannot hold an eddy no matter how it is forced. This
+    // velocity field can. vel ping-pongs through advect/project each step; prs
+    // ping-pongs inside the Jacobi solve and is kept WARM across steps so the
+    // 24 iterations per step compound instead of starting over.
+    SP<Render::IFramebuffer> fluidVelFb[2];
+    SP<Render::IFramebuffer> fluidPrsFb[2];
+    SP<Render::IFramebuffer> fluidDivFb;
+    int fluidVelCurrent = 0;
+    int fluidPrsCurrent = 0;
+
     // Layer surface glass state (one per tracked layer, keyed by raw pointer).
     // shared_ptr so CGlassLayerPassElement can hold a copy that survives map erasure mid-frame.
     std::unordered_map<Desktop::View::CLayerSurface*, std::shared_ptr<CGlassLayerSurface>> layerSurfaces;

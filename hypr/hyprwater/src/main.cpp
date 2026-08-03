@@ -394,6 +394,14 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_pGlobalState->waveFb[1].reset();
     g_pGlobalState->waveCurrent   = 0;
     g_pGlobalState->waveStepCount = 0;
+    // Same rule for the currents field.
+    g_pGlobalState->fluidVelFb[0].reset();
+    g_pGlobalState->fluidVelFb[1].reset();
+    g_pGlobalState->fluidPrsFb[0].reset();
+    g_pGlobalState->fluidPrsFb[1].reset();
+    g_pGlobalState->fluidDivFb.reset();
+    g_pGlobalState->fluidVelCurrent = 0;
+    g_pGlobalState->fluidPrsCurrent = 0;
 
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassPassElement");
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerPassElement");
