@@ -424,8 +424,8 @@ void main() {
     const float SNELL   = 1.0 - 1.0 / WATER_N;
     float lensK    = max(shimmerDepth, 0.10) * SNELL * 0.080;
     if (shimmerIntensity > 0.001) {
-        wpBase = 0.5 + ((winOrigin + uvG * fullSize) - deskSize * 0.5)
-                   / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
+        wpBase = (uvG - 0.5) * (fullSize / max(fullSize.x, 1.0))
+                   * (0.85 * shimmerScale) + 0.5;
         {
             // Divided by the window's pixel size so the shift is a constant
             // number of PIXELS: a small popup and a maximised window then warp
@@ -531,8 +531,8 @@ void main() {
         // Zoom about the CENTRE. Scaling the uv directly scales about (0,0),
         // i.e. the top-left corner, so changing wave size slid the whole pattern
         // toward that corner instead of growing in place.
-        vec2 wp = 0.5 + ((winOrigin + causticUV * fullSize) - deskSize * 0.5)
-                / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
+        vec2 wp = (causticUV - 0.5) * (fullSize / max(fullSize.x, 1.0))
+                * (0.85 * shimmerScale) + 0.5;
         vec3 c = caustic(wp, lensK);
 
         if (shimmerLightFromBackdrop != 0) {

@@ -564,51 +564,11 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                 static_cast<float>(rawBox.x + monOff.x),
                 static_cast<float>(rawBox.y + monOff.y));
 
-    // WINDOW AS A BUCKET. Carry a bucket of water and whip it sideways and the
-    // water does not move with you -- it lags, piles against the trailing wall,
-    // then sloshes back. What drives that is ACCELERATION, not speed: a bucket
-    // carried at a steady walk stays flat. So the impulse is proportional to
-    // the change in velocity, and it is injected BEHIND the window's centre,
-    // on the side the water would pile up against.
-    {
-        const Vector2D here{rawBox.x + monOff.x, rawBox.y + monOff.y};
-        static std::unordered_map<uint64_t, Vector2D> track;
-        const uint64_t id = static_cast<uint64_t>(rawBox.width) * 100000ULL
-                          + static_cast<uint64_t>(rawBox.height);
-        auto& prev = track[id];
-        Vector2D vel{here.x - prev.x, here.y - prev.y};
-        prev = here;
-
-        const double mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
-        // The acceleration that matters is THE WATER'S, not the window's.
-        // A moving edge takes water that is sitting still and shoves it from
-        // rest to moving, and it keeps doing that for as long as it is moving,
-        // so the forcing tracks edge SPEED. Measuring the window's own
-        // acceleration was the wrong body entirely: a steady drag has almost
-        // none, so it fired for one frame at each end of the motion and read as
-        // nothing happening at all.
-        if (mag > 0.8 && mag < 260.0) {
-            const float sc = g_pGlobalState->config.shimmerScale
-                           ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
-            const Vector2D dir{vel.x / mag, vel.y / mag};
-            // The LEADING edge displaces the water, so the push starts at the
-            // face moving into it rather than at the window's middle.
-            const Vector2D lead{here.x + rawBox.width  * (0.5 + dir.x * 0.5),
-                                here.y + rawBox.height * (0.5 + dir.y * 0.5)};
-            const Vector2D g{(lead.x - desk.x * 0.5) / std::max(desk.x, 1.0),
-                             (lead.y - desk.y * 0.5) / std::max(desk.x, 1.0)};
-            const Vector2D wp{0.5 + g.x * 0.85 * sc, 0.5 + g.y * 0.85 * sc};
-            // Wide and shallow: an edge shoves a broad front, unlike the
-            // compact splash a falling object makes.
-            g_pGlobalState->sloshQueue.push_back(
-                {static_cast<float>(0.5 + (wp.x - 0.5) * 2.0 * 0.105),
-                 static_cast<float>(0.5 + (wp.y - 0.5) * 2.0 * 0.105),
-                 0.055f,
-                 static_cast<float>(std::min(0.03 + mag * 0.006, 0.20))});
-            if (g_pGlobalState->sloshQueue.size() > 6)
-                g_pGlobalState->sloshQueue.erase(g_pGlobalState->sloshQueue.begin());
-        }
-    }
+    // Window-motion sloshing is DISABLED, not tuned away. It needs the water to
+    // be per-window, and the simulation is a single shared field: one texture
+    // that every window samples. With a shared field there is no way to disturb
+    // one window's water without disturbing everyone's, which is exactly what it
+    // did. Doing this properly means per-window simulation state.
     glUniform2f(uniforms.deskSize,
                 static_cast<float>(desk.x), static_cast<float>(desk.y));
 
