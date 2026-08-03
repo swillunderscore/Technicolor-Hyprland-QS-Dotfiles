@@ -497,6 +497,9 @@ void main() {
     // real backdrop rather than smearing an already-sampled color.
     // ========================================
     vec2  waveWarp = vec2(0.0);
+    // The raw surface slope, kept for the Fresnel term below. Free: it is the
+    // same value the warp is built from, before depth and aspect scaling.
+    vec2  waveGrad = vec2(0.0);
     vec2  wpBase   = vec2(0.0);
     // ONE physical coefficient for both the bending and the brightening.
     // Depth is how far refracted light travels before it lands, so it sets how
@@ -525,7 +528,8 @@ void main() {
             // Warping scales the whole optical effect; depth is the physical
             // distance. Their product is the displacement coefficient, and the
             // caustics below use the very same number.
-            waveWarp = waveSlope(wpBase, 0.0150) * lensK
+            waveGrad = waveSlope(wpBase, 0.0150);
+            waveWarp = waveGrad * lensK
                      / max(fullSize / max(fullSize.x, 1.0), vec2(0.001));
 
             // ── STAY INSIDE THE CAPTURED BACKDROP ──────────────────────────
@@ -799,8 +803,37 @@ void main() {
     // FRESNEL RIM GLOW (edge zone)
     // ========================================
     if (fresnelStrength > 0.001) {
-        float fresnel = edgeProximity * edgeProximity * fresnelStrength * 0.15;
-        color += vec3(1.0) * fresnel;
+        // FRESNEL FROM THE ACTUAL SURFACE.
+        //
+        // Water reflects only ~2% of the light hitting it head-on, but the
+        // reflectance climbs toward 1 at grazing angles. That single fact is
+        // why a droplet on a table is transparent in the middle and shows a
+        // bright arc around its rim: the surface there curves away until you
+        // are looking along it rather than into it.
+        //
+        // So the rim glow is not a decoration to be painted on at a fixed
+        // strength — it is what happens at any steep piece of surface. Treat
+        // BOTH sources of steepness as one slope and run Schlick's
+        // approximation on the result:
+        //
+        //   the meniscus — the droplet's edge curving down to meet the
+        //   desktop, which is what edgeProximity has always described; and
+        //   the water itself — wave flanks, and above all the bow wave of a
+        //   window being dragged, the steepest water on screen.
+        //
+        // The rim therefore brightens as waves roll into it instead of
+        // sitting there, steep water glints wherever it happens to be, and
+        // calm water collapses back to exactly the old static rim. The ^5
+        // is doing real work as a gate: it ignores gentle swell entirely and
+        // only answers to genuinely steep surface, so this picks out features
+        // rather than washing the whole window out.
+        float rim   = edgeProximity * edgeProximity;
+        float slope = length(waveGrad) * 0.85 + rim * 2.0;
+        float cosT  = inversesqrt(1.0 + slope * slope);
+        float g     = 1.0 - cosT;
+        float g2    = g * g;
+        float refl  = 0.02 + 0.98 * (g2 * g2 * g);   // Schlick, R0 = 0.02
+        color += vec3(1.0) * refl * fresnelStrength * 2.1;
     }
 
     // ========================================

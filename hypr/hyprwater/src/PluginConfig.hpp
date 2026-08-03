@@ -204,7 +204,7 @@ struct SPluginConfig {
     Hyprlang::FLOAT* const* shimmerAgitation           = nullptr;
     Hyprlang::FLOAT* const* shimmerViscosity           = nullptr;
     Hyprlang::FLOAT* const* shimmerMurk                = nullptr;
-    Hyprlang::INT* const*   shimmerWindowPhysics       = nullptr;
+    Hyprlang::FLOAT* const* shimmerWindowPhysics       = nullptr;
     Hyprlang::FLOAT* const* shimmerMouse               = nullptr;
     Hyprlang::INT* const*   shimmerCurrents            = nullptr;
     Hyprlang::INT* const*   shimmerCurrentsRes         = nullptr;

@@ -1249,11 +1249,15 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         {
             const float sc2 = g_pGlobalState->config.shimmerScale
                             ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
-            const bool wp2 = !g_pGlobalState->config.shimmerWindowPhysics
-                          || **g_pGlobalState->config.shimmerWindowPhysics != 0;
+            const float wPhysAmt = g_pGlobalState->config.shimmerWindowPhysics
+                ? std::clamp(static_cast<float>(**g_pGlobalState->config.shimmerWindowPhysics),
+                             0.0f, 1.0f) : 1.0f;
+            const bool wp2 = wPhysAmt > 0.001f;
             // Strength saturates by ~12 px/frame; below ~0.5 it is off.
+            // Scaled by the physics slider so the bow wave — and therefore the
+            // rim glint the glass derives from its slope — fades out with it.
             const float wake = (wp2 && smag > 0.5 && smag < 400.0)
-                             ? static_cast<float>(std::min(smag / 12.0, 1.0)) : 0.0f;
+                             ? static_cast<float>(std::min(smag / 12.0, 1.0)) * wPhysAmt : 0.0f;
             const double kk = 0.85 * sc2 * 2.0 * 0.105 / std::max(desk.x, 1.0);
             const Vector2D c2{here.x + rawBox.width * 0.5, here.y + rawBox.height * 0.5};
             glUniform4f(uniforms.winWake,
@@ -1270,12 +1274,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // summed into its own texture once per frame by renderTrailTex,
             // and the glass shader reads it with a single tap.)
         }
-        // A toggle, not a force slider: windows either sit in the water or
-        // they don't. Position tracking above still runs while off, so
-        // flipping it on mid-drag doesn't read the accumulated gap as one
-        // violent shove.
-        const bool wPhys = !g_pGlobalState->config.shimmerWindowPhysics
-                        || **g_pGlobalState->config.shimmerWindowPhysics != 0;
+        // How hard the window grips the water. Position tracking above still
+        // runs while it is at zero, so turning it up mid-drag doesn't read the
+        // accumulated gap as one violent shove.
+        const float wPhysAmt2 = g_pGlobalState->config.shimmerWindowPhysics
+            ? std::clamp(static_cast<float>(**g_pGlobalState->config.shimmerWindowPhysics),
+                         0.0f, 1.0f) : 1.0f;
+        const bool wPhys = wPhysAmt2 > 0.001f;
         if (wPhys && mag > 0.3 && mag < 400.0) {
             const float sc = g_pGlobalState->config.shimmerScale
                            ? static_cast<float>(**g_pGlobalState->config.shimmerScale) : 1.0f;
@@ -1306,9 +1311,10 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             const double halfW = rawBox.width / std::max(desk.x, 1.0)
                                * 0.85 * sc * 2.0 * 0.105 * 0.5;
             dg.r = static_cast<float>(std::clamp(halfW * 0.9, 0.02, 0.16));
-            // The force the slider used to control, fixed at the value it
-            // shipped tuned to. The knob became the window_physics toggle.
-            constexpr float force = 0.35f;
+            // 0.35 is the value this shipped tuned to, so a slider at 1.0 is
+            // exactly the old feel and an existing `window_physics = 1` in
+            // anyone's config keeps meaning what it meant.
+            const float force = 0.35f * wPhysAmt2;
             dg.amount = std::min(dg.amount + static_cast<float>(mag) * 0.00035f * force,
                                  0.05f * force);
             // Same motion, second ledger: momentum for the continuous fluid

@@ -4,7 +4,7 @@
 # value via hyprctl (which already reflects hyprland.conf + hyprwater-tuning.conf).
 set -u
 
-INT_KEYS=" blur_iterations shimmer:enabled shimmer:currents shimmer:currents_resolution shimmer:window_physics "
+INT_KEYS=" blur_iterations shimmer:enabled shimmer:currents shimmer:currents_resolution "
 for k in refraction_strength fresnel_strength specular_strength lens_distortion \
          edge_thickness chromatic_aberration blur_strength blur_iterations \
            brightness contrast saturation vibrancy \

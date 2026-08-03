@@ -1101,6 +1101,7 @@ FloatingWindow {
         { key: "shimmer:absorption",    label: "Water color", hint: "How much the water itself absorbs. 1.0 is the measured spectrum for pure water \u2014 strong in red, almost none in blue, which is why depth turns things blue. 0 makes the water colourless, which no real water is, but it is your desktop.", from: 0, to: 1,  def: 1.0,  step: 0 },
         { key: "shimmer:murk",          label: "Murk",         hint: "Suspended silt. Particles block what is behind them AND scatter stray light at you, so murky water washes toward a pale haze rather than going dark. Colourless at source \u2014 large particles scatter all wavelengths equally, same reason fog is white.", from: 0, to: 1,  def: 0.0,  step: 0 },
         { key: "shimmer:mouse",         label: "Mouse wake",   hint: "How heavily the cursor rests on the water. A fingertip trailed through the pool \u2014 a thin wake of ripples follows where you point, deposited by distance moved, not speed \u2014 and every click taps the surface, a small ring spreading from where you pressed. Zero lifts it off the surface entirely.", from: 0, to: 1,  def: 0.3, step: 0 },
+        { key: "shimmer:window_physics", label: "Window physics", hint: "How hard a window grips the water. Dragging one shoves it aside \u2014 a crest piles against the advancing edge, a trough fills in behind, sized to the window and deposited by distance dragged. That bow wave is the steepest water on screen, so it is also what lights the leading edge: turn this down and the drag glint fades with it. At zero windows glide over the surface without touching it.", from: 0, to: 1, def: 1.0, step: 0 },
     ]
 
     // Log-scaled sliders. A linear 0.002..3 track spends ~99% of its travel
@@ -2459,25 +2460,6 @@ FloatingWindow {
                                     anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
                                     on: win.glassValue({ key: "shimmer:enabled", def: 0 }) >= 0.5
                                     onToggled: (v) => { win.glassSet("shimmer:enabled", v ? 1 : 0); win.loadGlass() }
-                                }
-                            }
-
-                            Rectangle {
-                                width: parent.width; height: Math.max(50, winPhysCol.implicitHeight + 18); radius: 9; color: win.rowBg
-                                Column {
-                                    id: winPhysCol
-                                    anchors.left: parent.left; anchors.leftMargin: 12
-                                    anchors.right: winPhysTg.left; anchors.rightMargin: 10
-                                    anchors.verticalCenter: parent.verticalCenter; spacing: 2
-                                    Text { text: "Window physics"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
-                                    Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
-                                           text: "Windows sit in the water. Dragging one shoves it aside — a crest piles against the advancing edge, a trough fills in behind, sized to the window and deposited by distance dragged. Off, windows glide over the surface without touching it." }
-                                }
-                                TcToggle {
-                                    id: winPhysTg
-                                    anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
-                                    on: win.glassValue({ key: "shimmer:window_physics", def: 1 }) >= 0.5
-                                    onToggled: (v) => { win.glassSet("shimmer:window_physics", v ? 1 : 0); win.loadGlass() }
                                 }
                             }
 
