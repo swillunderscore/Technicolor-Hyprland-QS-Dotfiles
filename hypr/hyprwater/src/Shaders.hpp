@@ -79,6 +79,10 @@ uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless wat
 // makes a moving window slide across standing water instead of dragging its
 // own pattern along with it.
 uniform vec2  winOrigin;
+// Window size in the SAME logical pixels as winOrigin. fullSize comes from the
+// transformed box and is a different space; adding the two put every window's
+// water somewhere else depending on its size and monitor.
+uniform vec2  winSize;
 uniform vec2  deskSize;
 uniform float waveBias;       // storage offset used by the simulation
 
@@ -424,8 +428,8 @@ void main() {
     const float SNELL   = 1.0 - 1.0 / WATER_N;
     float lensK    = max(shimmerDepth, 0.10) * SNELL * 0.080;
     if (shimmerIntensity > 0.001) {
-        wpBase = (uvG - 0.5) * (fullSize / max(fullSize.x, 1.0))
-                   * (0.85 * shimmerScale) + 0.5;
+        wpBase = 0.5 + ((winOrigin + uvG * winSize) - deskSize * 0.5)
+                   / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
         {
             // Divided by the window's pixel size so the shift is a constant
             // number of PIXELS: a small popup and a maximised window then warp
@@ -531,8 +535,8 @@ void main() {
         // Zoom about the CENTRE. Scaling the uv directly scales about (0,0),
         // i.e. the top-left corner, so changing wave size slid the whole pattern
         // toward that corner instead of growing in place.
-        vec2 wp = (causticUV - 0.5) * (fullSize / max(fullSize.x, 1.0))
-                * (0.85 * shimmerScale) + 0.5;
+        vec2 wp = 0.5 + ((winOrigin + causticUV * winSize) - deskSize * 0.5)
+                / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
         vec3 c = caustic(wp, lensK);
 
         if (shimmerLightFromBackdrop != 0) {

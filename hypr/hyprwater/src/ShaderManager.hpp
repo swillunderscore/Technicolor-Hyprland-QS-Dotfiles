@@ -18,6 +18,7 @@ struct SGlassUniforms {
     GLint shimmerMurk              = -1;
     GLint shimmerAbsorption        = -1;
     GLint winOrigin                = -1;
+    GLint winSize                  = -1;
     GLint deskSize                 = -1;
     GLint chromaticAberration = -1;
     GLint fresnelStrength = -1;

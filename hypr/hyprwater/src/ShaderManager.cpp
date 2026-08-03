@@ -43,6 +43,7 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.shimmerMurk        = glGetUniformLocation(program, "shimmerMurk");
     glassUniforms.shimmerAbsorption  = glGetUniformLocation(program, "shimmerAbsorption");
     glassUniforms.winOrigin          = glGetUniformLocation(program, "winOrigin");
+    glassUniforms.winSize            = glGetUniformLocation(program, "winSize");
     glassUniforms.deskSize           = glGetUniformLocation(program, "deskSize");
     glassUniforms.chromaticAberration = glGetUniformLocation(program, "chromaticAberration");
     glassUniforms.fresnelStrength     = glGetUniformLocation(program, "fresnelStrength");
