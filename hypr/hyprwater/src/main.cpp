@@ -9,6 +9,8 @@
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
+#include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/render/decorations/DecorationPositioner.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -49,9 +51,20 @@ static void onNewWindow(PHLWINDOW window) {
 }
 
 static void onCloseWindow(PHLWINDOW window) {
-    std::erase_if(g_pGlobalState->decorations, [&window](const auto& decoration) {
-        auto* deco = decoration.get();
-        return !deco || deco->getOwner() == window;
+    // Prune EXPIRED entries ONLY — never live ones. "close" fires on UNMAP,
+    // and XWayland windows (Steam is full of them) unmap and remap without
+    // ever being destroyed. The old version also erased the entry whose owner
+    // matched the closing window, which FORGOT a still-attached decoration:
+    // PLUGIN_EXIT could then no longer remove it, dlclose unmapped its code,
+    // and the window's eventual REAL destruction called a virtual destructor
+    // through a vtable pointing into freed pages — a compositor SEGV that
+    // fired on "exit Steam" (2026-08-03). When a window truly dies, its
+    // decoration dies with it and the entry expires; the prune below catches
+    // it on the next close event. Tracking a live decoration twice as long is
+    // free; forgetting it once was fatal.
+    (void)window;
+    std::erase_if(g_pGlobalState->decorations, [](const auto& decoration) {
+        return !decoration.get();
     });
 }
 
@@ -415,11 +428,40 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerPassElement");
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerCompositeElement");
 
+    // Destroy every decoration SYNCHRONOUSLY, RIGHT NOW, by erasing it from
+    // its window's decoration vector ourselves. Neither official path can be
+    // trusted here: HyprlandAPI::removeWindowDecoration resolves the owner
+    // through the WINDOW REGISTRY, and an unmap-hidden window (Steam is full
+    // of them) is not in it — silent no-op. CWindow::removeWindowDeco defers
+    // to a queue drained when the window next renders — an unmapped window
+    // never renders, so the decoration outlives dlclose either way. Its
+    // vtable then points into freed pages and the window's eventual REAL
+    // destruction calls straight into them (2026-08-03, "exited Steam";
+    // both official paths re-crashed the nested repro before this version).
+    // The positioner must be told first — the base-class destructor does NOT
+    // uncache, and a stale positioner entry is just the same bomb elsewhere.
+    auto stripGlassDeco = [](PHLWINDOW w) {
+        if (!w)
+            return;
+        for (const auto& d : w->m_windowDecorations)
+            if (d && d->getDisplayName() == "HyprGlass" && g_pDecorationPositioner)
+                g_pDecorationPositioner->uncacheDecoration(d.get());
+        std::erase_if(w->m_windowDecorations, [](const auto& d) {
+            return d && d->getDisplayName() == "HyprGlass";
+        });
+    };
+    // Tracked decorations first (their owners may live OUTSIDE the registry:
+    // unmap-hidden or fading out)...
     for (auto& decoration : g_pGlobalState->decorations) {
         if (auto* deco = decoration.get())
-            HyprlandAPI::removeWindowDecoration(PHANDLE, deco);
+            stripGlassDeco(deco->getOwner());
     }
     g_pGlobalState->decorations.clear();
+    // ...then every registry window, so a lost tracking entry can never
+    // strand a decoration on a mapped window either.
+    if (Desktop::windowState())
+        for (const auto& w : Desktop::windowState()->windows())
+            stripGlassDeco(w);
 
     if (g_pGlobalState->renderLayerHook) {
         HyprlandAPI::removeFunctionHook(PHANDLE, g_pGlobalState->renderLayerHook);
