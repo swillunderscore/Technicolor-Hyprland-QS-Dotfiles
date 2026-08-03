@@ -69,7 +69,17 @@ uniform sampler2D waveTex;   // R = h(t), G = h(t-1), biased +0.5
 uniform float shimmerDepth;  // water depth = projection distance to the floor
 uniform float waveSubFrac;   // 0..1 between the two stored sim states
 uniform float shimmerMurk;   // suspended particles: 0 = distilled, 1 = pond
-uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colourless water
+uniform float shimmerAbsorption; // 1 = the measured spectrum, 0 = colorless water
+// Where this window sits on the desktop, and how big the desktop is, both in
+// pixels. The water used to be mapped per-window, so every window showed its
+// own private pool and the same wave appeared in all of them at once. Mapping
+// it in DESKTOP coordinates instead makes it one continuous sheet that the
+// windows are viewports onto: a point in the water is a point on your screen.
+// That is what lets a disturbance land where the cursor actually is, and it
+// makes a moving window slide across standing water instead of dragging its
+// own pattern along with it.
+uniform vec2  winOrigin;
+uniform vec2  deskSize;
 uniform float waveBias;       // storage offset used by the simulation
 
 in vec2 v_texcoord;
@@ -414,8 +424,8 @@ void main() {
     const float SNELL   = 1.0 - 1.0 / WATER_N;
     float lensK    = max(shimmerDepth, 0.10) * SNELL * 0.080;
     if (shimmerIntensity > 0.001) {
-        wpBase = (uvG - 0.5) * (fullSize / max(fullSize.x, 1.0))
-               * (0.85 * shimmerScale) + 0.5;
+        wpBase = 0.5 + ((winOrigin + uvG * fullSize) - deskSize * 0.5)
+                   / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
         {
             // Divided by the window's pixel size so the shift is a constant
             // number of PIXELS: a small popup and a maximised window then warp
@@ -521,8 +531,8 @@ void main() {
         // Zoom about the CENTRE. Scaling the uv directly scales about (0,0),
         // i.e. the top-left corner, so changing wave size slid the whole pattern
         // toward that corner instead of growing in place.
-        vec2 wp = (causticUV - 0.5) * (fullSize / max(fullSize.x, 1.0))
-                * (0.85 * shimmerScale) + 0.5;
+        vec2 wp = 0.5 + ((winOrigin + causticUV * fullSize) - deskSize * 0.5)
+                / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
         vec3 c = caustic(wp, lensK);
 
         if (shimmerLightFromBackdrop != 0) {

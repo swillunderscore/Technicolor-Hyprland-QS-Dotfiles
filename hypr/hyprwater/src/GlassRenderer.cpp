@@ -529,6 +529,26 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     shader->setUniformFloat2(SHADER_FULL_SIZE,
         static_cast<float>(fullSize.x), static_cast<float>(fullSize.y));
 
+    // Desktop-space anchor for the water. transformedBox is monitor-local, so
+    // the monitor's own position is added back to get a coordinate that means
+    // the same thing on every screen -- otherwise the two monitors would each
+    // start their own pool at the same origin and the sheet would tear at the
+    // seam.
+    Vector2D monOff{0.0, 0.0};
+    Vector2D desk{1920.0, 1080.0};
+    if (const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock()) {
+        monOff = mon->m_position;
+        // Reference size is this monitor's, not the whole desktop bounding box:
+        // it keeps the wave scale identical on screens of different sizes, and
+        // the origin offset already keeps the sheet continuous across them.
+        desk   = mon->m_size;
+    }
+    glUniform2f(uniforms.winOrigin,
+                static_cast<float>(transformedBox.x + monOff.x),
+                static_cast<float>(transformedBox.y + monOff.y));
+    glUniform2f(uniforms.deskSize,
+                static_cast<float>(desk.x), static_cast<float>(desk.y));
+
     glUniform1f(uniforms.refractionStrength,  resolvePresetFloat(resolveContext, &SPresetValues::refractionStrength, &SOverridableConfig::refractionStrength));
     glUniform1f(uniforms.chromaticAberration, resolvePresetFloat(resolveContext, &SPresetValues::chromaticAberration, &SOverridableConfig::chromaticAberration));
     glUniform1f(uniforms.fresnelStrength,     resolvePresetFloat(resolveContext, &SPresetValues::fresnelStrength, &SOverridableConfig::fresnelStrength));

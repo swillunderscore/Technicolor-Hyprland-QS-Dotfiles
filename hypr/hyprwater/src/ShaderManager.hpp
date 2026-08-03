@@ -17,6 +17,8 @@ struct SGlassUniforms {
     GLint waveBias                 = -1;
     GLint shimmerMurk              = -1;
     GLint shimmerAbsorption        = -1;
+    GLint winOrigin                = -1;
+    GLint deskSize                 = -1;
     GLint chromaticAberration = -1;
     GLint fresnelStrength = -1;
     GLint specularStrength = -1;
