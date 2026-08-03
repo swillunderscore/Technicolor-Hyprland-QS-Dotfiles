@@ -579,7 +579,11 @@ void main() {
     // only honest default for a coefficient is its measured value.
     // ========================================
     if (shimmerIntensity > 0.001) {
-        const vec3 ABSORB = vec3(0.340, 0.0565, 0.0092) * shimmerAbsorption;
+        // NOT const: GLSL ES requires a const initialiser to be a constant
+        // expression, and a uniform is not one. Writing this as const made the
+        // whole shader fail to compile, which the plugin reported once per
+        // surface per frame.
+        vec3 ABSORB = vec3(0.340, 0.0565, 0.0092) * shimmerAbsorption;
         float path = 2.0 * max(shimmerDepth, 0.0);
 
         // MURK is scattering rather than absorption, and the two do different
