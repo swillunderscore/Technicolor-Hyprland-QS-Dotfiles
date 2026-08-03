@@ -363,7 +363,7 @@ FloatingWindow {
     // descriptions), so friendly labels are derived from the dispatcher + arg.
     property var keybinds: []
     property string hotkeySearch: ""
-    readonly property var hotkeyCategories: ["Apps", "Windows", "Focus & layout", "Workspaces", "Wallpaper", "Screenshots", "Media", "System", "Other"]
+    readonly property var hotkeyCategories: ["Apps", "Windows", "Focus & layout", "Workspaces", "Wallpaper", "Screenshots", "Voice & transcription", "Media", "System", "Other"]
     function modNames(mask) {
         var o = []
         if (mask & 64) o.push("Super")
@@ -457,6 +457,66 @@ FloatingWindow {
         }
         return n
     }
+    // ── Lua-config hotkeys ── under the Lua config manager every bind reports
+    // dispatcher "__lua" to `hyprctl binds`, so nothing can be inferred from it.
+    // hyprland.lua instead exports keybinds-manifest.json (id, category, label,
+    // live combo, default, editable) and applies overrides from
+    // keybind-overrides.conf at parse time. Manifest present → that is the
+    // truth; absent (conf-based config) → the legacy dispatcher-guessing below.
+    property var kbManifest: []
+    property var luaOverrides: ({})
+    readonly property bool luaHotkeys: kbManifest.length > 0
+    FileView {
+        id: manifestFile
+        path: win.homeDir + "/.config/hypr/keybinds-manifest.json"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var v = []
+            try { v = JSON.parse(this.text()) } catch (e) { v = [] }
+            win.kbManifest = Array.isArray(v) ? v : []
+            win.rebuildKeybinds()
+        }
+        onLoadFailed: { win.kbManifest = []; win.rebuildKeybinds() }
+    }
+    FileView {
+        id: luaOverridesFile
+        path: win.homeDir + "/.config/hypr/keybind-overrides.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var m = ({}), lines = this.text().split("\n")
+            for (var i = 0; i < lines.length; i++) {
+                var mt = lines[i].match(/^\s*([\w-]+)\s*=\s*(.+?)\s*$/)
+                if (mt && mt[1].charAt(0) !== "#") m[mt[1]] = mt[2]
+            }
+            win.luaOverrides = m
+            win.rebuildKeybinds()
+        }
+        onLoadFailed: { win.luaOverrides = ({}); win.rebuildKeybinds() }
+    }
+    function comboParse(c) {   // "SUPER + SHIFT + left" → { mods: 65, key: "left" }
+        var toks = c.split("+"), mods = 0, key = ""
+        for (var i = 0; i < toks.length; i++) {
+            var t = toks[i].trim()
+            if (t === "SUPER") mods |= 64
+            else if (t === "CTRL") mods |= 4
+            else if (t === "ALT") mods |= 8
+            else if (t === "SHIFT") mods |= 1
+            else if (t !== "") key = t
+        }
+        return { mods: mods, key: key }
+    }
+    function comboConfStr(mods, key) {   // inverse of comboParse, hl.bind's format
+        var p = []
+        if (mods & 64) p.push("SUPER")
+        if (mods & 4)  p.push("CTRL")
+        if (mods & 8)  p.push("ALT")
+        if (mods & 1)  p.push("SHIFT")
+        p.push(key)
+        return p.join(" + ")
+    }
+
     property var rawBinds: []        // last raw `hyprctl binds` payload
     Process {
         id: bindsProc
@@ -502,6 +562,24 @@ FloatingWindow {
         return -1
     }
     function rebuildKeybinds() {
+        if (win.luaHotkeys) {
+            var mout = [], mseen = ({})
+            for (var mi = 0; mi < win.kbManifest.length; mi++) {
+                var m = win.kbManifest[mi]
+                var p = win.comboParse(m.combo)
+                var mcaps = win.modNames(p.mods).concat([win.keyName(p.key)])
+                var mcombo = mcaps.join(" ").toLowerCase()
+                var mdk = m.label + "|" + mcombo
+                if (mseen[mdk]) continue
+                mseen[mdk] = 1
+                mout.push({ id: m.id, cat: m.cat, label: m.label, caps: mcaps, combo: mcombo,
+                            editable: m.editable === true, modmask: p.mods, rawKey: p.key,
+                            dispatcher: "", arg: "",
+                            overridden: win.luaOverrides[m.id] !== undefined })
+            }
+            win.keybinds = mout
+            return
+        }
         var arr = win.rawBinds, out = [], seen = ({})
         for (var i = 0; i < arr.length; i++) {
             var b = arr[i]
@@ -546,16 +624,14 @@ FloatingWindow {
     // conflict / bad key: stop capturing (so it must be re-clicked) and flash the
     // message on the unchanged row for a few seconds.
     function flashWarn(row, msg) { win.stopMonitor(); win.warnBind = row; win.captureWarn = msg; warnTimer.restart() }
-    function isCapturing(row) {
-        var c = win.capturingBind
-        return c !== null && c.dispatcher === row.dispatcher && c.arg === row.arg
-            && c.modmask === row.modmask && c.rawKey === row.rawKey
+    function sameBindRow(a, b) {
+        if (a === null || b === null) return false
+        if (a.id !== undefined || b.id !== undefined) return a.id === b.id
+        return a.dispatcher === b.dispatcher && a.arg === b.arg
+            && a.modmask === b.modmask && a.rawKey === b.rawKey
     }
-    function isWarnRow(row) {
-        var w = win.warnBind
-        return w !== null && w.dispatcher === row.dispatcher && w.arg === row.arg
-            && w.modmask === row.modmask && w.rawKey === row.rawKey
-    }
+    function isCapturing(row) { return win.sameBindRow(win.capturingBind, row) }
+    function isWarnRow(row)   { return win.sameBindRow(win.warnBind, row) }
     function isModifierKey(k) {
         return k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt
             || k === Qt.Key_Meta || k === Qt.Key_Super_L || k === Qt.Key_Super_R
@@ -608,6 +684,13 @@ FloatingWindow {
         win.applyRebind(row, mods, key)
     }
     function applyRebind(row, newMods, newKey) {
+        if (win.luaHotkeys) {
+            var lm = JSON.parse(JSON.stringify(win.luaOverrides))
+            lm[row.id] = win.comboConfStr(newMods, newKey)
+            win.luaOverrides = lm
+            win.persistLuaOverrides()
+            return
+        }
         var cur = win.overrides.slice()
         var idx = win.findOverride(row.modmask, row.rawKey, row.dispatcher, row.arg)
         if (idx >= 0) { cur[idx].newMods = newMods; cur[idx].newKey = newKey }   // keep original def
@@ -616,11 +699,32 @@ FloatingWindow {
         win.persistOverrides()
     }
     function resetBind(row) {
+        if (win.luaHotkeys) {
+            if (win.luaOverrides[row.id] === undefined) return
+            var lm = JSON.parse(JSON.stringify(win.luaOverrides))
+            delete lm[row.id]
+            win.luaOverrides = lm
+            win.persistLuaOverrides()
+            return
+        }
         var idx = win.findOverride(row.modmask, row.rawKey, row.dispatcher, row.arg)
         if (idx < 0) return
         var cur = win.overrides.slice(); cur.splice(idx, 1)
         win.overrides = cur
         win.persistOverrides()
+    }
+    // Write the id = combo lines hyprland.lua reads at parse time, then reload:
+    // the reload re-registers every bind on its (possibly new) combo and
+    // rewrites the manifest, whose FileView watcher refreshes this list.
+    function persistLuaOverrides() {
+        var L = ["# Keybind overrides written by Settings → Hotkeys. hyprland.lua reads",
+                 "# this at parse time and registers the new combo instead of the default.", ""]
+        for (var id in win.luaOverrides) L.push(id + " = " + win.luaOverrides[id])
+        var b64 = Qt.btoa(L.join("\n") + "\n")
+        overridesSetProc.command = ["bash", "-c",
+            "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/keybind-overrides.conf'; " +
+            "hyprctl reload >/dev/null 2>&1"]
+        overridesSetProc.running = true
     }
     function buildKeybindsConf() {
         var L = ["# Keybind overrides written by Settings → Hotkeys. Sourced last in",
@@ -2158,7 +2262,7 @@ FloatingWindow {
                                 Text {
                                     width: parent.width; wrapMode: Text.WordWrap; topPadding: 6
                                     color: win.fg; opacity: 0.45; font.pixelSize: 11; font.family: win.ff
-                                    text: "Click a shortcut's keys to rebind it — hold your modifiers (Super/Ctrl/Alt/Shift) and press the key. ↺ resets one to its default. Media, volume and mouse binds are fixed. Your rebinds are saved to keybinds.conf and survive updates."
+                                    text: "Click a shortcut's keys to rebind it — hold your modifiers (Super/Ctrl/Alt/Shift) and press the key. ↺ resets one to its default. Media, volume, mouse and Alt-Tab binds are fixed. Rebinds persist to " + (win.luaHotkeys ? "keybind-overrides.conf" : "keybinds.conf") + " and survive updates."
                                 }
                             }
                         }

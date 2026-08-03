@@ -327,9 +327,9 @@ hl.window_rule({ name = "nofocus-empty",
 hl.window_rule({ name = "hyprland-run-float", match = { class = "^(hyprland-run)$" }, float = true })
 hl.window_rule({ name = "hyprland-run-move",  match = { class = "^(hyprland-run)$" }, move = "20 100%-120" })
 -- Telegram self-raises on new messages; focus_on_activate=false doesn't catch its
--- explicit activate. `activate` alone suppresses the raise/urgent but NOT the focus
--- steal (a rare cross-monitor focus jump onto Telegram); `activatefocus`
--- suppresses the focus-on-activate specifically.
+-- explicit activate. `activate` alone suppressed the raise/urgent but NOT the focus
+-- steal (rare right->left jump onto Telegram, which lives on special:minimized on the
+-- left monitor). `activatefocus` suppresses the focus-on-activate specifically.
 hl.window_rule({ name = "tg-noactivate",
                  match = { class = "^(org\\.telegram\\.desktop)$" }, suppress_event = "activate activatefocus" })
 
@@ -383,79 +383,163 @@ load_fragment_safe("window-geometry.conf")  -- per-app tiled/floating + geometry
 load_fragment_safe("colors.conf")           -- focused-window border = wallpaper accent
 load_fragment_safe("hyprwater-tuning.conf") -- Settings → Glass (overrides the defaults above)
 load_fragment_safe("local.conf")            -- machine-local: env, headless monitor, game rules, execs
-load_fragment_safe("keybinds.conf")         -- Settings → Hotkeys rebinds (currently a no-op)
+load_fragment_safe("keybinds.conf")         -- conf-era rebinds; no-op under Lua (see bind() below)
 
 -- ── Keybinds ────────────────────────────────────────────────────────────────
 local function exec(cmd) return hl.dsp.exec_cmd(cmd) end
 
-hl.bind(mainMod .. " + W",      exec(H .. "/.config/hypr/wallpaper-cycle.sh next"))
-hl.bind(mainMod .. " + Q",      exec(terminal))
-hl.bind(mainMod .. " + C",      exec(H .. "/.config/hypr/window-action.sh close"))
-hl.bind(mainMod .. " + ESCAPE", exec(H .. "/.config/hypr/window-action.sh close"))
-hl.bind(mainMod .. " + M",      exec(H .. "/.config/hypr/wlogout-launch.sh"))
-hl.bind(mainMod .. " + SHIFT + O", hl.dsp.dpms({ mode = "off" }))  -- blank displays (no DP disconnect)
-hl.bind(mainMod .. " + E",      exec(fileManager))
-hl.bind(mainMod .. " + V",      exec(H .. "/.config/hypr/window-action.sh maximize"))
-hl.bind(mainMod .. " + R",      exec(menu))
-hl.bind(mainMod .. " + SPACE",  exec(H .. "/.config/hypr/window-action.sh float"))
+-- Under the Lua manager every bind reports dispatcher "__lua" to `hyprctl
+-- binds`, so Settings → Hotkeys can no longer guess what a combo does from
+-- dispatcher strings. The knowledge lives HERE instead: bind() carries a
+-- STABLE id, a category and a label, applies any user override from
+-- keybind-overrides.conf (written by Settings → Hotkeys, gitignored), and
+-- everything registered through it is exported to keybinds-manifest.json,
+-- which is what the Settings list reads. Raw hl.bind() is reserved for
+-- plumbing that must never appear in the UI (paired release binds, capture
+-- submap internals).
+local kbOverrides = {}
+do
+    local fh = io.open(H .. "/.config/hypr/keybind-overrides.conf", "r")
+    if fh then
+        for line in fh:lines() do
+            local id, combo = line:match("^%s*([%w%-]+)%s*=%s*(.-)%s*$")
+            if id and combo and combo ~= "" then kbOverrides[id] = combo end
+        end
+        fh:close()
+    end
+end
+
+local kbManifest = {}
+local function bind(id, cat, label, combo, dispatcher, opts, meta)
+    local eff = kbOverrides[id] or combo
+    hl.bind(eff, dispatcher, opts)
+    -- Editable = a plain keyboard chord. Mouse/scroll chords, locked media
+    -- keys and repeating binds keep their hardware keys; meta.editable=false
+    -- pins chords that have a paired release bind (the pair would not move
+    -- together if only the press half were rebound).
+    local editable = not (opts and (opts.mouse or opts.release or opts.locked or opts.repeating))
+                     and not eff:find("mouse") and not combo:find("mouse")
+    if meta and meta.editable == false then editable = false end
+    kbManifest[#kbManifest + 1] = string.format(
+        '{"id":"%s","cat":"%s","label":"%s","combo":"%s","def":"%s","editable":%s}',
+        id, cat, label, eff, combo, editable and "true" or "false")
+end
+local function write_kb_manifest()
+    local fh = io.open(H .. "/.config/hypr/keybinds-manifest.json", "w")
+    if fh then
+        fh:write("[\n" .. table.concat(kbManifest, ",\n") .. "\n]\n")
+        fh:close()
+    end
+end
+
+bind("wallpaper-next", "Wallpaper", "Next wallpaper",
+     mainMod .. " + W",      exec(H .. "/.config/hypr/wallpaper-cycle.sh next"))
+bind("open-terminal", "Apps", "Open terminal",
+     mainMod .. " + Q",      exec(terminal))
+bind("close-window", "Windows", "Close window",
+     mainMod .. " + C",      exec(H .. "/.config/hypr/window-action.sh close"))
+bind("close-window-esc", "Windows", "Close window",
+     mainMod .. " + ESCAPE", exec(H .. "/.config/hypr/window-action.sh close"))
+bind("power-menu", "System", "Logout / power menu",
+     mainMod .. " + M",      exec(H .. "/.config/hypr/wlogout-launch.sh"))
+bind("sleep-displays", "System", "Sleep the displays",
+     mainMod .. " + SHIFT + O", hl.dsp.dpms({ mode = "off" }))  -- blank displays (no DP disconnect)
+bind("file-manager", "Apps", "Open file manager",
+     mainMod .. " + E",      exec(fileManager))
+bind("maximize", "Windows", "Maximize (stays floating)",
+     mainMod .. " + V",      exec(H .. "/.config/hypr/window-action.sh maximize"))
+bind("app-launcher", "Apps", "App launcher",
+     mainMod .. " + R",      exec(menu))
+bind("toggle-tiling", "Windows", "Toggle tiling",
+     mainMod .. " + SPACE",  exec(H .. "/.config/hypr/window-action.sh float"))
 
 -- Voice dictation (offline)
-hl.bind(mainMod .. " + D",        exec(H .. "/.config/hypr/voice-dictate.sh clean"))
-hl.bind(mainMod .. " + SHIFT + D",  exec(H .. "/.config/hypr/voice-dictate.sh raw"))
-hl.bind(mainMod .. " + ALT + D",    exec(H .. "/.config/hypr/voice-dictate.sh cancel"))
-hl.bind(mainMod .. " + CTRL + D",   exec(H .. "/.config/hypr/voice-dictate.sh undo"))
+bind("dictate", "Voice & transcription", "Voice dictation (cleaned up)",
+     mainMod .. " + D",        exec(H .. "/.config/hypr/voice-dictate.sh clean"))
+bind("dictate-raw", "Voice & transcription", "Voice dictation (verbatim)",
+     mainMod .. " + SHIFT + D",  exec(H .. "/.config/hypr/voice-dictate.sh raw"))
+bind("dictate-cancel", "Voice & transcription", "Cancel dictation",
+     mainMod .. " + ALT + D",    exec(H .. "/.config/hypr/voice-dictate.sh cancel"))
+bind("dictate-undo", "Voice & transcription", "Undo last dictation",
+     mainMod .. " + CTRL + D",   exec(H .. "/.config/hypr/voice-dictate.sh undo"))
+
+-- Desktop-audio transcription (lectures / videos you don't want to sit through).
+-- Records what you HEAR (monitor of the sink that's actually playing), then runs the
+-- same whisper.cpp Vulkan build + large-v3-turbo model as the dictation above and
+-- drops a .txt in ~/Documents. Toggle start/stop; transcription runs detached so a
+-- multi-hour recording is fine.
+bind("transcribe-desktop", "Voice & transcription", "Transcribe desktop audio (toggle)",
+     mainMod .. " + SHIFT + T", exec(H .. "/.config/hypr/transcribe-desktop.sh"))
+bind("transcribe-cancel", "Voice & transcription", "Cancel transcription",
+     mainMod .. " + ALT + T",   exec(H .. "/.config/hypr/transcribe-desktop.sh cancel"))
 
 -- Screenshots (note: original used $shiftMod which was undefined → SHIFT)
-hl.bind("SHIFT + PRINT", exec([[grim -g "$(slurp)" -t ppm - | satty --filename - --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
-hl.bind(mainMod .. " + PRINT", exec([[grim - | satty --filename - --fullscreen --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
+bind("screenshot-region", "Screenshots", "Screenshot a region",
+     "SHIFT + PRINT", exec([[grim -g "$(slurp)" -t ppm - | satty --filename - --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
+bind("screenshot-full", "Screenshots", "Screenshot full screen",
+     mainMod .. " + PRINT", exec([[grim - | satty --filename - --fullscreen --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
 
 -- Move focus
-hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "l" }))
-hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "r" }))
-hl.bind(mainMod .. " + up",    hl.dsp.focus({ direction = "u" }))
-hl.bind(mainMod .. " + down",  hl.dsp.focus({ direction = "d" }))
+bind("focus-left",  "Focus & layout", "Focus window left",  mainMod .. " + left",  hl.dsp.focus({ direction = "l" }))
+bind("focus-right", "Focus & layout", "Focus window right", mainMod .. " + right", hl.dsp.focus({ direction = "r" }))
+bind("focus-up",    "Focus & layout", "Focus window up",    mainMod .. " + up",    hl.dsp.focus({ direction = "u" }))
+bind("focus-down",  "Focus & layout", "Focus window down",  mainMod .. " + down",  hl.dsp.focus({ direction = "d" }))
 
 -- Move window
-hl.bind(mainMod .. " + SHIFT + left",  hl.dsp.window.move({ direction = "l" }))
-hl.bind(mainMod .. " + SHIFT + right", hl.dsp.window.move({ direction = "r" }))
-hl.bind(mainMod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "u" }))
-hl.bind(mainMod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "d" }))
+bind("move-left",  "Focus & layout", "Move window left",  mainMod .. " + SHIFT + left",  hl.dsp.window.move({ direction = "l" }))
+bind("move-right", "Focus & layout", "Move window right", mainMod .. " + SHIFT + right", hl.dsp.window.move({ direction = "r" }))
+bind("move-up",    "Focus & layout", "Move window up",    mainMod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "u" }))
+bind("move-down",  "Focus & layout", "Move window down",  mainMod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "d" }))
 
--- alt-tab pie (quickshell global)
-hl.bind("ALT + Tab", hl.dsp.global("quickshell:alttab"))
+-- alt-tab pie (quickshell global). NOT rebindable: the release half below must
+-- sit on the same key, and only the press half goes through bind().
+bind("window-switcher", "Focus & layout", "Window switcher",
+     "ALT + Tab", hl.dsp.global("quickshell:alttab"), nil, { editable = false })
 hl.bind("ALT + Tab", hl.dsp.global("quickshell:alttabrelease"), { release = true })
 -- SUPER + scroll UP = raise the switcher, SUPER + scroll DOWN = send the
 -- hovered window away (minimize). Bound via scrollUp/scrollDown (see the top of
 -- this file) so the PHYSICAL gesture is what's fixed, not the axis name.
-hl.bind(mainMod .. " + " .. scrollUp, hl.dsp.global("quickshell:alttab"))
+bind("window-switcher-scroll", "Focus & layout", "Window switcher (scroll)",
+     mainMod .. " + " .. scrollUp, hl.dsp.global("quickshell:alttab"))
 hl.bind("SUPER_L", hl.dsp.global("quickshell:alttabrelease"), { release = true })
 -- minimize the window under the cursor
-hl.bind(mainMod .. " + " .. scrollDown, exec(H .. "/.config/hypr/minimize.sh"))
+bind("minimize-under-cursor", "Windows", "Minimize window under cursor",
+     mainMod .. " + " .. scrollDown, exec(H .. "/.config/hypr/minimize.sh"))
 
 -- Workspace navigation
-hl.bind(mainMod .. " + bracketleft",        exec(H .. "/.config/hypr/workspace-move.sh left"))
-hl.bind(mainMod .. " + bracketright",       exec(H .. "/.config/hypr/workspace-move.sh right"))
-hl.bind(mainMod .. " + SHIFT + bracketleft",  exec(H .. "/.config/hypr/workspace-move.sh left --move"))
-hl.bind(mainMod .. " + SHIFT + bracketright", exec(H .. "/.config/hypr/workspace-move.sh right --move"))
+bind("workspace-prev", "Workspaces", "Previous workspace",
+     mainMod .. " + bracketleft",        exec(H .. "/.config/hypr/workspace-move.sh left"))
+bind("workspace-next", "Workspaces", "Next workspace",
+     mainMod .. " + bracketright",       exec(H .. "/.config/hypr/workspace-move.sh right"))
+bind("workspace-send-prev", "Workspaces", "Send window to previous",
+     mainMod .. " + SHIFT + bracketleft",  exec(H .. "/.config/hypr/workspace-move.sh left --move"))
+bind("workspace-send-next", "Workspaces", "Send window to next",
+     mainMod .. " + SHIFT + bracketright", exec(H .. "/.config/hypr/workspace-move.sh right --move"))
 
 -- Mouse binds
-hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
-hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
+bind("drag-move",   "Focus & layout", "Drag to move window",
+     mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
+bind("drag-resize", "Focus & layout", "Drag to resize window",
+     mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 
 -- Media keys (locked + repeating)
-hl.bind("XF86AudioRaiseVolume", exec(H .. "/.config/hypr/volume.sh up"),   { locked = true, repeating = true })
-hl.bind("XF86AudioLowerVolume", exec(H .. "/.config/hypr/volume.sh down"), { locked = true, repeating = true })
-hl.bind("XF86AudioMute",        exec(H .. "/.config/hypr/volume.sh mute"), { locked = true, repeating = true })
-hl.bind("XF86AudioMicMute",     exec("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"), { locked = true, repeating = true })
-hl.bind("XF86MonBrightnessDown", exec("brightnessctl -e4 -n2 set 5%-"), { locked = true, repeating = true })
-hl.bind("XF86MonBrightnessUp",   exec("brightnessctl -e4 -n2 set 5%+"), { locked = true, repeating = true })
-hl.bind("XF86AudioNext",  exec("playerctl next"),       { locked = true })
-hl.bind("XF86AudioPause", exec("playerctl play-pause"), { locked = true })
-hl.bind("XF86AudioPlay",  exec("playerctl play-pause"), { locked = true })
-hl.bind("XF86AudioPrev",  exec("playerctl previous"),   { locked = true })
+bind("vol-up",   "Media", "Volume up",   "XF86AudioRaiseVolume", exec(H .. "/.config/hypr/volume.sh up"),   { locked = true, repeating = true })
+bind("vol-down", "Media", "Volume down", "XF86AudioLowerVolume", exec(H .. "/.config/hypr/volume.sh down"), { locked = true, repeating = true })
+bind("vol-mute", "Media", "Mute audio",  "XF86AudioMute",        exec(H .. "/.config/hypr/volume.sh mute"), { locked = true, repeating = true })
+bind("mic-mute", "Media", "Mute microphone", "XF86AudioMicMute", exec("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"), { locked = true, repeating = true })
+bind("bright-down", "Media", "Brightness down", "XF86MonBrightnessDown", exec("brightnessctl -e4 -n2 set 5%-"), { locked = true, repeating = true })
+bind("bright-up",   "Media", "Brightness up",   "XF86MonBrightnessUp",   exec("brightnessctl -e4 -n2 set 5%+"), { locked = true, repeating = true })
+bind("media-next", "Media", "Next track",     "XF86AudioNext",  exec("playerctl next"),       { locked = true })
+bind("media-pause", "Media", "Play / pause",  "XF86AudioPause", exec("playerctl play-pause"), { locked = true })
+bind("media-play",  "Media", "Play / pause",  "XF86AudioPlay",  exec("playerctl play-pause"), { locked = true })
+bind("media-prev",  "Media", "Previous track", "XF86AudioPrev", exec("playerctl previous"),   { locked = true })
 
 -- AI background-task kill switch
-hl.bind("CTRL + ALT + " .. mainMod .. " + A", exec("tmux kill-server"))
+bind("ai-kill", "System", "Kill AI background tasks",
+     "CTRL + ALT + " .. mainMod .. " + A", exec("tmux kill-server"))
+
+-- Everything registered above is now known; hand the list to Settings.
+write_kb_manifest()
 
 -- Keybind-rebinding capture submap (Settings → Hotkeys): empty submap so no
 -- global binds fire while the app reads a pressed combo. Escape leaves + cancels.

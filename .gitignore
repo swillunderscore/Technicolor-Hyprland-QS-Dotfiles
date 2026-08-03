@@ -40,6 +40,8 @@ hypr/hyprwater/src/*.o
 hypr/wallpaper-timer.conf
 hypr/keybinds.conf
 hypr/keybind-overrides.json
+hypr/keybind-overrides.conf
+hypr/keybinds-manifest.json
 hypr/transition.conf
 
 # Hypr-DarkWindow plugin build artifacts (MIT source vendored; its load.sh
