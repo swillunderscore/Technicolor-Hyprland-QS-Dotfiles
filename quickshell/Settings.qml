@@ -994,7 +994,7 @@ FloatingWindow {
         { key: "shimmer:speed",         label: "Speed",        hint: "How fast the water runs. Logarithmic, so most of the travel is spent down in the barely-moving range. Slow stays smooth: below 1x each step advances the physics less rather than stepping less often.", from: 0.002, to: 3, def: 1.0, step: 0, log: true },
         { key: "shimmer:agitation",     label: "Activity",     hint: "How busy the water is \u2014 how often something disturbs it, and how hard. Far left is a still pool crossed by a stray ripple every several seconds; far right is a crowded one. The scale is geometric, so the calm end has as much travel as the busy end.", from: 0, to: 1,  def: 0.5,  step: 0 },
         { key: "shimmer:viscosity",     label: "Viscosity",    hint: "How thick the water is. LOW = thin: ripples persist, the surface stays busy, waves travel fast. HIGH = syrup: short waves die within moments, only long rollers survive, waves travel slower.", from: 0, to: 1,  def: 0.6,  step: 0 },
-        { key: "shimmer:absorption",    label: "Water colour", hint: "How much the water itself absorbs. 1.0 is the measured spectrum for pure water \u2014 strong in red, almost none in blue, which is why depth turns things blue. 0 makes the water colourless, which no real water is, but it is your desktop.", from: 0, to: 1,  def: 1.0,  step: 0 },
+        { key: "shimmer:absorption",    label: "Water color", hint: "How much the water itself absorbs. 1.0 is the measured spectrum for pure water \u2014 strong in red, almost none in blue, which is why depth turns things blue. 0 makes the water colourless, which no real water is, but it is your desktop.", from: 0, to: 1,  def: 1.0,  step: 0 },
         { key: "shimmer:murk",          label: "Murk",         hint: "Suspended silt. Particles block what is behind them AND scatter stray light at you, so murky water washes toward a pale haze rather than going dark. Colourless at source \u2014 large particles scatter all wavelengths equally, same reason fog is white.", from: 0, to: 1,  def: 0.0,  step: 0 },
     ]
 
@@ -2336,7 +2336,7 @@ FloatingWindow {
                             // ── water shimmer ──────────────────────────────────────
                             Text { text: "Water"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                             Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
-                                text: "Caustics on the glass, from a real wave simulation — disturbances arrive from off-screen, spread, reflect and die down. The light comes from whatever is actually behind the window, so it takes on those colours." }
+                                text: "Caustics on the glass, from a real wave simulation — disturbances arrive from off-screen, spread, reflect and die down. The light comes from whatever is actually behind the window, so it takes on those colors." }
 
                             Rectangle {
                                 width: parent.width; height: Math.max(50, shCol.implicitHeight + 18); radius: 9; color: win.rowBg

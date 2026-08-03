@@ -245,9 +245,9 @@ float causticShape(float det) {
 
 // DISPERSION. Water's refractive index is not one number: it bends short
 // wavelengths harder than long ones, so blue converges at a shorter distance
-// than red. The three colours therefore focus onto slightly DIFFERENT curves,
+// than red. The three colors therefore focus onto slightly DIFFERENT curves,
 // and because the veins are thin, curves that miss each other by a few percent
-// separate visibly — which is why real caustics carry colour along their edges
+// separate visibly — which is why real caustics carry color along their edges
 // instead of being white lines. Deriving it from the same surface is what keeps
 // the fringes on the correct side of every vein; tinting the edges by hand puts
 // them on whichever side the tint happened to be pushed.
@@ -392,7 +392,7 @@ void main() {
     // unrelated effects stacked up.
     //
     // Applied to the SAMPLE positions, before anything is read, so it warps the
-    // real backdrop rather than smearing an already-sampled colour.
+    // real backdrop rather than smearing an already-sampled color.
     // ========================================
     vec2  waveWarp = vec2(0.0);
     vec2  wpBase   = vec2(0.0);
@@ -552,7 +552,7 @@ void main() {
             // too dark to carry the effect (or a future explicit light).
             float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
             float headroom = 1.0 - smoothstep(0.55, 1.0, lum);
-            // Focusing adds the lamp's own colour; spreading can only take away
+            // Focusing adds the lamp's own color; spreading can only take away
             // light that is already in the image, so the dim half scales the
             // pixel instead of subtracting a white, which would drive dark
             // backdrops negative.
@@ -566,7 +566,7 @@ void main() {
     //
     // Water is not colourless. Pure water absorbs strongly in the red and
     // barely at all in the blue, so light does not just dim with depth, it
-    // turns blue -- which is the actual reason the deep ocean is that colour,
+    // turns blue -- which is the actual reason the deep ocean is that color,
     // not the sky reflecting off it. Distilled water in a long enough tube does
     // this with no particles involved at all.
     //
@@ -592,7 +592,7 @@ void main() {
         // murky water loses contrast toward a bright haze instead of just going
         // dark. Large particles scatter every wavelength about equally -- which
         // is why fog and milk are white, not blue -- so the veil is neutral at
-        // source and only picks up colour from the water it then travels
+        // source and only picks up color from the water it then travels
         // through.
         float b = shimmerMurk * 2.5;
         vec3  trans = exp(-(ABSORB + vec3(b)) * path);
