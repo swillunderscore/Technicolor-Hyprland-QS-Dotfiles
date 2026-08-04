@@ -7,6 +7,12 @@ set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 SO="$DIR/hyprwater.so"
 hyprctl plugin unload "$SO" >/dev/null 2>&1
+# ALWAYS a full rebuild. Two compositor crashes (free(): invalid pointer in
+# commitPendingPresets at plugin init) were traced to FRANKENBUILDS: deploys
+# that copied build directories around left mixed-generation object files
+# whose struct layouts disagreed, and make linked them without complaint.
+# Thirty seconds of rebuild is cheaper than a session.
+make -C "$DIR" clean >/dev/null
 make -C "$DIR" "$@" || exit 1
 hyprctl plugin load "$SO"
 # A plugin load SEVERS the binding between runtime `hl.config` evals and the
