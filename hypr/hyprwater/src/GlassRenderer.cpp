@@ -682,11 +682,11 @@ void renderTrailTex() {
 // Cost: per-screen-pixel this was ~12 texture reads for every pixel of every
 // glassed window. Now it is ~12 reads per SIM TEXEL, once. On a wide desktop
 // that is several times less work, not more.
-// Resolution of the caustic pass. Deliberately ABOVE the sim grid: the
-// filaments are thinner than a sim texel, so sampling one per texel misses
-// most of them entirely instead of spreading their energy, which reads as
-// washed-out blobs with the texel lattice showing through. Supersampling
-// captures them; the blur afterwards is what is supposed to soften them.
+// Resolution of the caustic pass, and also the splat grid: one point per
+// target texel. The analytic version had to supersample because POINT-SAMPLING
+// a sub-texel filament misses it entirely; a splat cannot miss -- every
+// point's parcel lands somewhere -- so the native resolution keeps all the
+// energy and the finite-sun blur below does the softening.
 static constexpr int CAUSTIC_RES = 2048;
 
 static void renderCausticTex() {
@@ -735,18 +735,23 @@ static void renderCausticTex() {
     {
         const auto& u = sm.causticUniforms;
         auto sh = g_pHyprOpenGL->useShader(sm.causticShader);
-        sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
         sh->setUniformInt(SHADER_TEX, 0);
-        glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
         glUniform1i(u.trailTex, 1);
         glUniform1i(u.velTexG, 2);
         glUniform1f(u.waveSubFrac, st.waveSubFrac);
         glUniform1f(u.waveBias, st.waveBias);
-        glUniform1f(u.waveTexel, 1.0f / SIM);
         auto& vfb = st.fluidVelFb[st.fluidVelCurrent];
         const bool velOk = st.flowDt > 0.0f && vfb && vfb->getTexture();
         glUniform1f(u.flowShift, velOk ? st.flowDt : 0.0f);
-        glUniform1f(u.causticK, lensK * 0.275f);
+        // A quarter of the analytic coefficient. The pointwise 1/|det| could
+        // only ever draw the det=0 contour, so it tolerated a lens deep past
+        // the fold; transporting the energy for real at that strength piles
+        // whole regions into blown-out pools. Real pool floors live where
+        // folds are just forming -- delicate vein networks -- and with h in
+        // sim units rather than metres, matching that REGIME is the honest
+        // calibration available.
+        glUniform1f(u.causticK, lensK * 0.100f);
+        glUniform1f(u.gridN, float(CAUSTIC_RES));
 
         glActiveTexture(GL_TEXTURE0);
         st.waveFb[st.waveCurrent]->getTexture()->bind();
@@ -766,7 +771,30 @@ static void renderCausticTex() {
 
         g_pHyprOpenGL->setViewport(0, 0, CAUSTIC_RES, CAUSTIC_RES);
         glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Every frame starts dark and the points repaint the light. Alpha is
+        // cleared to 1 and the points leave it alone.
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Additive: arrivals of light sum. The compositor's cached GL state
+        // tracks blend on/off but not the blend FUNC, so save and restore
+        // that by hand.
+        GLint srcRGB = 0, dstRGB = 0, srcA = 0, dstA = 0;
+        glGetIntegerv(GL_BLEND_SRC_RGB, &srcRGB);
+        glGetIntegerv(GL_BLEND_DST_RGB, &dstRGB);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &srcA);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &dstA);
+        g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
+        glBlendFunc(GL_ONE, GL_ONE);
+
+        // No vertex attributes anywhere in the program -- gl_VertexID is the
+        // whole input -- so the default VAO is the right one to have bound.
+        glBindVertexArray(0);
+        glDrawArrays(GL_POINTS, 0, CAUSTIC_RES * CAUSTIC_RES);
+
+        g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
+        glBlendFuncSeparate(srcRGB, dstRGB, srcA, dstA);
     }
 
     // FINITE SUN: blur radius grows with depth, which is also the relationship
@@ -774,7 +802,7 @@ static void renderCausticTex() {
     // caustics SHARPER the deeper the water, holding the astigmatic pair apart
     // instead of merging it.
     const float scaleUp = float(CAUSTIC_RES) / float(SIM);
-    const float blurTexels = std::clamp(lensK * 22.0f * scaleUp, 0.6f, 12.0f);
+    const float blurTexels = std::clamp(lensK * 10.0f * scaleUp, 0.6f, 12.0f);
     {
         const auto& bu = sm.blurUniforms;
         auto sh = g_pHyprOpenGL->useShader(sm.blurShader);

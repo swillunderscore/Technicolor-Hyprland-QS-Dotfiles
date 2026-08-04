@@ -82,7 +82,7 @@ struct SCausticUniforms {
     GLint velTexG     = -1;
     GLint waveSubFrac = -1;
     GLint waveBias    = -1;
-    GLint waveTexel   = -1;
+    GLint gridN       = -1;
     GLint flowShift   = -1;
     GLint causticK    = -1;
 };

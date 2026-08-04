@@ -708,8 +708,12 @@ void main() {
             // GAIN calibrates the slider so its familiar range still lands in
             // the familiar place - the old model buried a 1/18 and a 1/5 in its
             // clamps, and dropping those made the same slider value ~3x hotter.
-            const float GAIN     = 0.085;
-            const float HEADROOM = 1.6;
+            const float GAIN     = 0.115;
+            // Loosened from 1.6 when the caustic became a SPLAT: the analytic
+            // field's singular spikes needed hard compression to fit a
+            // display; splatted illumination is bounded by construction, so
+            // most of that guard rail was just dimming honest veins.
+            const float HEADROOM = 3.0;
             vec3 e = (c - vec3(1.0)) * (shimmerIntensity * GAIN);
             e /= vec3(1.0) + max(e, vec3(0.0)) / HEADROOM;
             color *= max(vec3(1.0) + e, vec3(0.0));
@@ -1304,31 +1308,29 @@ void main() {
 }
 )GLSL"},
 
-    {"caustic.frag", R"GLSL(
+    {"causticsplat.vert", R"GLSL(
 #version 300 es
 precision highp float;
 
 // ============================================================================
-// CAUSTIC ILLUMINATION PASS
+// FORWARD-SPLAT CAUSTIC — the vertex shader IS the optics.
 //
-// This used to be evaluated per SCREEN PIXEL inside the glass shader, which is
-// both the expensive way and the wrong way. Wrong, because the physics says the
-// result must be BLURRED - the sun is about half a degree wide, so every part
-// of it casts its own slightly shifted caustic and the floor sees their sum -
-// and a blur of ~12 screen pixels cannot be had per-pixel: it would take on the
-// order of 150 Hessian evaluations per fragment. Rendered into a texture the
-// same blur is a separable Gaussian, about 51 taps for the whole frame.
+// The analytic 1/|det(I + k*H)| formulation asks "how much did the patch
+// arriving HERE spread?", and past a fold that question has several answers
+// of which the formula only ever sees one. That is exactly why the two
+// astigmatic focal lines of every bump rendered as two separate bright rings,
+// why the field's mean drifted with the fold population (measured 2.2 where
+// energy conservation demands 1.0), and why blurring that saturated field
+// washed the image out.
 //
-// Expensive, too: per-pixel this cost ~12 texture reads for every pixel of
-// every glassed window. Here it is ~12 reads per SIM TEXEL once per frame,
-// which on a 4480-wide desktop is several times less work.
-//
-// And the old objection to computing it at texture resolution - that it would
-// "look lower resolution" - dissolves, because the physics wants those high
-// frequencies gone anyway. One sim texel is ~8 screen pixels and the blur is
-// wider than that, so nothing survives that was supposed to.
-//
-// Output is illumination RELATIVE TO STILL WATER: 1.0 means unchanged.
+// Splatting asks the question light actually answers: each surface patch
+// carries a fixed parcel of energy to WHEREVER refraction lands it. One
+// vertex per texel of the caustic target samples the surface slope, emits
+// gl_Position at the refracted landing point, and additive blending sums the
+// arrivals. Overlaps ADD — the two folds of a cusp pile into one bright line
+// instead of being drawn twice — total energy is conserved by construction,
+// and still water deposits exactly 1.0 in every texel. No singularity, no
+// doubling, nothing to renormalize.
 // ============================================================================
 
 uniform sampler2D tex;        // wave state: R = h(t), G = h(t-1)
@@ -1336,12 +1338,11 @@ uniform sampler2D trailTex;   // analytic stroke trail, same uv domain
 uniform sampler2D velTexG;    // velocity field, for advected interpolation
 uniform float waveSubFrac;
 uniform float waveBias;
-uniform float waveTexel;
 uniform float flowShift;
 uniform float causticK;       // lens coefficient (depth * Snell * scale)
+uniform float gridN;          // points per side == target texels per side
 
-in vec2 v_texcoord;
-layout(location = 0) out vec4 fragColor;
+flat out vec2 vLand;          // landing point, target pixel coords
 
 const float VIS = 0.105;
 
@@ -1356,44 +1357,60 @@ float waveH(vec2 q) {
     return h;
 }
 
-vec3 waveHessian(vec2 q, float e) {
-    float c  = waveH(q);
-    float xp = waveH(q + vec2(e, 0.0)), xm = waveH(q - vec2(e, 0.0));
-    float yp = waveH(q + vec2(0.0, e)), ym = waveH(q - vec2(0.0, e));
-    float pp = waveH(q + vec2( e,  e)), mm = waveH(q + vec2(-e, -e));
-    float pm = waveH(q + vec2( e, -e)), mp = waveH(q + vec2(-e,  e));
-    float e2 = e * e;
-    return vec3((xp - 2.0 * c + xm) / e2,
-                (yp - 2.0 * c + ym) / e2,
-                (pp - pm - mp + mm) / (4.0 * e2));
-}
+void main() {
+    float fid = float(gl_VertexID);
+    float iy  = floor(fid / gridN);
+    float ix  = fid - iy * gridN;
+    // One point per target texel, on the plain lattice. With the BILINEAR
+    // deposit below, still water lands exactly 1.0 in every texel -- no
+    // counting noise at all. (Jitter was tried here twice to fight a woven
+    // lattice moire seen at the original lens strength: white noise traded
+    // the weave for connected mottle, low-discrepancy-by-linear-index
+    // aliased into curtains. At vein-regime lens strength the displacements
+    // are a few texels and the plain lattice shows no weave to begin with.)
+    vec2 tuv  = (vec2(ix, iy) + 0.5) / gridN;
 
-// Illumination relative to still water. A patch whose area changes by |det|
-// changes its light density by 1/|det|; energy conservation is automatic
-// because the same number that brightens a vein dims the water around it.
-float causticIllum(float det) {
-    float ad = abs(det);
-    // Integrate across the texel rather than point-sampling: for det varying
-    // linearly the average of 1/|det| is a logarithm. Finite on the vein, and
-    // it deposits the vein's true energy into the texel.
-    float w = fwidth(det);
-    const float EPS = 0.004;
-    return (w > 1.0e-6)
-         ? log((ad + 0.5 * w + EPS) / (max(ad - 0.5 * w, 0.0) + EPS)) / w
-         : 1.0 / (ad + EPS);
-}
+    // Same q-space as the glass shader's warp, so the light lands exactly
+    // where the warped image says it moved.
+    vec2 q = 0.5 + (tuv - 0.5) / (2.0 * VIS);
 
-const float DISPERSION = 0.05;
+    // Slope by central differences. A tighter arm than the warp's Hessian
+    // stencil: the deposit's fold sharpness is set by this smoothing, and a
+    // texel of positional disagreement with the warp is invisible while a
+    // 3-texel smear of every vein is not.
+    const float e = 0.0150;
+    vec2 grad = vec2(waveH(q + vec2(e, 0.0)) - waveH(q - vec2(e, 0.0)),
+                     waveH(q + vec2(0.0, e)) - waveH(q - vec2(0.0, e)))
+              / (2.0 * e);
+
+    vec2 pq   = q + causticK * grad;
+    vec2 ptex = 0.5 + (pq - 0.5) * (2.0 * VIS);
+    gl_Position  = vec4(ptex * 2.0 - 1.0, 0.0, 1.0);
+    // BILINEAR deposit, not nearest-pixel. Rounding each parcel into one
+    // texel quantizes the density field: where the mapping spreads light thin
+    // the counts land as 0-or-1 per texel, which is 100% relative noise, and
+    // it showed as grit over every dim region. A 2x2 point plus the bilinear
+    // weight in the fragment stage deposits the parcel EXACTLY, so still
+    // water is exactly 1.0 everywhere and density varies smoothly.
+    vLand        = ptex * gridN;
+    gl_PointSize = 2.0;
+}
+)GLSL"},
+
+    {"causticsplat.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// One parcel of light per point, split bilinearly over the 2x2 pixels the
+// point covers; GL_ONE/GL_ONE blending does the physics — arrivals sum.
+// Alpha stays 0 so the cleared 1.0 survives.
+flat in vec2 vLand;
+layout(location = 0) out vec4 fragColor;
 
 void main() {
-    // This texture lives in the same uv domain as the wave state, so invert
-    // waveH's mapping to recover q.
-    vec2 q = 0.5 + (v_texcoord - 0.5) / (2.0 * VIS);
-    vec3 H = waveHessian(q, 0.0150);
-    vec3 k = causticK * vec3(1.0 - DISPERSION, 1.0, 1.0 + DISPERSION);
-    vec3 det = (1.0 + k * H.x) * (1.0 + k * H.y) - (k * H.z) * (k * H.z);
-    fragColor = vec4(causticIllum(det.r), causticIllum(det.g),
-                     causticIllum(det.b), 1.0);
+    float w = max(0.0, 1.0 - abs(gl_FragCoord.x - vLand.x))
+            * max(0.0, 1.0 - abs(gl_FragCoord.y - vLand.y));
+    fragColor = vec4(w, w, w, 0.0);
 }
 )GLSL"},
 

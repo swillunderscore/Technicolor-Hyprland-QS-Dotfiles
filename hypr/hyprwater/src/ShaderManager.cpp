@@ -143,9 +143,11 @@ bool CShaderManager::compileTrailShader() {
 }
 
 bool CShaderManager::compileCausticShader() {
+    // Custom VERTEX shader: the splat's work happens per vertex, the fragment
+    // stage only deposits the parcel it was handed.
     if (!causticShader->createProgram(
-            g_pHyprOpenGL->m_shaders->TEXVERTSRC,
-            loadShaderSource("caustic.frag"),
+            loadShaderSource("causticsplat.vert"),
+            loadShaderSource("causticsplat.frag"),
             true
         )) {
         HyprlandAPI::addNotification(PHANDLE,
@@ -158,7 +160,7 @@ bool CShaderManager::compileCausticShader() {
     causticUniforms.velTexG     = glGetUniformLocation(program, "velTexG");
     causticUniforms.waveSubFrac = glGetUniformLocation(program, "waveSubFrac");
     causticUniforms.waveBias    = glGetUniformLocation(program, "waveBias");
-    causticUniforms.waveTexel   = glGetUniformLocation(program, "waveTexel");
+    causticUniforms.gridN       = glGetUniformLocation(program, "gridN");
     causticUniforms.flowShift   = glGetUniformLocation(program, "flowShift");
     causticUniforms.causticK    = glGetUniformLocation(program, "causticK");
     return true;
