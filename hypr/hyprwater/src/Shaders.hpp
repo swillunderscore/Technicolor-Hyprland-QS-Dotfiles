@@ -391,11 +391,24 @@ vec3 caustic(vec2 q, float lensK) {
     float k = lensK * 0.275;
     // Two stencils: the long swell and the chop. The wide one integrates over a
     // longer baseline so it needs a proportionally longer throw to fold at all.
-    // Two scales - the long swell and the fine chop - AVERAGED, not summed,
-    // so still water still reads exactly 1.0 and the field stays an honest
-    // illumination factor rather than drifting with how many layers there are.
-    return causticLayer(q, 0.0150, k) * 0.6
-         + causticLayer(q, 0.0320, k * 1.64) * 0.4;
+    // ONE LAYER. This used to evaluate the caustic TWICE, at two stencil
+    // widths, and combine them - on the reasoning that a real pool shows
+    // several networks at once, big cells from the swell and fine ones from
+    // the ripples. The observation is right; the implementation was not.
+    //
+    // Two stencil widths are not two wave systems. They are the SAME surface
+    // measured with two different rulers, and they put det's zero crossing in
+    // two slightly different places - so every filament was drawn twice, side
+    // by side, with a dark gap between the copies. That is what made every
+    // wave, every click and every drag come out as a doubled "double bean"
+    // separated by a line, at any viscosity and any activity, since it was
+    // never a property of the water at all. (Confirmed directly: identical
+    // water, two layers vs one - paired parallel curves become single ones.)
+    //
+    // The multi-scale look has to come from the SURFACE, which genuinely
+    // carries both swell and chop, not from measuring it twice. One honest
+    // Hessian sees all of it.
+    return causticLayer(q, 0.0150, k);
 }
 
 vec2 refractionDir(vec2 uv) {
