@@ -675,9 +675,25 @@ void main() {
             //
             // The intensity slider is contrast about unity: 0 is still water,
             // 1 is the physical amount, above that is deliberate exaggeration.
-            vec3 illum = max(vec3(1.0) + (c - vec3(1.0)) * shimmerIntensity,
-                             vec3(0.0));
-            color *= illum;
+            // TONE CURVE. Real caustics out-range any display: a vein can be
+            // tens of times the ambient light, and a monitor has about one
+            // stop of headroom above white. So the physics is kept exact where
+            // it fits and rolled off only where it cannot - a soft knee, not a
+            // clip, so bright veins keep their shape and their ordering
+            // instead of flattening into a white plateau.
+            //
+            // The dim side needs no curve: illumination is a ratio, so it is
+            // already bounded below by zero. Only the bright side is
+            // compressed, which is exactly how a real exposure behaves.
+            //
+            // GAIN calibrates the slider so its familiar range still lands in
+            // the familiar place - the old model buried a 1/18 and a 1/5 in its
+            // clamps, and dropping those made the same slider value ~3x hotter.
+            const float GAIN     = 0.085;
+            const float HEADROOM = 1.6;
+            vec3 e = (c - vec3(1.0)) * (shimmerIntensity * GAIN);
+            e /= vec3(1.0) + max(e, vec3(0.0)) / HEADROOM;
+            color *= max(vec3(1.0) + e, vec3(0.0));
         } else {
             // Independent light: a plain warm source, for when the backdrop is
             // too dark to carry the effect (or a future explicit light).
