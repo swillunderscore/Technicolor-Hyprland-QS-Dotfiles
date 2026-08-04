@@ -924,6 +924,7 @@ uniform vec4  sPar[8];        // xy = direction, z = radius, w = strength
 // one-step splash materialised in ~60 ms while everything else crawled,
 // which read as a tick on still water.
 uniform vec4  impulse2;       // xy = position, z = radius, w = strength
+uniform float volComp;        // uniform counter-volume for clipped deposits
 uniform float bedVariation;   // 0 = flat bottom, 1 = strongly uneven
 uniform float viscosity;      // how fast SHORT waves die relative to long ones
 uniform float maxSpeed;       // largest stable speed for THIS viscosity
@@ -1044,7 +1045,18 @@ void main() {
     // nu * laplacian(dh/dt) is that term. It leaves the swell almost untouched
     // and eats the pixel-scale ripple within a few steps. Kept well under the
     // 0.25 explicit-diffusion stability bound.
-    float hNext = (2.0 * h - hPrev + localSpeed * l + viscosity * (l - lp)) * damping;
+    // DAMPING PLACEMENT. Multiplying the WHOLE update by the retention factor
+    // looks like a drag and is not one: expanding d*(2h - hPrev + ...) leaves
+    // a -(1-d)*h term, a restoring force on DISPLACEMENT -- a Klein-Gordon
+    // mass. A massive medium is dispersive (w^2 = w0^2 + c^2 k^2), so every
+    // pulse grew an oscillating tail: a locked crest+trough pair at constant
+    // separation that never passes itself, on every click, drag and ambient
+    // splash alike. Verified against an exact spectral integrator: with the
+    // mass term gone the same kick is one clean crest. Damping only the
+    // VELOCITY (h - hPrev) is a pure drag -- the per-mode decay is sqrt(d)
+    // either way (the root product is d in both forms), so the settle pacing
+    // is untouched; only the phantom second wavefront goes.
+    float hNext = h + (h - hPrev) * damping + localSpeed * l + viscosity * (l - lp);
 
     // Stroke deposits — up to eight segments per step (see the uniform note).
     // v_texcoord, not the advected uv: the thing pushing is an external
@@ -1056,10 +1068,21 @@ void main() {
         float l2 = dot(AB, AB);
         float ra = max(sPar[si].z, 1e-9);
         if (dot(sPar[si].xy, sPar[si].xy) < 0.5) {
-            // Round splash (no direction): plain bump at the segment start.
+            // Round splash (no direction): crater + rim at the segment start.
+            // Difference of Gaussians rather than a plain bump, for the same
+            // reason the drag below is a dipole: an impact DISPLACES water,
+            // it does not create any, so the crater's volume must come back
+            // up in a rim. A plain bump pumps net volume into the pool --
+            // nothing restores the mean now that damping is a pure drag --
+            // and its spectrum reaches down to domain-scale modes, which
+            // ring far too hard without the old mass term stiffening them.
+            // The DoG's spectrum vanishes at DC and rolls off exactly that
+            // band; its rim is 4x shallower and 2x wider than the crest,
+            // well below what the caustic will draw.
             vec2  q = (v_texcoord - A) * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
             float d = length(q);
-            hNext += exp(-(d * d) / (ra * ra)) * sPar[si].w;
+            hNext += (exp(-(d * d) / (ra * ra))
+                      - 0.25 * exp(-(d * d) / (4.0 * ra * ra))) * sPar[si].w;
         } else {
             float t  = l2 > 1e-12 ? clamp(dot(v_texcoord - A, AB) / l2, 0.0, 1.0) : 0.0;
             vec2  r  = v_texcoord - (A + t * AB);
@@ -1075,12 +1098,23 @@ void main() {
     }
 
     if (impulse2.w != 0.0) {
+        // Crater + rim, same DoG as the round stroke branch above.
         vec2  q2 = (v_texcoord - impulse2.xy)
                  * vec2(1.0, texelSize.x / max(texelSize.y, 1e-6));
         float d2 = length(q2);
         float r3 = max(impulse2.z, 1e-9);
-        hNext += exp(-(d2 * d2) / (r3 * r3)) * impulse2.w;
+        hNext += (exp(-(d2 * d2) / (r3 * r3))
+                  - 0.25 * exp(-(d2 * d2) / (4.0 * r3 * r3))) * impulse2.w;
     }
+    // Uniform counter-volume for this step's round deposits. The DoG is
+    // volume-neutral only while it fits inside the domain: an event near the
+    // wall writes only the part of itself that lands on texels, and the
+    // clipped remainder would otherwise accumulate as a permanent offset of
+    // the mean (there is no restoring force to bleed it away). The CPU knows
+    // the clipped fraction exactly -- erf over the in-domain box -- and
+    // spreads the correction uniformly here. A constant has no gradient, so
+    // nothing downstream can see it.
+    hNext -= volComp;
 
     // SOFT amplitude limit. The old hard clamp at 0.49 flat-topped the waves
     // whenever agitation outran damping — and a plateau's rim is a ring of

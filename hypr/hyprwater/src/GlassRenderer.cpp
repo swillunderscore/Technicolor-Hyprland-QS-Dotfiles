@@ -1012,6 +1012,21 @@ void stepWaveSim() {
         // fires, so the bottom of the slider has to be an actual OFF rather
         // than the slowest available drip -- otherwise there is no way to watch
         // the water finish settling, which is the only way to judge damping.
+        // In-domain volume of one DoG deposit, in mean-height units: erf over
+        // the [0,1]^2 the shader can actually write, for each of the two
+        // Gaussians. Unclipped the pair cancels exactly, so only events
+        // hanging over the wall produce any correction. Goes to the shader's
+        // volComp uniform, which spreads it evenly across the whole sheet.
+        auto gaussFrac = [](float c, float r) {
+            return 0.5f * (std::erf((1.0f - c) / r) + std::erf(c / r));
+        };
+        auto dogVolume = [&](float x, float y, float r, float amp) {
+            const float f1 = gaussFrac(x, r) * gaussFrac(y, r);
+            const float f2 = gaussFrac(x, 2.0f * r) * gaussFrac(y, 2.0f * r);
+            return amp * 3.14159265f * r * r * (f1 - f2);
+        };
+        float volComp = 0.0f;
+
         // ── SLOT 2: round events (ambient swell / click tap) ─────────────
         // Independent of the stroke slot below, so splashes never starve the
         // drag-trail absorption and vice versa.
@@ -1045,12 +1060,14 @@ void stepWaveSim() {
             if (st2.click.amount > 1e-5f) {
                 // A tap presses IN — negative amplitude — and the rebound ring
                 // is the ripple. Taps are real-time user actions: immediate.
-                glUniform4f(u.impulse2, st2.click.x, st2.click.y,
-                            st2.click.r > 0.0f ? st2.click.r : 0.016f, -st2.click.amount);
+                const float cr = st2.click.r > 0.0f ? st2.click.r : 0.016f;
+                glUniform4f(u.impulse2, st2.click.x, st2.click.y, cr, -st2.click.amount);
+                volComp += dogVolume(st2.click.x, st2.click.y, cr, -st2.click.amount);
                 st2.click.amount = 0.0f;
             } else if (st2.ambLeft > 0.0f) {
                 const float chunk = std::min(st2.ambChunk, st2.ambLeft);
                 glUniform4f(u.impulse2, st2.ambX, st2.ambY, st2.ambR, chunk);
+                volComp += dogVolume(st2.ambX, st2.ambY, st2.ambR, chunk);
                 st2.ambLeft -= chunk;
             } else {
                 glUniform4f(u.impulse2, 0.0f, 0.0f, 1.0f, 0.0f);
@@ -1086,6 +1103,8 @@ void stepWaveSim() {
                 par[ns * 4 + 1] = round ? 0.0f : s.dy;
                 par[ns * 4 + 2] = ra;
                 par[ns * 4 + 3] = s.amount / (round ? 1.0f : (1.0f + 0.6f * len / ra));
+                if (round)
+                    volComp += dogVolume(seg[ns * 4 + 0], seg[ns * 4 + 1], ra, par[ns * 4 + 3]);
                 ns++;
             };
             while (st2.pendLen > 0 && ns < 8) {
@@ -1102,6 +1121,7 @@ void stepWaveSim() {
             glUniform4fv(u.sSeg, 8, seg);
             glUniform4fv(u.sPar, 8, par);
         }
+        glUniform1f(u.volComp, volComp);
 
         glBindFramebuffer(GL_FRAMEBUFFER, fbId(d0));
         // Unit 3, NOT unit 0: unit 0 is the glass shader's backdrop sampler, and
