@@ -502,10 +502,13 @@ static void stepFluidFrame() {
 static void sampleMouseWake() {
     if (!g_pGlobalState)
         return;
-    // Once per frame, however many glassed surfaces call in.
+    // ~72 Hz, however many glassed surfaces and monitors call in. The
+    // illumination is BLURRED by design (finite sun), so refresh-rate updates
+    // buy nothing visible -- and this pass at full dual-monitor rate was
+    // enough GPU to starve the compositor into flashing on the live desktop.
     static std::chrono::steady_clock::time_point last{};
     const auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration<double>(now - last).count() < 0.003)
+    if (std::chrono::duration<double>(now - last).count() < 0.014)
         return;
     last = now;
 
@@ -687,7 +690,7 @@ void renderTrailTex() {
 // a sub-texel filament misses it entirely; a splat cannot miss -- every
 // point's parcel lands somewhere -- so the native resolution keeps all the
 // energy and the finite-sun blur below does the softening.
-static constexpr int CAUSTIC_RES = 2048;
+static constexpr int CAUSTIC_RES = 1024;
 
 static void renderCausticTex() {
     auto& st = *g_pGlobalState;
@@ -701,10 +704,13 @@ static void renderCausticTex() {
     if (!on)
         return;
 
-    // Once per frame, however many glassed surfaces call in.
+    // ~72 Hz, however many glassed surfaces and monitors call in. The
+    // illumination is BLURRED by design (finite sun), so refresh-rate updates
+    // buy nothing visible -- and this pass at full dual-monitor rate was
+    // enough GPU to starve the compositor into flashing on the live desktop.
     static std::chrono::steady_clock::time_point last{};
     const auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration<double>(now - last).count() < 0.003)
+    if (std::chrono::duration<double>(now - last).count() < 0.014)
         return;
     last = now;
 
@@ -773,7 +779,10 @@ static void renderCausticTex() {
         glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
 
         // Every frame starts dark and the points repaint the light. Alpha is
-        // cleared to 1 and the points leave it alone.
+        // cleared to 1 and the points leave it alone. The clear color is
+        // process-global GL state -- put it back the way it was found.
+        GLfloat prevClear[4] = {0, 0, 0, 0};
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -795,6 +804,7 @@ static void renderCausticTex() {
 
         g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
         glBlendFuncSeparate(srcRGB, dstRGB, srcA, dstA);
+        glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
     }
 
     // FINITE SUN: blur radius grows with depth, which is also the relationship
