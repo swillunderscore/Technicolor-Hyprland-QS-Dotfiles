@@ -83,6 +83,10 @@ uniform vec4 winRectSim;     // xy = window centre, zw = half-extents (sim uv)
 // rate — so a hard whip at minimum speed stays a fine smooth curve instead
 // of a chain of step-rate chords.
 uniform sampler2D trailTex;
+// Caustic illumination, precomputed and BLURRED in its own pass. 1.0 = still
+// water. Evaluating it here per screen pixel could not afford the blur the
+// finite size of the sun requires, and cost several times more besides.
+uniform sampler2D causticTex;
 // The velocity field, for ADVECTED interpolation between sim states. With
 // currents on, each sim step shifts the height field along the flow; a plain
 // crossfade between two SHIFTED copies dissolves instead of sliding, which
@@ -666,7 +670,9 @@ void main() {
         // toward that corner instead of growing in place.
         vec2 wp = 0.5 + ((winOrigin + causticUV * winSize) - deskSize * 0.5)
                 / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
-        vec3 c = caustic(wp, lensK);
+        // One tap, in the same uv domain the wave state uses.
+        vec2 cuv = 0.5 + (wp - 0.5) * (2.0 * VIS);
+        vec3 c = texture(causticTex, cuv).rgb;
 
         if (shimmerLightFromBackdrop != 0) {
             // THE FLOOR IS LIT, AND YOU ARE LOOKING AT THE LIT FLOOR.
@@ -1295,6 +1301,99 @@ void main() {
            * exp(-(alo * alo) / (ra * ra) - (acr * acr) / (rb * rb)) * 2.0;
     }
     fragColor = vec4(h, 0.0, 0.0, 1.0);
+}
+)GLSL"},
+
+    {"caustic.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// ============================================================================
+// CAUSTIC ILLUMINATION PASS
+//
+// This used to be evaluated per SCREEN PIXEL inside the glass shader, which is
+// both the expensive way and the wrong way. Wrong, because the physics says the
+// result must be BLURRED - the sun is about half a degree wide, so every part
+// of it casts its own slightly shifted caustic and the floor sees their sum -
+// and a blur of ~12 screen pixels cannot be had per-pixel: it would take on the
+// order of 150 Hessian evaluations per fragment. Rendered into a texture the
+// same blur is a separable Gaussian, about 51 taps for the whole frame.
+//
+// Expensive, too: per-pixel this cost ~12 texture reads for every pixel of
+// every glassed window. Here it is ~12 reads per SIM TEXEL once per frame,
+// which on a 4480-wide desktop is several times less work.
+//
+// And the old objection to computing it at texture resolution - that it would
+// "look lower resolution" - dissolves, because the physics wants those high
+// frequencies gone anyway. One sim texel is ~8 screen pixels and the blur is
+// wider than that, so nothing survives that was supposed to.
+//
+// Output is illumination RELATIVE TO STILL WATER: 1.0 means unchanged.
+// ============================================================================
+
+uniform sampler2D tex;        // wave state: R = h(t), G = h(t-1)
+uniform sampler2D trailTex;   // analytic stroke trail, same uv domain
+uniform sampler2D velTexG;    // velocity field, for advected interpolation
+uniform float waveSubFrac;
+uniform float waveBias;
+uniform float waveTexel;
+uniform float flowShift;
+uniform float causticK;       // lens coefficient (depth * Snell * scale)
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+const float VIS = 0.105;
+
+float waveH(vec2 q) {
+    vec2 uv = 0.5 + (q - 0.5) * (2.0 * VIS);
+    vec2 duv = flowShift > 0.0
+             ? texture(velTexG, uv).rg * (flowShift * waveSubFrac)
+             : vec2(0.0);
+    vec2 hh = texture(tex, uv - duv).rg - waveBias;
+    float h = mix(hh.y, hh.x, waveSubFrac);
+    h += texture(trailTex, vec2(uv.x, 1.0 - uv.y)).r;
+    return h;
+}
+
+vec3 waveHessian(vec2 q, float e) {
+    float c  = waveH(q);
+    float xp = waveH(q + vec2(e, 0.0)), xm = waveH(q - vec2(e, 0.0));
+    float yp = waveH(q + vec2(0.0, e)), ym = waveH(q - vec2(0.0, e));
+    float pp = waveH(q + vec2( e,  e)), mm = waveH(q + vec2(-e, -e));
+    float pm = waveH(q + vec2( e, -e)), mp = waveH(q + vec2(-e,  e));
+    float e2 = e * e;
+    return vec3((xp - 2.0 * c + xm) / e2,
+                (yp - 2.0 * c + ym) / e2,
+                (pp - pm - mp + mm) / (4.0 * e2));
+}
+
+// Illumination relative to still water. A patch whose area changes by |det|
+// changes its light density by 1/|det|; energy conservation is automatic
+// because the same number that brightens a vein dims the water around it.
+float causticIllum(float det) {
+    float ad = abs(det);
+    // Integrate across the texel rather than point-sampling: for det varying
+    // linearly the average of 1/|det| is a logarithm. Finite on the vein, and
+    // it deposits the vein's true energy into the texel.
+    float w = fwidth(det);
+    const float EPS = 0.004;
+    return (w > 1.0e-6)
+         ? log((ad + 0.5 * w + EPS) / (max(ad - 0.5 * w, 0.0) + EPS)) / w
+         : 1.0 / (ad + EPS);
+}
+
+const float DISPERSION = 0.05;
+
+void main() {
+    // This texture lives in the same uv domain as the wave state, so invert
+    // waveH's mapping to recover q.
+    vec2 q = 0.5 + (v_texcoord - 0.5) / (2.0 * VIS);
+    vec3 H = waveHessian(q, 0.0150);
+    vec3 k = causticK * vec3(1.0 - DISPERSION, 1.0, 1.0 + DISPERSION);
+    vec3 det = (1.0 + k * H.x) * (1.0 + k * H.y) - (k * H.z) * (k * H.z);
+    fragColor = vec4(causticIllum(det.r), causticIllum(det.g),
+                     causticIllum(det.b), 1.0);
 }
 )GLSL"},
 

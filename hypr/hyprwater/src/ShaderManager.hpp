@@ -18,6 +18,7 @@ struct SGlassUniforms {
     GLint winWake                  = -1;
     GLint winRectSim               = -1;
     GLint trailTex                 = -1;
+    GLint causticTex               = -1;
     GLint velTexG                  = -1;
     GLint flowShift                = -1;
     GLint waveBias                 = -1;
@@ -76,6 +77,16 @@ struct STrailUniforms {
     GLint tPar = -1;
 };
 
+struct SCausticUniforms {
+    GLint trailTex    = -1;
+    GLint velTexG     = -1;
+    GLint waveSubFrac = -1;
+    GLint waveBias    = -1;
+    GLint waveTexel   = -1;
+    GLint flowShift   = -1;
+    GLint causticK    = -1;
+};
+
 struct SFluidUniforms {
     GLint aDt          = -1;
     GLint aDissipation = -1;
@@ -107,6 +118,9 @@ class CShaderManager {
     SP<CShader>    trailShader = makeShared<CShader>();
     STrailUniforms trailUniforms;
 
+    SP<CShader>      causticShader = makeShared<CShader>();
+    SCausticUniforms causticUniforms;
+
     SP<CShader>    fluidAdvectShader     = makeShared<CShader>();
     SP<CShader>    fluidDivergenceShader = makeShared<CShader>();
     SP<CShader>    fluidJacobiShader     = makeShared<CShader>();
@@ -122,4 +136,5 @@ class CShaderManager {
     [[nodiscard]] bool compileWaveSimShader();
     [[nodiscard]] bool compileFluidShaders();
     [[nodiscard]] bool compileTrailShader();
+    [[nodiscard]] bool compileCausticShader();
 };

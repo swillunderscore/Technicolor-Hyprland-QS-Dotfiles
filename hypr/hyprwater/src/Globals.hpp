@@ -70,6 +70,11 @@ struct SGlobalState {
     // per frame (trailFb), and the glass shader reads one tap.
     static constexpr int PEND_RING = 24;
     SP<Render::IFramebuffer> trailFb;
+    // Caustic illumination, rendered once per frame and BLURRED (the sun is not
+    // a point, so the pattern that lands on the floor is the sum over its
+    // angular width). Per-screen-pixel evaluation could not afford that blur.
+    SP<Render::IFramebuffer> causticFb;
+    SP<Render::IFramebuffer> causticTmpFb;
     SDrag pendRing[PEND_RING];
     int   pendHead = 0;
     int   pendLen  = 0;

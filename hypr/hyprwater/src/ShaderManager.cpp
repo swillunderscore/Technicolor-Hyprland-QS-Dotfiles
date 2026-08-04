@@ -43,6 +43,7 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.winWake                  = glGetUniformLocation(program, "winWake");
     glassUniforms.winRectSim               = glGetUniformLocation(program, "winRectSim");
     glassUniforms.trailTex                 = glGetUniformLocation(program, "trailTex");
+    glassUniforms.causticTex               = glGetUniformLocation(program, "causticTex");
     glassUniforms.velTexG                  = glGetUniformLocation(program, "velTexG");
     glassUniforms.flowShift                = glGetUniformLocation(program, "flowShift");
     glassUniforms.waveBias           = glGetUniformLocation(program, "waveBias");
@@ -141,6 +142,28 @@ bool CShaderManager::compileTrailShader() {
     return true;
 }
 
+bool CShaderManager::compileCausticShader() {
+    if (!causticShader->createProgram(
+            g_pHyprOpenGL->m_shaders->TEXVERTSRC,
+            loadShaderSource("caustic.frag"),
+            true
+        )) {
+        HyprlandAPI::addNotification(PHANDLE,
+            std::format("[{}] Failed to compile caustic shader", PLUGIN_NAME),
+            CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        return false;
+    }
+    const auto program = causticShader->program();
+    causticUniforms.trailTex    = glGetUniformLocation(program, "trailTex");
+    causticUniforms.velTexG     = glGetUniformLocation(program, "velTexG");
+    causticUniforms.waveSubFrac = glGetUniformLocation(program, "waveSubFrac");
+    causticUniforms.waveBias    = glGetUniformLocation(program, "waveBias");
+    causticUniforms.waveTexel   = glGetUniformLocation(program, "waveTexel");
+    causticUniforms.flowShift   = glGetUniformLocation(program, "flowShift");
+    causticUniforms.causticK    = glGetUniformLocation(program, "causticK");
+    return true;
+}
+
 bool CShaderManager::compileFluidShaders() {
     SP<CShader>* shaders[] = {&fluidAdvectShader, &fluidDivergenceShader,
                               &fluidJacobiShader, &fluidGradientShader};
@@ -198,6 +221,9 @@ void CShaderManager::initializeIfNeeded() {
     if (!compileTrailShader())
         return;
 
+    if (!compileCausticShader())
+        return;
+
     m_initialized = true;
 }
 
@@ -206,6 +232,7 @@ void CShaderManager::destroy() noexcept {
     blurShader->destroy();
     waveSimShader->destroy();
     trailShader->destroy();
+    causticShader->destroy();
     fluidAdvectShader->destroy();
     fluidDivergenceShader->destroy();
     fluidJacobiShader->destroy();

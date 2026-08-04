@@ -669,6 +669,139 @@ void renderTrailTex() {
     g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
 }
 
+// Render the caustic illumination into its own texture, once per FRAME, and
+// blur it. Two reasons this cannot live in the glass shader any more.
+//
+// Physics: the sun is not a point. It is about half a degree wide, so every
+// part of it casts its own slightly shifted caustic and the floor sees their
+// sum. Without that blur a single bump shows BOTH of its astigmatic folds as
+// separate rings - the doubling that appeared on every wave, click and drag.
+// The blur is ~12 screen pixels; per-fragment that would be ~150 Hessian
+// evaluations, here it is a separable Gaussian over the whole frame.
+//
+// Cost: per-screen-pixel this was ~12 texture reads for every pixel of every
+// glassed window. Now it is ~12 reads per SIM TEXEL, once. On a wide desktop
+// that is several times less work, not more.
+// Resolution of the caustic pass. Deliberately ABOVE the sim grid: the
+// filaments are thinner than a sim texel, so sampling one per texel misses
+// most of them entirely instead of spreading their energy, which reads as
+// washed-out blobs with the texel lattice showing through. Supersampling
+// captures them; the blur afterwards is what is supposed to soften them.
+static constexpr int CAUSTIC_RES = 2048;
+
+static void renderCausticTex() {
+    auto& st = *g_pGlobalState;
+    auto& sm = st.shaderManager;
+    if (!sm.isInitialized())
+        return;
+
+    const auto& cfg = st.config;
+    const bool on = cfg.shimmerEnabled && **cfg.shimmerEnabled != 0
+                 && cfg.shimmerIntensity && **cfg.shimmerIntensity > 0.0;
+    if (!on)
+        return;
+
+    // Once per frame, however many glassed surfaces call in.
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - last).count() < 0.003)
+        return;
+    last = now;
+
+    auto& fb  = st.causticFb;
+    auto& tmp = st.causticTmpFb;
+    if (!fb)  fb  = g_pHyprRenderer->createFB("hyprwater-caustic");
+    if (!tmp) tmp = g_pHyprRenderer->createFB("hyprwater-caustic-tmp");
+    static uint32_t cfmt = DRM_FORMAT_ABGR16161616F;
+    for (auto* f : {&fb, &tmp}) {
+        if ((*f)->m_size.x != CAUSTIC_RES || (*f)->m_size.y != CAUSTIC_RES)
+            (*f)->alloc(CAUSTIC_RES, CAUSTIC_RES, cfmt);
+    }
+    if (!fb->getTexture() || !tmp->getTexture() || fbId(fb) == 0 || fbId(tmp) == 0)
+        return;
+    if (!st.waveFb[st.waveCurrent] || !st.waveFb[st.waveCurrent]->getTexture())
+        return;
+
+    GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
+
+    const float depth = cfg.shimmerDepth ? static_cast<float>(**cfg.shimmerDepth) : 1.0f;
+    constexpr float WATER_N = 1.333f;
+    constexpr float SNELL   = 1.0f - 1.0f / WATER_N;
+    const float lensK = std::max(depth, 0.10f) * SNELL * 0.080f;
+
+    {
+        const auto& u = sm.causticUniforms;
+        auto sh = g_pHyprOpenGL->useShader(sm.causticShader);
+        sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        sh->setUniformInt(SHADER_TEX, 0);
+        glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
+        glUniform1i(u.trailTex, 1);
+        glUniform1i(u.velTexG, 2);
+        glUniform1f(u.waveSubFrac, st.waveSubFrac);
+        glUniform1f(u.waveBias, st.waveBias);
+        glUniform1f(u.waveTexel, 1.0f / SIM);
+        auto& vfb = st.fluidVelFb[st.fluidVelCurrent];
+        const bool velOk = st.flowDt > 0.0f && vfb && vfb->getTexture();
+        glUniform1f(u.flowShift, velOk ? st.flowDt : 0.0f);
+        glUniform1f(u.causticK, lensK * 0.275f);
+
+        glActiveTexture(GL_TEXTURE0);
+        st.waveFb[st.waveCurrent]->getTexture()->bind();
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        if (st.trailFb && st.trailFb->getTexture()) {
+            glActiveTexture(GL_TEXTURE1);
+            st.trailFb->getTexture()->bind();
+        }
+        if (velOk) {
+            glActiveTexture(GL_TEXTURE2);
+            vfb->getTexture()->bind();
+        }
+        glActiveTexture(GL_TEXTURE0);
+
+        g_pHyprOpenGL->setViewport(0, 0, CAUSTIC_RES, CAUSTIC_RES);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    // FINITE SUN: blur radius grows with depth, which is also the relationship
+    // real water has and this model used to have backwards - a point sun made
+    // caustics SHARPER the deeper the water, holding the astigmatic pair apart
+    // instead of merging it.
+    const float scaleUp = float(CAUSTIC_RES) / float(SIM);
+    const float blurTexels = std::clamp(lensK * 22.0f * scaleUp, 0.6f, 12.0f);
+    {
+        const auto& bu = sm.blurUniforms;
+        auto sh = g_pHyprOpenGL->useShader(sm.blurShader);
+        sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        sh->setUniformInt(SHADER_TEX, 0);
+        glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
+        glUniform1f(bu.radius, blurTexels);
+        glActiveTexture(GL_TEXTURE0);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(tmp));
+        fb->getTexture()->bind();
+        glUniform2f(bu.direction, 1.0f / CAUSTIC_RES, 0.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+        tmp->getTexture()->bind();
+        glUniform2f(bu.direction, 0.0f, 1.0f / CAUSTIC_RES);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
+}
+
 void stepWaveSim() {
     auto& shaderManager = g_pGlobalState->shaderManager;
     if (!shaderManager.isInitialized())
@@ -1266,6 +1399,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             sampleMouseWake();
             stepFluidFrame();
             renderTrailTex();
+            renderCausticTex();   // after the trail: it reads it
         }
     }
 
@@ -1516,6 +1650,17 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // Velocity field for advected interpolation, unit 6. flowShift is
             // forced to 0 whenever the texture is unusable so the shader
             // falls back to the plain crossfade.
+            // The precomputed caustic, unit 7.
+            glUniform1i(uniforms.causticTex, 7);
+            if (auto& cfb = g_pGlobalState->causticFb; cfb && cfb->getTexture()) {
+                glActiveTexture(GL_TEXTURE7);
+                cfb->getTexture()->bind();
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glActiveTexture(GL_TEXTURE0);
+            }
             glUniform1i(uniforms.velTexG, 6);
             auto& vfb = g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent];
             const bool velOk = g_pGlobalState->flowDt > 0.0f && vfb && vfb->getTexture();
