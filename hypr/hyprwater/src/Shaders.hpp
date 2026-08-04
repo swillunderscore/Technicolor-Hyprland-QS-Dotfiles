@@ -322,27 +322,32 @@ vec3 waveHessian(vec2 q, float e) {
 // Brightness from one area-change factor. Split out so the three wavelengths
 // can share a Hessian: the texture reads are the whole cost here, the
 // arithmetic is nearly free, so dispersion is close to no extra work at all.
-float causticShape(float det) {
+float causticIllum(float det) {
+    // ILLUMINATION RELATIVE TO STILL WATER. One quantity, no tuned terms.
+    //
+    // Refraction maps a patch of surface to a patch of floor,
+    // p -> p + k*grad(h), with Jacobian I + k*H. A patch whose area changes by
+    // |det| changes its light density by 1/|det|. That is the entire model.
+    // Energy conservation is automatic and needs no bookkeeping: the SAME
+    // number that brightens a vein dims the water around it, because it is the
+    // same patch of light either way. 1.0 means "unchanged".
+    //
+    // What this replaces was not a model but an accretion - a core clamped at
+    // 18, a halo clamped at 5, a dim term weighted 0.16, and a luminance bias -
+    // constants tuned against each other with no conserved quantity anywhere.
     float ad = abs(det);
-    // 1/|det| - 1 is the change in brightness. It is POSITIVE where the surface
-    // folds light together and NEGATIVE where it pulls light apart, and both
-    // halves are real: a caustic does not manufacture light, it moves it, so
-    // every bright vein is paid for by the water around it going dim. Keeping
-    // only the positive half leaves bright lines sitting on an untouched
-    // background, which reads as a pattern laid over the image rather than
-    // light passing through it.
-    float f    = 1.0 / max(ad, 0.016) - 1.0;
-    // Thin bright core inside a soft halo — a single floor gives either a hard
-    // wire or a fat smudge; sunlit caustics are both at once.
-    float core = clamp(f, 0.0, 18.0) / 18.0;
-    float halo = clamp(1.0 / max(ad, 0.110) - 1.0, 0.0, 5.0) / 5.0;
-    // Spreading saturates: |det| -> infinity can only ever remove the light
-    // that was there, so this side is bounded at 1 by physics, not by taste.
-    float dim  = clamp(-f, 0.0, 1.0);
-    // Weighted well below its true share, because the focused side was
-    // normalised down by 18 to keep the veins from blowing out and an honest
-    // 1:1 shadow would swamp them.
-    return core * 0.85 + halo * 0.10 - dim * 0.16;
+    // The vein is thinner than a pixel nearly everywhere (measured: fwidth(det)
+    // exceeds the whole bright band), so point-sampling 1/|det| aliases. Take
+    // the pixel AVERAGE instead: for det varying linearly across the pixel that
+    // integral is a logarithm. It stays finite on the vein, deposits the vein's
+    // true energy into the pixel rather than whatever value the sample happened
+    // to land on, and collapses to exactly 1/|det| wherever the vein is
+    // properly resolved.
+    float w = fwidth(det);
+    const float EPS = 0.004;
+    return (w > 1.0e-4)
+         ? log((ad + 0.5 * w + EPS) / (max(ad - 0.5 * w, 0.0) + EPS)) / w
+         : 1.0 / (ad + EPS);
 }
 
 // DISPERSION. Water's refractive index is not one number: it bends short
@@ -365,7 +370,7 @@ vec3 causticLayer(vec2 q, float e, float lens) {
     // Longer wavelength bends less, so red carries the smaller coefficient.
     vec3 k = lens * vec3(1.0 - DISPERSION, 1.0, 1.0 + DISPERSION);
     vec3 det = (1.0 + k * H.x) * (1.0 + k * H.y) - (k * H.z) * (k * H.z);
-    return vec3(causticShape(det.r), causticShape(det.g), causticShape(det.b));
+    return vec3(causticIllum(det.r), causticIllum(det.g), causticIllum(det.b));
 }
 
 // THREE SUPERIMPOSED LAYERS.
@@ -386,8 +391,11 @@ vec3 caustic(vec2 q, float lensK) {
     float k = lensK * 0.275;
     // Two stencils: the long swell and the chop. The wide one integrates over a
     // longer baseline so it needs a proportionally longer throw to fold at all.
-    return causticLayer(q, 0.0150, k) * 0.75
-         + causticLayer(q, 0.0320, k * 1.64) * 0.45;
+    // Two scales - the long swell and the fine chop - AVERAGED, not summed,
+    // so still water still reads exactly 1.0 and the field stays an honest
+    // illumination factor rather than drifting with how many layers there are.
+    return causticLayer(q, 0.0150, k) * 0.6
+         + causticLayer(q, 0.0320, k * 1.64) * 0.4;
 }
 
 vec2 refractionDir(vec2 uv) {
@@ -648,65 +656,28 @@ void main() {
         vec3 c = caustic(wp, lensK);
 
         if (shimmerLightFromBackdrop != 0) {
-            // THE BACKDROP IS THE LIGHT SOURCE — the WARPED backdrop.
-            // A caustic does not add light, it REDISTRIBUTES light that is
-            // already there, so the veins must brighten exactly the thing you
-            // can see through the water. `color` is already that: the backdrop
-            // sampled through the warp, so reusing it guarantees the two agree
-            // and costs no extra texture read.
+            // THE FLOOR IS LIT, AND YOU ARE LOOKING AT THE LIT FLOOR.
             //
-            // Sampling at a separate, unwarped position was subtly wrong in a
-            // way that was easy to see once the warping existed: a railing bent
-            // by the water still lit the caustics along its STRAIGHT original
-            // path, so the light and the image disagreed about where the railing
-            // was.
+            // Light refracts through the surface and lands ON the backdrop, so
+            // the backdrop is an ALBEDO and the caustic is an ILLUMINATION -
+            // and albedo times illumination is a PRODUCT. That single change is
+            // what makes bright parts of the wallpaper behave like light coming
+            // through the water instead of a pattern laid over the image.
             //
-            // Because the source is the pixel itself, this is multiplicative —
-            // which is also the more honest model. Focused light scales what is
-            // there; it does not paste a second copy on top.
-            // The light source is a SOFTENED read of the backdrop, not the
-            // razor-sharp pixel. A caustic vein focuses light gathered over an
-            // AREA of the illuminant — no single pixel of floor pattern owns
-            // it. Multiplying by the raw pixel stamped fine backdrop texture
-            // straight into the veins: on pixel-art wallpapers their 2x2
-            // checker DITHER printed through every filament (the "2x2 thing" —
-            // confirmed absent on a flat backdrop at identical settings).
-            // A 5-tap cross a couple of pixels wide integrates the dither out
-            // while leaving real color variation intact.
-            vec2 lp2 = uvG + domeUV;
-            // Collapse the taps toward the centre near the captured region's
-            // edge: past it there is nothing valid to sample, and taps landing
-            // in the clamp band flickered with the waves at the top of tall
-            // windows.
-            float sfE = smoothstep(0.0, 0.05,
-                                   min(min(lp2.x, 1.0 - lp2.x), min(lp2.y, 1.0 - lp2.y)));
-            vec2 lo = 2.5 / fullSize * sfE;
-            vec3  lit = (color
-                       + texture(tex, lp2 + vec2( lo.x, 0.0)).rgb
-                       + texture(tex, lp2 - vec2( lo.x, 0.0)).rgb
-                       + texture(tex, lp2 + vec2(0.0,  lo.y)).rgb
-                       + texture(tex, lp2 - vec2(0.0,  lo.y)).rgb) * 0.2;
-            float lum = dot(lit, vec3(0.2126, 0.7152, 0.0722));
-            // Still biased toward highlights: focused light comes from the
-            // bright parts, not the average.
-            vec3 gain    = c * shimmerIntensity * (0.35 + 1.15 * lum);
-            // The vein ADDS the softened light over the sharp base image: the
-            // warped backdrop keeps its honest detail, the focused light is
-            // area-integrated and smooth. (Multiplying the sharp pixel put the
-            // dither inside the veins; blowing out additively bleached their
-            // hue — this is the middle path, still capped below.)
-            vec3 boosted = max(color + lit * max(gain, vec3(-0.9)), vec3(0.0));
-            // A vein may brighten a pixel to the ceiling OF ITS OWN COLOR,
-            // never past it into white. The old additive form clipped every
-            // strong vein to (1,1,1) — and pure white carries no trace of the
-            // backdrop, so bright veins read as light pasted ON TOP of the
-            // image instead of light coming THROUGH it (the user saw exactly
-            // this: over a light wallpaper the bright parts stopped looking
-            // like they came from the light stuff behind). Normalising by the
-            // max channel keeps the hue exact: the backdrop stays the only
-            // lamp, however hard the water focuses it.
-            float m = max(boosted.r, max(boosted.g, boosted.b));
-            color = boosted / max(1.0, m);
+            // It also removes, rather than tunes away, three problems the old
+            // additive form had to work around. Nothing can be driven negative,
+            // so no clamp to black and no hard-edged shadow contours. Nothing
+            // clips to white, so veins keep the backdrop's hue with no
+            // max-channel renormalisation. And the illuminant is not the pixel
+            // itself, so backdrop detail is modulated once instead of squared -
+            // which is what used to stamp a wallpaper's own dither into every
+            // filament.
+            //
+            // The intensity slider is contrast about unity: 0 is still water,
+            // 1 is the physical amount, above that is deliberate exaggeration.
+            vec3 illum = max(vec3(1.0) + (c - vec3(1.0)) * shimmerIntensity,
+                             vec3(0.0));
+            color *= illum;
         } else {
             // Independent light: a plain warm source, for when the backdrop is
             // too dark to carry the effect (or a future explicit light).
