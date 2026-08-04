@@ -54,6 +54,16 @@ void DBG_LOG(const char* fmt, ...) {
     fflush(f);
 }
 
+// Deterministic-A/B state (see HYPRWATER_FREEZE_AT in stepWaveSim).
+static const long g_freezeAt = [] {
+    const char* p = getenv("HYPRWATER_FREEZE_AT");
+    return p ? atol(p) : 0L;
+}();
+static bool g_frozen = false;
+static int  g_pendingFluidTicks = 0;
+static bool g_harnessArmed = false;
+static bool g_harnessClear = false;
+
 static GLuint fbId(const SP<Render::IFramebuffer>& framebuffer) {
     // dynamic_cast returns null for anything that is not a GL framebuffer, and
     // calling ->getFBID() on that jumps through a garbage vtable — which shows
@@ -254,6 +264,8 @@ static constexpr double FLUID_TICK_S      = 0.030;  // ~33 Hz ceiling
 // per-wave-step burst rather than more expensive.
 static constexpr double FLUID_IDLE_SIM_S  = 2.0e-4;
 
+static int SUBof(double sp) { return sp >= 0.4 ? 1 : (sp >= 0.15 ? 2 : 4); }
+
 static void stepFluidFrame() {
     if (!g_pGlobalState)
         return;
@@ -282,13 +294,23 @@ static void stepFluidFrame() {
     const int SUB = speed >= 0.4 ? 1 : (speed >= 0.15 ? 2 : 4);
     st.flowDt = 1.0f / (120.0f * SUB);
 
-    // At most one tick per 30 ms, however many glassed surfaces call in.
-    static std::chrono::steady_clock::time_point lastTick{};
-    const auto now = std::chrono::steady_clock::now();
-    const double elapsed = std::chrono::duration<double>(now - lastTick).count();
-    if (elapsed < FLUID_TICK_S)
-        return;
-    lastTick = now;
+    // At most one tick per 30 ms, however many glassed surfaces call in —
+    // except under the deterministic harness, where the fluid advances exactly
+    // once per wave step so it cannot depend on wall clock either.
+    double elapsed;
+    if (g_freezeAt > 0) {
+        if (g_pendingFluidTicks <= 0)
+            return;
+        g_pendingFluidTicks--;
+        elapsed = 1.0 / (120.0 * SUBof(speed));
+    } else {
+        static std::chrono::steady_clock::time_point lastTick{};
+        const auto now = std::chrono::steady_clock::now();
+        elapsed = std::chrono::duration<double>(now - lastTick).count();
+        if (elapsed < FLUID_TICK_S)
+            return;
+        lastTick = now;
+    }
 
     // Simulated time waiting to be integrated. Capped so a stall integrates a
     // bounded amount instead of replaying itself as one big lurch. Time keeps
@@ -707,7 +729,8 @@ void stepWaveSim() {
         simTime += dReal * speed;
         // Injected-energy estimate for the self-limiting agitation below:
         // bleeds away on a ~2 s time constant of REAL time.
-        seaEnergy *= static_cast<float>(std::exp(-dReal * 0.5));
+        if (g_freezeAt <= 0)
+            seaEnergy *= static_cast<float>(std::exp(-dReal * 0.5));
 
         // SUB-STEPPING. At low speed, whole 1/120 s steps arrive so rarely
         // that the surface — and especially a drag's deposits — visibly tick
@@ -726,11 +749,31 @@ void stepWaveSim() {
         const int cap = 4 * SUB;
         if (n > cap) { n = cap; simDone = simTime - cap * sub; }   // caught up after a stall
         steps = n;
-        simDone += n * sub;
+
+        // DETERMINISTIC A/B HARNESS. HYPRWATER_FREEZE_AT=N runs exactly N
+        // steps from the cleared field and then stops the world: the impulse
+        // generator is keyed on waveStepCount, so two BUILDS given the same N
+        // produce bit-identical water and any pixel difference is purely the
+        // code change. Without it the water differs run to run and nothing
+        // below ~10% is measurable — which is how several "no effect" results
+        // ended up unfalsifiable.
+        if (g_freezeAt > 0) {
+            const long done = static_cast<long>(g_pGlobalState->waveStepCount);
+            steps = done >= g_freezeAt ? 0
+                  : static_cast<int>(std::min<long>(steps, g_freezeAt - done));
+            g_frozen = (done + steps) >= g_freezeAt;
+        }
+        simDone += steps * sub;
+        if (g_freezeAt > 0) {
+            // Same ~0.6/second bleed as the real-time form, but counted in
+            // STEPS so it cannot depend on wall clock.
+            seaEnergy *= std::pow(0.9958f, static_cast<float>(steps));
+            g_pendingFluidTicks += steps;
+        }
 
         // Phase within the current sub-step, also from the clock, so both
         // halves of a monitor-spanning window blend to the same point.
-        g_pGlobalState->waveSubFrac =
+        g_pGlobalState->waveSubFrac = g_frozen ? 0.0f :
             static_cast<float>(std::clamp((simTime - simDone) / sub, 0.0, 1.0));
 
         if (steps > 0)
@@ -755,6 +798,19 @@ void stepWaveSim() {
     // compositor SIGSEGV during ordinary rendering.
     static uint32_t fmt = DRM_FORMAT_ABGR16161616F;
     bool fresh = false;
+    // Harness reset. Frames render between plugin load and the settings being
+    // applied, so those first steps run under DEFAULT config and their count
+    // depends on wall clock — which is what stopped two launches matching. Wipe
+    // the world once, after the settings are certainly live, and count the
+    // deterministic budget from there.
+    if (g_freezeAt > 0 && !g_harnessArmed) {
+        static std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 5.0)
+            return;
+        g_harnessArmed = true;
+        g_harnessClear = true;   // consumed by the `fresh` branch below
+        g_pendingFluidTicks = 0;
+    }
     if (fbA->m_size.x != SIM || fbA->m_size.y != SIM) { fbA->alloc(SIM, SIM, fmt); fresh = true; }
     if (fbB->m_size.x != SIM || fbB->m_size.y != SIM) { fbB->alloc(SIM, SIM, fmt); fresh = true; }
 
@@ -783,6 +839,7 @@ void stepWaveSim() {
     if (isOn && !wasOn)
         fresh = true;
     wasOn = isOn;
+    if (g_harnessClear) { fresh = true; g_harnessClear = false; }
 
     if (fresh) {
         for (auto* fb : {&fbA, &fbB}) {
@@ -791,6 +848,15 @@ void stepWaveSim() {
             glClear(GL_COLOR_BUFFER_BIT);
         }
         g_pGlobalState->waveStepCount = 0;
+        for (auto* fb : {&g_pGlobalState->fluidVelFb[0], &g_pGlobalState->fluidVelFb[1],
+                         &g_pGlobalState->fluidPrsFb[0], &g_pGlobalState->fluidPrsFb[1],
+                         &g_pGlobalState->fluidDivFb}) {
+            if (*fb && fbId(*fb) != 0) {
+                glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
+        }
     }
 
     GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
