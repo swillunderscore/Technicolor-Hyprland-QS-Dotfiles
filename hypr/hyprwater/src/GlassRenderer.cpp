@@ -76,14 +76,20 @@ static GLuint fbId(const SP<Render::IFramebuffer>& framebuffer) {
 
 static void uploadThemeUniforms(const SResolveContext& ctx) {
     const auto& uniforms = g_pGlobalState->shaderManager.glassUniforms;
-    const auto& glassShader = g_pGlobalState->shaderManager.glassShader;
     const auto& defaults = ctx.isDark ? DARK_THEME_DEFAULTS : LIGHT_THEME_DEFAULTS;
 
-    glassShader->setUniformFloat(SHADER_BRIGHTNESS, resolvePresetFloat(ctx, &SPresetValues::brightness, &SOverridableConfig::brightness, defaults.brightness));
-    glassShader->setUniformFloat(SHADER_CONTRAST,   resolvePresetFloat(ctx, &SPresetValues::contrast, &SOverridableConfig::contrast, defaults.contrast));
-    glUniform1f(uniforms.saturation,                 resolvePresetFloat(ctx, &SPresetValues::saturation, &SOverridableConfig::saturation, defaults.saturation));
-    glassShader->setUniformFloat(SHADER_VIBRANCY,   resolvePresetFloat(ctx, &SPresetValues::vibrancy, &SOverridableConfig::vibrancy, defaults.vibrancy));
-    glUniform1f(uniforms.vibrancyDarkness,           resolvePresetFloat(ctx, &SPresetValues::vibrancyDarkness, &SOverridableConfig::vibrancyDarkness, defaults.vibrancyDarkness));
+    // Raw locations for ALL of these, deliberately. They used to go through
+    // the compositor's shader-slot mechanism (setUniformFloat(SHADER_*)),
+    // which has its own caching layer between the call and the GL program --
+    // one more owner of when a value actually lands. Every other uniform in
+    // this plugin is a direct glUniform to a location grabbed at compile;
+    // these are now the same, so a draw's effective state is exactly what
+    // the code just uploaded, with no second mechanism to disagree with it.
+    glUniform1f(uniforms.brightness, resolvePresetFloat(ctx, &SPresetValues::brightness, &SOverridableConfig::brightness, defaults.brightness));
+    glUniform1f(uniforms.contrast,   resolvePresetFloat(ctx, &SPresetValues::contrast, &SOverridableConfig::contrast, defaults.contrast));
+    glUniform1f(uniforms.saturation, resolvePresetFloat(ctx, &SPresetValues::saturation, &SOverridableConfig::saturation, defaults.saturation));
+    glUniform1f(uniforms.vibrancy,   resolvePresetFloat(ctx, &SPresetValues::vibrancy, &SOverridableConfig::vibrancy, defaults.vibrancy));
+    glUniform1f(uniforms.vibrancyDarkness, resolvePresetFloat(ctx, &SPresetValues::vibrancyDarkness, &SOverridableConfig::vibrancyDarkness, defaults.vibrancyDarkness));
 
     glUniform1f(uniforms.adaptiveDim,   resolvePresetFloat(ctx, &SPresetValues::adaptiveDim, &SOverridableConfig::adaptiveDim, defaults.adaptiveDim));
     glUniform1f(uniforms.adaptiveBoost, resolvePresetFloat(ctx, &SPresetValues::adaptiveBoost, &SOverridableConfig::adaptiveBoost, defaults.adaptiveBoost));
@@ -1724,6 +1730,22 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         static_cast<float>((tintColorValue >> 8) & 0xFF) / 255.0f);
     glUniform1f(uniforms.tintAlpha,
         static_cast<float>(tintColorValue & 0xFF) / 255.0f);
+    if (dbgLog()) {
+        // Read BACK the effective program state right before the draw: any
+        // mismatch means something rewrote a uniform after the upload above,
+        // and a changing program id means the draw is not even using the
+        // program the locations belong to.
+        GLint prog = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
+        GLint lfbEff = -7; GLfloat taEff = -7.0f;
+        glGetUniformiv(prog, uniforms.shimmerLightFromBackdrop, &lfbEff);
+        glGetUniformfv(prog, uniforms.tintAlpha, &taEff);
+        const auto& vcfg = g_pGlobalState->config;
+        const int   lfbWant = (vcfg.shimmerLightFromBackdrop && **vcfg.shimmerLightFromBackdrop != 0) ? 1 : 0;
+        const float taWant  = static_cast<float>(tintColorValue & 0xFF) / 255.0f;
+        DBG("%.4f VERIFY prog=%d lfb=%d/%d ta=%.3f/%.3f%s\n", dbgNow(), prog,
+            lfbEff, lfbWant, static_cast<double>(taEff), static_cast<double>(taWant),
+            (lfbEff != lfbWant || std::abs(taEff - taWant) > 0.004f) ? "  MISMATCH" : "");
+    }
 
     glUniform2f(uniforms.uvPadding,
         static_cast<float>(paddingRatio.x),

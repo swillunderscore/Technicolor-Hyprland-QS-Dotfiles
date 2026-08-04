@@ -726,8 +726,13 @@ void main() {
             // light that is already in the image, so the dim half scales the
             // pixel instead of subtracting a white, which would drive dark
             // backdrops negative.
-            color += vec3(1.0, 0.985, 0.95) * max(c, vec3(0.0)) * shimmerIntensity * 0.35 * headroom;
-            color *= 1.0 + min(c, vec3(0.0)) * shimmerIntensity * 0.5;
+            // c is ILLUMINATION now, centered at 1.0 (the splat deposits mean
+            // one) -- the old analytic path centered it at zero, and reading
+            // the new field with the old convention turned the lamp into a
+            // permanent veil: max(c, 0) was simply c, everywhere, always.
+            vec3 cz = c - vec3(1.0);
+            color += vec3(1.0, 0.985, 0.95) * max(cz, vec3(0.0)) * shimmerIntensity * 0.35 * headroom;
+            color *= 1.0 + min(cz, vec3(0.0)) * shimmerIntensity * 0.5;
         }
     }
 
