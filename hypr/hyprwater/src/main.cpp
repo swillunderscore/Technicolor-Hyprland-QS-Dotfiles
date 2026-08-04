@@ -146,6 +146,21 @@ static bool shouldGlassLayer(PHLLS layerSurface) {
 
 using renderLayerFn = void (*)(Render::IHyprRenderer*, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool);
 
+// Debug-armed forensic tap: every window render, with the decorate flag and
+// pass mode. The glass is a DECORATION - any render that comes through here
+// with decorate=false paints the window with NO water at all, and one such
+// frame parked in a swapchain buffer is exactly one frame of the unfocused-
+// window strobe. This names the subsystem doing it.
+using renderWindowFn = void (*)(Render::IHyprRenderer*, PHLWINDOW, PHLMONITOR, const Time::steady_tp&, bool, int, bool, bool);
+
+static void hkRenderWindow(Render::IHyprRenderer* thisptr, PHLWINDOW window, PHLMONITOR monitor,
+                           const Time::steady_tp& now, bool decorate, int mode, bool ignorePosition, bool standalone) {
+    GlassRenderer::DBG_LOG("RENDERWIN win=%lx dec=%d mode=%d standalone=%d ignpos=%d\n",
+                           reinterpret_cast<uintptr_t>(window.get()), decorate ? 1 : 0, mode,
+                           standalone ? 1 : 0, ignorePosition ? 1 : 0);
+    ((renderWindowFn)g_pGlobalState->renderWindowHook->m_original)(thisptr, window, monitor, now, decorate, mode, ignorePosition, standalone);
+}
+
 static void hkRenderLayer(Render::IHyprRenderer* thisptr, PHLLS layerSurface, PHLMONITOR monitor,
                            const Time::steady_tp& now, bool popups, bool lockscreen) {
     const auto& config = g_pGlobalState->config;
@@ -365,6 +380,21 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     }
 
+    auto renderWindowMatches = HyprlandAPI::findFunctionsByName(PHANDLE, "renderWindow");
+    GlassRenderer::DBG_LOG("HOOKSCAN renderWindow: %zu candidates\n", renderWindowMatches.size());
+    for (const auto& match : renderWindowMatches) {
+        GlassRenderer::DBG_LOG("HOOKSCAN candidate: %s\n", match.demangled.c_str());
+        if (match.demangled.contains("IHyprRenderer") && match.demangled.contains("renderWindow")) {
+            g_pGlobalState->renderWindowHook = HyprlandAPI::createFunctionHook(PHANDLE, match.address, (void*)hkRenderWindow);
+            if (g_pGlobalState->renderWindowHook) {
+                const bool ok = g_pGlobalState->renderWindowHook->hook();
+                GlassRenderer::DBG_LOG("HOOKSCAN hooked=%d\n", ok ? 1 : 0);
+            } else
+                GlassRenderer::DBG_LOG("HOOKSCAN createFunctionHook returned null\n");
+            break;
+        }
+    }
+
     if (!g_pGlobalState->renderLayerHook) {
         HyprlandAPI::addNotificationV2(PHANDLE, {
             {"text", std::string("[hyprwater] Could not hook renderLayer — layer glass disabled")},
@@ -466,6 +496,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
         for (const auto& w : Desktop::windowState()->windows())
             stripGlassDeco(w);
 
+    if (g_pGlobalState->renderWindowHook)
+        HyprlandAPI::removeFunctionHook(PHANDLE, g_pGlobalState->renderWindowHook);
     if (g_pGlobalState->renderLayerHook) {
         HyprlandAPI::removeFunctionHook(PHANDLE, g_pGlobalState->renderLayerHook);
         g_pGlobalState->renderLayerHook = nullptr;

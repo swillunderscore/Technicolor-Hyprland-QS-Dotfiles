@@ -146,6 +146,7 @@ struct SGlobalState {
 
     // renderLayer hook
     CFunctionHook* renderLayerHook = nullptr;
+    CFunctionHook* renderWindowHook = nullptr;
 };
 
 using Render::GL::g_pHyprOpenGL;

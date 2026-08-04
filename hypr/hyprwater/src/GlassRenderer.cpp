@@ -144,7 +144,14 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     // The render pass scissors each element to its damage region.
     // That scissor state leaks here and clips glBlitFramebuffer on the
     // DRAW framebuffer, causing partial writes and stale noise artifacts.
-    g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, false);
+    // RAW disable, not setCapStatus: the compositor's cap cache can believe
+    // the scissor is already off while the GL state says on - the cached
+    // wrapper then skips the glDisable and the clear and blit stay clipped
+    // to the damage rect. Regions outside it keep their old texels forever;
+    // when VRAM history put something bright there, every window sampling
+    // this FB strobed. Query-and-restore around the whole copy.
+    const GLboolean smpScissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
 
     // Clear the sample FBO before blitting. Clamped regions (near edges)
     // would otherwise contain uninitialized GPU memory (pink artifacts).
@@ -157,6 +164,8 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
                       dstX0, dstY0, dstX1, dstY1,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    if (smpScissor)
+        glEnable(GL_SCISSOR_TEST);
 }
 
 // ============================================================================
@@ -737,6 +746,19 @@ static void renderCausticTex() {
     GLint prevFbo = 0, prevVp[4] = {0, 0, 0, 0};
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevVp);
+    // The compositor clips everything to the frame's DAMAGE region with a
+    // scissor rect, and glClear honors the scissor. For every other offscreen
+    // pass that was invisible: they overwrite their whole target each run, so
+    // a clipped write healed on the next frame. The splat is ADDITIVE - a
+    // clipped clear leaves last frame's light in place and the pass then
+    // deposits another full helping of energy on top, every frame, until the
+    // texture saturates white everywhere the scissor did not reach. That was
+    // the unfocused-window strobe: the scissor tracks damage, damage tracks
+    // the focused window, and every window sampling the unswept part of the
+    // caustic texture lit up. Offscreen simulation passes must never be
+    // scissored by screen damage.
+    const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
     g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
 
     const float depth = cfg.shimmerDepth ? static_cast<float>(**cfg.shimmerDepth) : 1.0f;
@@ -747,9 +769,17 @@ static void renderCausticTex() {
     {
         const auto& u = sm.causticUniforms;
         auto sh = g_pHyprOpenGL->useShader(sm.causticShader);
-        sh->setUniformInt(SHADER_TEX, 0);
-        glUniform1i(u.trailTex, 1);
-        glUniform1i(u.velTexG, 2);
+        // Units 8-10, deliberately far from home. This pass runs mid-frame
+        // between the compositor's own draws, and the compositor CACHES what
+        // it believes is bound on the low units - binding the wave texture on
+        // unit 0 here silently poisoned that cache, and whichever element
+        // drew next without a rebind composited the WATER STATE as its
+        // surface: the frozen bright flash on unfocused windows. Every other
+        // sim pass already lives on units 2-6; nothing in the compositor
+        // touches 8+.
+        sh->setUniformInt(SHADER_TEX, 8);
+        glUniform1i(u.trailTex, 9);
+        glUniform1i(u.velTexG, 10);
         glUniform1f(u.waveSubFrac, st.waveSubFrac);
         glUniform1f(u.waveBias, st.waveBias);
         auto& vfb = st.fluidVelFb[st.fluidVelCurrent];
@@ -765,18 +795,18 @@ static void renderCausticTex() {
         glUniform1f(u.causticK, lensK * 0.100f);
         glUniform1f(u.gridN, float(CAUSTIC_RES));
 
-        glActiveTexture(GL_TEXTURE0);
+        glActiveTexture(GL_TEXTURE8);
         st.waveFb[st.waveCurrent]->getTexture()->bind();
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         if (st.trailFb && st.trailFb->getTexture()) {
-            glActiveTexture(GL_TEXTURE1);
+            glActiveTexture(GL_TEXTURE9);
             st.trailFb->getTexture()->bind();
         }
         if (velOk) {
-            glActiveTexture(GL_TEXTURE2);
+            glActiveTexture(GL_TEXTURE10);
             vfb->getTexture()->bind();
         }
         glActiveTexture(GL_TEXTURE0);
@@ -823,10 +853,11 @@ static void renderCausticTex() {
         const auto& bu = sm.blurUniforms;
         auto sh = g_pHyprOpenGL->useShader(sm.blurShader);
         sh->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
-        sh->setUniformInt(SHADER_TEX, 0);
+        // Unit 8 for the blur input as well - same cache-poisoning rule.
+        sh->setUniformInt(SHADER_TEX, 8);
         glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
         glUniform1f(bu.radius, blurTexels);
-        glActiveTexture(GL_TEXTURE0);
+        glActiveTexture(GL_TEXTURE8);
 
         glBindFramebuffer(GL_FRAMEBUFFER, fbId(tmp));
         fb->getTexture()->bind();
@@ -839,7 +870,21 @@ static void renderCausticTex() {
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 
+    if (dbgLog()) {
+        // What is actually IN the caustic texture after clear+splat+blur:
+        // mean-1 illumination, or accumulated blow-out?
+        float px[4] = {0, 0, 0, 0}; float acc[3] = {0, 0, 0};
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+        const int probes[3][2] = {{CAUSTIC_RES/4, CAUSTIC_RES/4}, {CAUSTIC_RES/2, CAUSTIC_RES/2}, {(3*CAUSTIC_RES)/4, (3*CAUSTIC_RES)/4}};
+        for (int i = 0; i < 3; i++) {
+            glReadPixels(probes[i][0], probes[i][1], 1, 1, GL_RGBA, GL_FLOAT, px);
+            acc[i] = px[1];
+        }
+        DBG("%.4f CAUSVAL g=%.3f,%.3f,%.3f\n", dbgNow(), static_cast<double>(acc[0]), static_cast<double>(acc[1]), static_cast<double>(acc[2]));
+    }
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
+    if (prevScissor)
+        glEnable(GL_SCISSOR_TEST);
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
@@ -1400,6 +1445,24 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        float alpha, float cornerRadius, float roundingPower,
                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
                        const SMaskInfo* mask) {
+    // ONE scissor guard for the ENTIRE effect, raw GL, not the compositor's
+    // cached cap wrapper (the cache can disagree with real state and skip the
+    // disable). The render pass leaves a damage-rect scissor enabled; every
+    // offscreen op below - the backdrop sample blit, the blur quads, the sim,
+    // trail, fluid and caustic passes - writes its whole target and assumes
+    // it CAN. Scissored, each leaves unrefreshed texels that fossilize
+    // whatever VRAM held before; the glass then re-samples its own stale
+    // output and the fossil self-propagates through the swapchain forever.
+    // Guarding passes one at a time just moved the fossil - this covers all
+    // of them, and the final composite draw is clipped by the caller's
+    // damage region geometry, not this scissor.
+    const GLboolean fxScissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    struct SScissorRestore {
+        GLboolean was;
+        ~SScissorRestore() { if (was) glEnable(GL_SCISSOR_TEST); }
+    } fxScissorRestore{fxScissor};
+
     if (!sampleFramebuffer || !targetFramebuffer)
         return;
 
@@ -1742,8 +1805,27 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         const auto& vcfg = g_pGlobalState->config;
         const int   lfbWant = (vcfg.shimmerLightFromBackdrop && **vcfg.shimmerLightFromBackdrop != 0) ? 1 : 0;
         const float taWant  = static_cast<float>(tintColorValue & 0xFF) / 255.0f;
-        DBG("%.4f VERIFY prog=%d lfb=%d/%d ta=%.3f/%.3f%s\n", dbgNow(), prog,
+        GLfloat brEff = -7.0f, saEff = -7.0f, adEff = -7.0f, goEff = -7.0f;
+        glGetUniformfv(prog, uniforms.brightness, &brEff);
+        glGetUniformfv(prog, uniforms.saturation, &saEff);
+        glGetUniformfv(prog, uniforms.adaptiveDim, &adEff);
+        glGetUniformfv(prog, uniforms.glassOpacity, &goEff);
+        GLint prevActive = 0, tex0 = -1, tex2 = -1, tex5 = -1, tex6 = -1, tex7 = -1;
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
+        glActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex0);
+        glActiveTexture(GL_TEXTURE2); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex2);
+        glActiveTexture(GL_TEXTURE5); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex5);
+        glActiveTexture(GL_TEXTURE6); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex6);
+        glActiveTexture(GL_TEXTURE7); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex7);
+        glActiveTexture(static_cast<GLenum>(prevActive));
+        DBG("%.4f TEXBIND org=%.0f,%.0f t0=%d t2=%d t5=%d t6=%d t7=%d\n", dbgNow(),
+            rawBox.x + monOff.x, rawBox.y + monOff.y, tex0, tex2, tex5, tex6, tex7);
+        DBG("%.4f VERIFY org=%.0f,%.0f dark=%d pre=%s prog=%d lfb=%d/%d ta=%.3f/%.3f br=%.3f sa=%.3f ad=%.3f go=%.3f%s\n",
+            dbgNow(), rawBox.x + monOff.x, rawBox.y + monOff.y,
+            resolveContext.isDark ? 1 : 0, resolveContext.presetName.c_str(), prog,
             lfbEff, lfbWant, static_cast<double>(taEff), static_cast<double>(taWant),
+            static_cast<double>(brEff), static_cast<double>(saEff),
+            static_cast<double>(adEff), static_cast<double>(goEff),
             (lfbEff != lfbWant || std::abs(taEff - taWant) > 0.004f) ? "  MISMATCH" : "");
     }
 
@@ -1774,6 +1856,20 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
     g_pHyprOpenGL->scissor(rawBox);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    if (dbgLog()) {
+        // The draw just landed in fbId(targetFramebuffer). Read one pixel of
+        // what was actually written: if this stays dark while the SCREEN
+        // strobes bright, the wash frames never contained this draw at all
+        // and the bug is in which framebuffer the pass was routed to.
+        GLint curFb = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &curFb);
+        unsigned char px[4] = {0, 0, 0, 0};
+        glReadPixels(static_cast<GLint>(targetFramebuffer->m_size.x / 2),
+                     static_cast<GLint>(targetFramebuffer->m_size.y / 2),
+                     1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        DBG("%.4f OUTPX org=%.0f,%.0f fb=%d tgt=%d px=%d,%d,%d\n", dbgNow(),
+            rawBox.x + monOff.x, rawBox.y + monOff.y,
+            curFb, fbId(targetFramebuffer), px[0], px[1], px[2]);
+    }
     g_pHyprOpenGL->scissor(nullptr);
 }
 
