@@ -1220,6 +1220,18 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     glBindFramebuffer(GL_FRAMEBUFFER, fbId(targetFramebuffer));
     glActiveTexture(GL_TEXTURE0);
     texture->bind();
+    // MIPMAPS ON THE BACKDROP, because the warp MINIFIES.
+    //
+    // Near a fold the refraction mapping compresses a large stretch of
+    // backdrop into a thin band: adjacent screen pixels sample far-apart
+    // backdrop texels. Without mipmaps that is classic minification aliasing,
+    // and on a detailed wallpaper it shows as pixel-scale checkerboard noise
+    // riding exactly on the bright caustic rims — which is why nothing done to
+    // the height field ever touched it. With mipmaps, the hardware picks the
+    // filtered level from the warped coordinate's actual derivatives.
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     // Layers only: bind the temp FBO texture (rendered surface) on texture unit 1.
     // The shader samples it to mask glass to visible content and composite surface on top.
