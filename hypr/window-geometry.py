@@ -26,7 +26,9 @@ import time
 
 STATE = os.path.expanduser("~/.local/state/hypr/window-geometry.json")
 CONF = os.path.expanduser("~/.config/hypr/window-geometry.conf")
-POLL = 2.5
+POLL = 0.4   # was 2.5 — drag a window then IMMEDIATELY spawn another and the
+             # spawn raced the poll, mapping under the PRE-drag rules every
+             # time. Sub-second polling closes the window a human can hit.
 MIN_SIZE = 50  # ignore tiny/transient surfaces
 # "Steam" (capital) is Steam's popup/dialog/toast class (the main client is the
 # lowercase "steam"); recording it let a 700x330 popup poison the geometry and
@@ -185,9 +187,11 @@ def apply_live(cls, v):
     hl.window_rule form silently no-ops for size/move/tile — so emit the STRUCTURED
     hl.window_rule table via `hyprctl eval`. No unset needed: rules accumulate and
     the LATEST matching one wins (verified)."""
-    for r in rules_for(cls, v):
-        subprocess.run(["hyprctl", "eval", _body_to_lua(r) + " return 1"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # One batched eval, not one subprocess per rule: five sequential hyprctl
+    # round-trips added most of a second to the drag->spawn race.
+    stmts = "; ".join(_body_to_lua(r) for r in rules_for(cls, v))
+    subprocess.run(["hyprctl", "eval", stmts + " return 1"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def poll_loop():
