@@ -150,7 +150,7 @@ static void initQssWatcher()
         // (so neither QSS nor a palette write moves it mid-session), but
         // QGraphicsView::setBackgroundBrush is a plain runtime setter that
         // repaints immediately — so painting the scene background with the live
-        // file colour recolors the canvas with no relaunch and no view-mode
+        // file color recolors the canvas with no relaunch and no view-mode
         // toggle. (reinterpret_cast is safe: QGraphicsView's QWidget subobject
         // is at offset 0, single inheritance; and setBackgroundBrush is a lazily
         // bound FUNCTION symbol, not a DATA symbol, so it never trips the
@@ -170,7 +170,7 @@ static void initQssWatcher()
             // columns with style()->drawControl(CE_Header, opt) where opt.palette
             // defaults to qApp's palette — NOT its own widget palette and NOT
             // anything the QWidget PaletteChange/reparse broadcast reaches. So it
-            // froze at the launch colour while the canvas/chrome recolored. Fix:
+            // froze at the launch color while the canvas/chrome recolored. Fix:
             // push the header's roles onto the APPLICATION palette. Scope to
             // Button/Window(+text) — those drive CE_Header on Breeze/Fusion;
             // every other surface is QSS- or KColorScheme-driven and overrides
@@ -185,7 +185,7 @@ static void initQssWatcher()
                 // Text/HighlightedText drive the file ROW labels: like the canvas
                 // bg they were captured at launch, so a dark->light wallpaper flip
                 // left light text on a now-light canvas (no contrast). The rows
-                // pull their colour from the KItemListView style option below, but
+                // pull their color from the KItemListView style option below, but
                 // also seed the app palette so any qApp-fallback path is correct.
                 ap.setColor(QPalette::Text, fileInk);
             }
@@ -206,10 +206,10 @@ static void initQssWatcher()
                 w->setPalette(p);
                 gv->viewport()->update();
 
-                // Repaint the in-scene widgets so they pick up the new colours
+                // Repaint the in-scene widgets so they pick up the new colors
                 // NOW (an ApplicationPaletteChange doesn't auto-invalidate scene
                 // items). Header: reads qApp palette (CE_Header) -> just update().
-                // ItemListView: the file rows read their text colour from THIS
+                // ItemListView: the file rows read their text color from THIS
                 // view's palette/style option (captured at launch), so push the
                 // live ink onto its palette (Text/WindowText) before updating; the
                 // PaletteChange that setPalette posts makes KItemListView rebuild
@@ -240,7 +240,7 @@ static void initQssWatcher()
         }
         // Reparse the cached KColorScheme configs so the WIDGET-based
         // KColorScheme surfaces (column header, scrollbars) re-decode fresh
-        // colours on the PaletteChange broadcast below. (KSharedConfig/KConfig
+        // colors on the PaletteChange broadcast below. (KSharedConfig/KConfig
         // aren't QObjects -> only lazy function symbols, so LD_PRELOAD helpers
         // like kioworker are unaffected. Needs KF6 KConfigCore; the block
         // compiles out without it.)
@@ -284,7 +284,7 @@ extern "C" void _ZN7QWidget10setVisibleEb(QWidget *self, bool visible)
             // The URL navigator is also a plain QWidget (QSS-background-inert):
             // styling it directly only painted a thin padding edge, and the
             // breadcrumb children covered the rest, so the box stayed a stale
-            // colour on wallpaper change. Flipping WA_StyledBackground makes its
+            // color on wallpaper change. Flipping WA_StyledBackground makes its
             // QSS rounded box actually paint, and (with the navigator's children
             // forced transparent in the QSS) that live secondary box is what the
             // breadcrumbs ride on — so the URL box recolors with everything else.

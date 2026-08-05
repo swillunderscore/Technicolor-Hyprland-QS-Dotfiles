@@ -40,7 +40,7 @@ OUT = os.path.expanduser("~/.config/brave-technicolor-theme")
 def main():
     p = gd.load()
     # Brave intentionally SWAPS primary/secondary vs the other apps — the user
-    # wants the browser's palette flipped (toolbar takes the secondary colour,
+    # wants the browser's palette flipped (toolbar takes the secondary color,
     # tabs take the primary). Just swap which gradient end feeds which here.
     primary = gd.rgb(p.get("GRADIENT_START", "#3e71c0"))
     secondary = gd.rgb(p.get("GRADIENT_END", "#cd9b39"))

@@ -46,12 +46,12 @@ def main():
     def section(bg, bg_alt, fg, alt_transparent=False):
         # alt_transparent: write BackgroundAlternate with alpha 0. Used only for
         # the file view (Colors:View). Dolphin's KStandardItemListWidget paints
-        # ONLY the alternate (even) rows, with this colour, and leaves the normal
+        # ONLY the alternate (even) rows, with this color, and leaves the normal
         # rows transparent so the QGraphicsView scene background shows through.
         # The shim live-repaints that scene background (setBackgroundBrush) on
         # every wallpaper change — so to make the WHOLE canvas track live, the
         # alternate rows must also be transparent (alpha 0), otherwise every
-        # other row freezes at the launch-captured colour. (Side effect: removes
+        # other row freezes at the launch-captured color. (Side effect: removes
         # alternating-row striping in other KColorScheme item views too; they
         # then show a uniform Base, which is fine.)
         return {
@@ -213,9 +213,9 @@ QMainWindow::separator {{ background-color: rgb{key}; width: 8px; height: 8px; }
 DolphinUrlNavigator, KUrlNavigator {{ background-color: rgb{sec}; color: rgb{inks}; border-radius: 10px; padding: 2px 6px; }}
 /* The breadcrumb segments + the editable path field paint their OWN opaque
    background (from launch-captured KColorScheme), which covered the navigator's
-   live QSS background so the URL box stayed a stale colour on wallpaper change.
+   live QSS background so the URL box stayed a stale color on wallpaper change.
    Force every child of the navigator transparent so the (live, QSS-reapplied)
-   secondary container colour shows through; only the navigator box recolors and
+   secondary container color shows through; only the navigator box recolors and
    everything inside rides it. Text/handles stay the secondary ink. */
 KUrlNavigatorButton, DolphinUrlNavigator QToolButton, KUrlNavigator QToolButton,
 KUrlNavigator QPushButton, DolphinUrlNavigator QPushButton {{ background: transparent; color: rgb{inks}; border: none; }}
@@ -263,7 +263,7 @@ InformationPanel QTextEdit {{ background: transparent; border: none; color: rgb{
    (AnimatedHeightWidget wrapper — the only stylable surface in there) */
 DolphinStatusBar QScrollArea {{ background-color: rgb{sec}; color: rgb{inks}; border: none; border-radius: 8px; margin: 0 0 20px 24px; }}
 DolphinStatusBar QLabel {{ background: transparent; color: rgb{inks}; }}
-/* details-view column bar (Name/Size/Modified/Type) — MAIN colour. The
+/* details-view column bar (Name/Size/Modified/Type) — MAIN color. The
    in-scene KItemListHeaderWidget follows the KColorScheme Header group (set to
    primary above); this QHeaderView rule covers the widget-based header paths. */
 QHeaderView {{ background-color: rgb{prim}; border: none; }}
@@ -271,7 +271,7 @@ QHeaderView::section {{ background-color: rgb{prim}; color: rgb{inkp}; border: n
 /* Tabs: connected "segmented control" strip (Apple vibe) — no gaps between
    tabs, only the OUTER ends of the whole strip are rounded (via :first/:last/
    :only-one), so adjacent tabs share a flush edge. A 1px secondary-ink divider
-   on every tab but the last separates two same-colour neighbours without a gap.
+   on every tab but the last separates two same-color neighbours without a gap.
    Close (x) moved to the LEFT of each tab (macOS-style) via subcontrol-position
    — this genuinely relocates it (it's a real subcontrol slot, unlike padding/
    margin which only nudged the right-edge default). */
@@ -290,13 +290,13 @@ QTabBar::close-button:selected {{ image: url({home}/.config/qt6ct/tab-x-sel.png)
    because Qt gives the close-button a vertical-pill background box, not a
    square one, so QSS rounding came out an oval. A round disc in the square PNG
    stays a true circle at the render size. (Accent isn't used: in many palettes
-   it's close to the tab colour and the disc would be near-invisible.) */
+   it's close to the tab color and the disc would be near-invisible.) */
 QTabBar::close-button:hover {{ image: url({home}/.config/qt6ct/tab-x-hover.png); }}
 QTabBar::close-button:selected:hover {{ image: url({home}/.config/qt6ct/tab-x-sel-hover.png); }}
 QTabBar::tab:selected {{ background-color: rgb{acc}; color: rgb{inka}; border-right: none; }}
 QTabBar::tab:hover:!selected {{ background-color: rgb{sec_alt}; }}
 /* pane border:none alone left a 1px tab-bar BASE line drawn in the chroma key
-   colour (too thin for the shader to glass -> showed as a raw teal line between
+   color (too thin for the shader to glass -> showed as a raw teal line between
    tabs and files). Zero the pane + give the tab bar a flush key base so there's
    nothing thin to mis-key. */
 QTabWidget::pane {{ border: none; margin: 0; padding: 0; top: 0; }}

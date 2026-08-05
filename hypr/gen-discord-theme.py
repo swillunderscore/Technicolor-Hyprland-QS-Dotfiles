@@ -256,14 +256,14 @@ def compute_vars(primary, secondary, third, accent):
     _r, _g, _b = colorsys.hls_to_rgb(ph / 360.0, tl, tsat)
     TP = "#{:02x}{:02x}{:02x}".format(int(_r * 255), int(_g * 255), int(_b * 255))
 
-    # readable LINK colours, computed PER SURFACE: links appear on BOTH the
-    # secondary sidebar/DM list AND the primary chat, and one colour can't
-    # contrast both when the two palette colours sit on opposite lightness sides
+    # readable LINK colors, computed PER SURFACE: links appear on BOTH the
+    # secondary sidebar/DM list AND the primary chat, and one color can't
+    # contrast both when the two palette colors sit on opposite lightness sides
     # (e.g. dark primary + light secondary). Keep the accent hue so they still
-    # read as a link colour; flip lightness to whatever contrasts each surface.
+    # read as a link color; flip lightness to whatever contrasts each surface.
     # lightness is driven to the CONTRASTING extreme (near-black on a light/mid
     # surface, near-white on a dark one) via ink_rgb — the accent hue only
-    # carries the "this is a link" colour identity. Fixed mid-lightness failed on
+    # carries the "this is a link" color identity. Fixed mid-lightness failed on
     # mid-tone surfaces (a teal link on a teal bg was ~2:1).
     LNKP = "hsl({:.0f}, {:.0f}%, {}%)".format(ah, ACS, 88 if ink_rgb(primary) == LIGHT else 15)
     LNKS = "hsl({:.0f}, {:.0f}%, {}%)".format(ah, ACS, 88 if ink_rgb(secondary) == LIGHT else 15)
@@ -375,7 +375,7 @@ body, .theme-dark:not(.custom-user-profile-theme), .theme-light:not(.custom-user
   --text-primary: var(--tc-tc0); --text-secondary: var(--tc-tc2); --text-tertiary: var(--tc-tc3); --text-low-contrast: var(--tc-tc3);
   --channels-default: var(--tc-tc2); --interactive-hover: var(--tc-tc0); --interactive-active: var(--tc-tc0);
   --white-500: var(--tc-tc0); --white: var(--tc-tc0);
-  /* links/mentions on the chat (primary) surface -> primary-contrast colour */
+  /* links/mentions on the chat (primary) surface -> primary-contrast color */
   --text-link: var(--tc-lnkp); --mention-foreground: var(--tc-lnkp);
 }
 /* chat links light/dark to contrast the primary surface; placed BEFORE the
