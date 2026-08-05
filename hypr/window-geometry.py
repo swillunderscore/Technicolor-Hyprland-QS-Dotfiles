@@ -111,8 +111,13 @@ def rules_for(cls, v):
     # Maximized (SUPER+V = fullscreen mode 1) layers ON TOP of the float/size/move
     # above: the window opens maximized, and un-maximizing returns it to the saved
     # geometry. (Real fullscreen, mode 2, is never recorded — see poll_loop.)
-    if v.get("maximized"):
-        out.append("maximize on, " + m)
+    #
+    # ALWAYS emitted, both states. Live rules accumulate and the LATEST matching
+    # verb wins — an "on" from any SUPER+V this session would stay the latest
+    # maximize rule forever if clearing it merely emitted nothing, which is why
+    # kitty kept spawning maximized no matter how often the user dragged one
+    # back down. "off" has to be said out loud to overwrite it.
+    out.append(("maximize on, " if v.get("maximized") else "maximize off, ") + m)
     return out
 
 
@@ -194,6 +199,7 @@ def poll_loop():
     # the user actually moved/resized (see the per-class loop).
     prev_addrs = set()
     prev_shape = {}
+    prev_fs = {}
     while True:
         time.sleep(POLL)
         mons = hyprctl_json("monitors")
@@ -240,6 +246,7 @@ def poll_loop():
         # meaningless once the headless is gone).
         cur_addrs = set()
         cur_shape = {}
+        cur_fs = {}
         per_class = {}
         for c in cls_list:
             cls = c.get("class") or ""
@@ -260,6 +267,7 @@ def poll_loop():
                 continue
             cur_addrs.add(addr)
             cur_shape[addr] = shape(c)
+            cur_fs[addr] = c.get("fullscreen") or 0
             per_class.setdefault(cls, []).append((addr, c))
 
         changed = False
@@ -290,6 +298,18 @@ def poll_loop():
             if fs == 1:
                 # Maximized: at/size are the maximized bounds, not the real floating
                 # geometry — keep the prior geometry, just flag maximized.
+                #
+                # TRANSITIONS ONLY. A window that merely SITS maximized while its
+                # shape drifts (workspace slides, monitor changes, another window
+                # of the class being adjusted) must not keep re-asserting the
+                # flag: with one kitty parked maximized and another being dragged
+                # around unmaximized, the parked one won every poll and every new
+                # kitty spawned maximized no matter what the user did. Only the
+                # deliberate act — a window that BECAME maximized since the last
+                # poll — gets to set the flag; unmaximizing records through the
+                # floating/tiled branches below as before.
+                if prev_fs.get(c.get("address")) == 1:
+                    continue
                 val = dict(geo.get(cls, {}))
                 val.setdefault("floating", True)
                 val["maximized"] = True
@@ -330,6 +350,7 @@ def poll_loop():
             write_conf()
         prev_addrs = cur_addrs
         prev_shape = cur_shape
+        prev_fs = cur_fs
 
 
 if __name__ == "__main__":
