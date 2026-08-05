@@ -17,8 +17,54 @@ unminimize() {
     hyprctl --batch "dispatch hl.dsp.window.move({workspace=\"$cur_ws\", window=\"address:$addr\"}) ; dispatch hl.dsp.focus({window=\"address:$addr\"}) ; dispatch hl.dsp.window.alter_zorder({mode=\"top\", window=\"address:$addr\"})"
 }
 
+cur_focus=""
+prev_focus=""
+
 socat -U - "UNIX-CONNECT:$SOCK" | while read -r line; do
     case "$line" in
+        activewindowv2\>\>*)
+            # Focus history for the toast-bounce below.
+            a="${line#activewindowv2>>}"
+            [ -z "$a" ] && continue
+            [[ "$a" != 0x* ]] && a="0x$a"
+            [ "$a" = "$cur_focus" ] && continue
+            prev_focus="$cur_focus"
+            cur_focus="$a"
+            ;;
+
+        openwindow\>\>*)
+            # TOAST GUARD. Steam's friend/achievement notifications (and any
+            # future app doing the same thing) open a tiny real window on
+            # whatever monitor they like, and a new window takes focus - so a
+            # toast on the other screen yanks the keyboard mid-typing. Rule:
+            # if a freshly opened window is toast-sized AND stole focus AND
+            # the previously focused window lives on a DIFFERENT monitor,
+            # bounce focus straight back. Deliberately generic - no app list.
+            # Small dialogs a user opens on purpose (polkit, pickers) are
+            # bigger than the threshold or on the same monitor, so they keep
+            # focus.
+            rest="${line#openwindow>>}"
+            addr="${rest%%,*}"
+            [ -z "$addr" ] && continue
+            [[ "$addr" != 0x* ]] && addr="0x$addr"
+            sleep 0.15   # let size/position/focus settle
+            info=$(hyprctl clients -j | jq -r --arg a "$addr" \
+                '.[] | select(.address == $a) | "\(.size[0]) \(.size[1]) \(.monitor)"' 2>/dev/null)
+            [ -z "$info" ] && continue
+            read -r w h mon <<< "$info"
+            act=$(hyprctl activewindow -j | jq -r '"\(.address) \(.monitor)"' 2>/dev/null)
+            read -r act_addr act_mon <<< "$act"
+            [ "$act_addr" = "$addr" ] || continue          # it did not take focus
+            [ $(( ${w:-9999} * ${h:-9999} )) -lt 70000 ] || continue   # not toast-sized
+            # who had focus before this window appeared (event order safe)
+            if [ "$cur_focus" = "$addr" ]; then before="$prev_focus"; else before="$cur_focus"; fi
+            [ -n "$before" ] || continue
+            before_mon=$(hyprctl clients -j | jq -r --arg a "$before" \
+                '.[] | select(.address == $a) | .monitor' 2>/dev/null)
+            [ -n "$before_mon" ] && [ "$before_mon" != "$mon" ] || continue
+            hyprctl dispatch 'hl.dsp.focus({last=true})' >/dev/null 2>&1
+            ;;
+
         minimize\>\>*)
             rest="${line#minimize>>}"
             addr="${rest%%,*}"

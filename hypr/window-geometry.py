@@ -72,19 +72,36 @@ def hyprctl_json(what):
         return None
 
 
-def matcher(cls):
-    """Class matcher for window rules, plus any popup-excluding refinement."""
+def matcher(cls, v=None):
+    """Class matcher for window rules, plus popup-excluding refinement.
+
+    Many apps (Steam, Godot, ...) give popups, toasts, and transient dialogs
+    the SAME class as their main window, so a class-only rule force-sizes a
+    "Launching game..." popup to the store page's saved geometry — and the
+    reverse. The canonical window's initial_title is recorded with its
+    geometry and required here, so rules only ever hit the window they were
+    learned from. Self-healing: if an app's real window changes its
+    initial_title, the rule stops matching until the user adjusts the window
+    once, which re-records both. MATCH_REFINE stays as a manual override.
+    """
     m = "match:class ^(" + re.escape(cls) + ")$"
     if cls in MATCH_REFINE:
         m += ", " + MATCH_REFINE[cls]
+    elif v and v.get("it"):
+        m += ", match:initial_title ^(" + re.escape(v["it"]) + ")$"
     return m
 
 
 def rules_for(cls, v):
     """Window-rule bodies (without the leading 'windowrule = ') for this app."""
-    m = matcher(cls)
+    m = matcher(cls, v)
     if not v.get("floating"):
         out = ["tile on, " + m]
+        # Pin tiled windows to their remembered monitor too, so e.g. Brave opens
+        # on the screen it lives on instead of wherever keyboard focus happens to
+        # be at launch. (Floating windows already get a monitor rule below.)
+        if v.get("mon"):
+            out.append(f"monitor {v['mon']}, " + m)
     else:
         out = ["float on, " + m]
         if all(v.get(k) is not None for k in ("mon", "x", "y", "w", "h")):
@@ -173,7 +190,10 @@ def poll_loop():
     # Addresses seen on the PREVIOUS poll. A window is only recorded once it has
     # persisted ≥1 interval — so a splash/loader that flashes up and vanishes
     # within a poll is never recorded (this is the "shotcut splash" problem).
+    # prev_shape maps addr -> geometry tuple from last poll, to detect which window
+    # the user actually moved/resized (see the per-class loop).
     prev_addrs = set()
+    prev_shape = {}
     while True:
         time.sleep(POLL)
         mons = hyprctl_json("monitors")
@@ -183,65 +203,124 @@ def poll_loop():
         # Pause recording while a monitor is missing (e.g. powered off overnight):
         # windows pile onto the remaining monitor, and we must NOT overwrite the
         # real saved geometry with that squished layout. Resume once all are back.
-        _max_mons = max(_max_mons, len(mons))
-        if len(mons) < _max_mons:
+        # Count only PHYSICAL monitors for the "a monitor is missing, pause
+        # recording" guard. A transient headless output (TV stream / DisplayThree)
+        # otherwise bumped the max and then, once removed, paused recording for the
+        # rest of the session — freezing stale geometry.
+        phys = [m for m in mons if not str(m.get("name", "")).startswith("HEADLESS")]
+        _max_mons = max(_max_mons, len(phys))
+        if len(phys) < _max_mons:
             continue
-        moff = {m["id"]: (m["name"], m["x"], m["y"]) for m in mons}
+        # id -> (name, x, y, logical_w, logical_h)
+        moff = {}
+        for m in mons:
+            sc = m.get("scale") or 1
+            moff[m["id"]] = (m["name"], m["x"], m["y"],
+                             int((m["width"] or 0) / sc), int((m["height"] or 0) / sc))
 
-        # Group this poll's eligible windows by class. An app's dialogs, popups
-        # and splash share its class, so keying on class alone let whichever one
-        # came last in the list overwrite the main window's saved geometry. Pick
-        # ONE canonical window per class instead: the largest-area surface that
-        # has persisted ≥1 poll. The main window is reliably the biggest, and is
-        # always older than any dialog it spawns — so dialogs/popups/splashes are
-        # skipped while the real window is recorded.
+        active = hyprctl_json("activewindow") or {}
+        focused_addr = (active or {}).get("address")
+
+        def shape(c):
+            mid = c.get("monitor")
+            at = c.get("at") or [None, None]
+            sz = c.get("size") or [None, None]
+            mon = moff[mid][0] if mid in moff else None
+            mx, my = (moff[mid][1], moff[mid][2]) if mid in moff else (0, 0)
+            rx = at[0] - mx if at[0] is not None else None
+            ry = at[1] - my if at[1] is not None else None
+            return (bool(c.get("floating")), c.get("fullscreen") or 0, mon, rx, ry, sz[0], sz[1])
+
+        def area(c):
+            sz = c.get("size") or [0, 0]
+            return (sz[0] or 0) * (sz[1] or 0)
+
+        # Eligible windows this poll, grouped by class. Skip excluded classes,
+        # special workspaces, and anything on a headless output (its geometry is
+        # meaningless once the headless is gone).
         cur_addrs = set()
+        cur_shape = {}
         per_class = {}
         for c in cls_list:
             cls = c.get("class") or ""
             addr = c.get("address") or ""
             if not cls or cls in EXCLUDE or not addr:
                 continue
+            if cls.startswith("steam_app_"):
+                # Steam/Proton games: monitor + fullscreen are owned by local.conf.
+                # Tracking them here fought that — a recorded `float + size 2560x1440
+                # + move 0 0` made a game spawn corner-anchored at full size instead
+                # of fullscreen ("right size, wrong corner").
+                continue
             ws = (c.get("workspace") or {}).get("name", "")
             if ws.startswith("special"):
                 continue
-            cur_addrs.add(addr)
-            if addr not in prev_addrs:        # not stable yet — skip this poll
+            mid = c.get("monitor")
+            if mid in moff and str(moff[mid][0]).startswith("HEADLESS"):
                 continue
-            sz = c.get("size") or [0, 0]
-            per_class.setdefault(cls, []).append(((sz[0] or 0) * (sz[1] or 0), c))
+            cur_addrs.add(addr)
+            cur_shape[addr] = shape(c)
+            per_class.setdefault(cls, []).append((addr, c))
 
         changed = False
         for cls, lst in per_class.items():
-            _, c = max(lst, key=lambda t: t[0])   # largest-area window of this class
+            # The window the user actively moved/resized is the one whose shape
+            # changed since the last poll. Recording THAT one — not just the biggest
+            # window sharing the class — is what makes "remember the last one I
+            # changed" work (a huge stale sibling no longer wins). If nothing of this
+            # class changed, keep what we already remember; only fall back to
+            # "largest" to SEED a class we've never recorded before.
+            edited = [(a, c) for (a, c) in lst
+                      if a in prev_shape and prev_shape[a] != cur_shape[a]]
+            if edited:
+                c = next((c for a, c in edited if a == focused_addr), None) \
+                    or max((c for _, c in edited), key=area)
+            elif cls not in geo:
+                stable = [c for (a, c) in lst if a in prev_addrs]
+                if not stable:
+                    continue
+                c = max(stable, key=area)
+            else:
+                continue
+
             fs = c.get("fullscreen") or 0   # 0=none 1=maximize(SUPER+V) 2=fullscreen
             if fs == 2:
-                # Real fullscreen (games / video) is a transient mode, not a per-app
-                # preference — never record it (its bounds would also clobber the
-                # saved floating geometry). Leave the prior state untouched.
+                # Real fullscreen (games / video) is transient — never record it.
                 continue
             if fs == 1:
-                # Maximized: its at/size are the maximized bounds, NOT the real
-                # floating geometry — keep the prior floating/tiled geometry and
-                # just flag maximized, so un-maximizing later restores correctly.
+                # Maximized: at/size are the maximized bounds, not the real floating
+                # geometry — keep the prior geometry, just flag maximized.
                 val = dict(geo.get(cls, {}))
                 val.setdefault("floating", True)
                 val["maximized"] = True
+                val["it"] = c.get("initialTitle") or ""
             elif c.get("floating"):
                 at, sz, mid = c.get("at"), c.get("size"), c.get("monitor")
                 if not at or not sz or sz[0] < MIN_SIZE or sz[1] < MIN_SIZE:
                     continue
                 if mid not in moff:
                     continue
-                mon, mx, my = moff[mid]
+                mon, mx, my, mw, mh = moff[mid]
+                rx, ry = at[0] - mx, at[1] - my
+                # Sanity: don't remember a window that's mostly off its monitor or
+                # bigger than it. That's exactly how an old headless/hotplug layout
+                # poisoned the geometry (e.g. the 742x2079 kitty at y=-876).
+                if rx < -100 or ry < -100 or rx > mw or ry > mh \
+                        or sz[0] > mw + 200 or sz[1] > mh + 200:
+                    continue
                 val = {"floating": True, "maximized": False, "mon": mon,
-                       "x": at[0] - mx, "y": at[1] - my, "w": sz[0], "h": sz[1]}
+                       "x": rx, "y": ry, "w": sz[0], "h": sz[1],
+                       "it": c.get("initialTitle") or ""}
             else:
-                # Tiled: flip the flag but keep any prior floating geometry, so
-                # un-tiling later returns the window to where it last floated.
+                # Tiled: flip the flag, remember which monitor it's on (so it can be
+                # pinned there via rules_for), keep any prior floating geometry.
                 val = dict(geo.get(cls, {}))
                 val["floating"] = False
                 val["maximized"] = False
+                val["it"] = c.get("initialTitle") or ""
+                mid = c.get("monitor")
+                if mid in moff:
+                    val["mon"] = moff[mid][0]
             if geo.get(cls) != val:
                 geo[cls] = val
                 apply_live(cls, val)
@@ -250,6 +329,7 @@ def poll_loop():
             write_state()
             write_conf()
         prev_addrs = cur_addrs
+        prev_shape = cur_shape
 
 
 if __name__ == "__main__":
