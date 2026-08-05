@@ -30,12 +30,14 @@ else
     make -s -B -C "$DIR" >/dev/null 2>&1 && [ -f "$SO" ] || exit 0
 fi
 
-# Drop any OTHER hyprwater already loaded (e.g. an hyprpm-managed copy in either
+# Drop any hyprpm-managed UPSTREAM hyprglass that is already loaded (this fork
+# replaces it, and the two would fight over the same decorations). That name
+# stays 'hyprglass' on purpose: it refers to the other project, not to this one.
 # the user or the system store) so ours is the one in effect.
 for p in \
-    "$HOME"/.local/share/hyprpm/*/hyprwater.so \
-    "$HOME"/.local/share/hyprpm/*/*/hyprwater.so \
-    /var/cache/hyprpm/*/*/hyprwater.so; do
+    "$HOME"/.local/share/hyprpm/*/hyprglass.so \
+    "$HOME"/.local/share/hyprpm/*/*/hyprglass.so \
+    /var/cache/hyprpm/*/*/hyprglass.so; do
     [ -f "$p" ] && [ "$p" != "$SO" ] && hyprctl plugin unload "$p" >/dev/null 2>&1
 done
 hyprctl plugin unload "$SO" >/dev/null 2>&1   # idempotent on re-run
