@@ -9,7 +9,7 @@ file.
 🚨 This is basically entirely vibe coded (including most of the below lol)
    But 100% designed by me aside from the bugs :) 🚨
 
-[![Demo](https://img.youtube.com/vi/WGOLzbLe-U8/maxresdefault.jpg)](https://youtu.be/WGOLzbLe-U8)
+[![Demo](https://img.youtube.com/vi/f_846Oc1UWg/maxresdefault.jpg)](https://youtu.be/f_846Oc1UWg)
 
 ![screenshot](screenshot.png)
 
