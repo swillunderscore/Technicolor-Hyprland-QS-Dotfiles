@@ -571,6 +571,10 @@ hl.on("hyprland.start", function()
     hl.exec_cmd(H .. "/.config/hypr/tg-badge-listener.py")
     hl.exec_cmd(H .. "/.config/hypr/gen-wofi-font.sh")
     hl.exec_cmd(H .. "/.config/hypr/technicolor-color-server.py")
+    -- A Spotify package upgrade silently reverts the spicetify patch, and the
+    -- whole-window chromakey then self-calibrates onto stock Spotify's near-black
+    -- and keys out album art. No-op unless that actually happened.
+    hl.exec_cmd(H .. "/.config/hypr/spicetify-guard.sh")
     -- Load the vendored plugins (built against system headers by their load.sh;
     -- `hyprctl plugin load` is synchronous, so both are ready when load.sh returns)
     -- then `hyprctl reload`. The reload re-runs THIS config with the plugins now

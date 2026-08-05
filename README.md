@@ -269,6 +269,12 @@ Open-source and widely used, but a client mod, so it's against Spotify's ToS. `s
 current_theme Technicolor`, then `spicetify backup apply`. Live colors poll a small local HTTP
 server via the `technicolor-sync.js` extension.
 
+Every Spotify **update** silently reverts that patch, and because the window is chromakeyed
+whole-window with a self-calibrating keyer, losing the theme doesn't just look untethered — the
+keyer re-calibrates onto stock Spotify's near-black and keys out album art and the player bar.
+`spicetify-guard.sh` runs at login, detects it (the packaged `xpui.spa` reappearing is the tell),
+and reapplies. No-op when nothing is wrong.
+
 **Dolphin / Qt** — `gen-kde-colors.py` rewrites `kdeglobals`, a KDE color scheme and a qt6ct
 palette. Needs `qt6ct-kde` with `QT_QPA_PLATFORMTHEME=qt6ct`.
 
