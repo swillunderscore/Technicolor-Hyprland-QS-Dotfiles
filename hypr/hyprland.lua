@@ -452,6 +452,8 @@ bind("app-launcher", "Apps", "App launcher",
      mainMod .. " + R",      exec(menu))
 bind("toggle-tiling", "Windows", "Toggle tiling",
      mainMod .. " + SPACE",  exec(H .. "/.config/hypr/window-action.sh float"))
+bind("toggle-tiling-all", "Windows", "Toggle tiling (whole workspace)",
+     mainMod .. " + SHIFT + SPACE", exec(H .. "/.config/hypr/tile-all.sh"))
 
 -- Screenshots (note: original used $shiftMod which was undefined → SHIFT)
 bind("screenshot-region", "Screenshots", "Screenshot a region",
