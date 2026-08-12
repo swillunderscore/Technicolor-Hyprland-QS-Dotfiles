@@ -553,7 +553,22 @@ void main() {
             // Warping scales the whole optical effect; depth is the physical
             // distance. Their product is the displacement coefficient, and the
             // caustics below use the very same number.
-            waveGrad = waveSlope(wpBase, 0.0150);
+            // SCALED BY THE INTENSITY SLIDER, below 1.0 only. The slider used
+            // to reach the caustic veins and nothing else, so turning it down
+            // left the surface bending and glinting at full strength: the
+            // water stayed exactly as busy, it just stopped having bright
+            // lines in it, and there was no way to ask for a quieter pool.
+            // The slope is the one quantity everything visible is built from
+            // — the warp below and the Fresnel glint further down both read
+            // it — so attenuating it here is the whole appearance fading
+            // together, which is what a calmer surface actually is. It scales
+            // amplitude, never exposure: nothing here darkens the image, it
+            // only flattens the water toward still.
+            //
+            // Clamped at 1.0 because past that the slider means something
+            // else — deliberate over-exposure of the veins, per the tone
+            // curve below — and a physically over-steep surface is not that.
+            waveGrad = waveSlope(wpBase, 0.0150) * min(shimmerIntensity, 1.0);
             waveWarp = waveGrad * lensK
                      / max(fullSize / max(fullSize.x, 1.0), vec2(0.001));
 
@@ -842,6 +857,10 @@ void main() {
         // is doing real work as a gate: it ignores gentle swell entirely and
         // only answers to genuinely steep surface, so this picks out features
         // rather than washing the whole window out.
+        //
+        // waveGrad already carries the intensity slider (see the warp block),
+        // so turning the water down fades these glints with it and leaves the
+        // meniscus rim untouched — the rim is glass, not water.
         float rim   = edgeProximity * edgeProximity;
         float slope = length(waveGrad) * 0.85 + rim * 2.0;
         float cosT  = inversesqrt(1.0 + slope * slope);
