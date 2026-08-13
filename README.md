@@ -194,6 +194,14 @@ the gear on the launcher popup or `qs ipc call settings open`.
 | **Hotkeys** | Every keybind, searchable and editable. Read live from `hyprctl binds`, so it matches your real config. Click the keys to rebind; conflicts are caught and named. |
 | **System** | UI font, default file manager, default terminal, terminal transparency, a `local.conf` editor, the update checker, and Spotify library tools. |
 
+**Terminal transparency** (System tab) follows whichever terminal you've set as
+the default and drives *that* terminal's own background alpha, so the text stays
+fully solid — a compositor opacity rule would fade the glyphs with it. kitty,
+Alacritty, foot, Ghostty, WezTerm and GNOME Terminal change as you drag; Konsole
+and Xfce Terminal are saved to config and come up transparent in new windows.
+Anything else says so instead of pretending. Adapters live in
+`hypr/terminal-opacity.py` — one entry per terminal, easy to extend.
+
 **Spotify library tools** (System tab): *Scan for AI music* checks your likes against the
 community [soul-over-ai](https://github.com/xoundbyte/soul-over-ai) list by artist ID. *Back up
 to CSV* exports your library. Both read-only, through your open Spotify via Spicetify — no

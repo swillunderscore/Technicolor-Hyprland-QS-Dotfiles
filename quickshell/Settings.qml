@@ -33,14 +33,14 @@ FloatingWindow {
     function close() { win.addOpen = false; if (shell) shell.settingsOpen = false }
     onVisibleChanged: {
         if (visible) {
-            confFile.reload(); curWpFile.reload(); tuneFile.reload(); kittyConfFile.reload(); win.loadGlass(); win.loadHotkeys()
+            confFile.reload(); curWpFile.reload(); tuneFile.reload(); win.loadTermOpacity(); win.loadGlass(); win.loadHotkeys()
             if (shell && shell.settingsTab === 1) win.refreshWallpapers()
         } else { win.addOpen = false; win.endCapture() }
     }
     Connections {
         target: shell
         function onSettingsTabChanged() {
-            if (shell.settingsTab === 4) { confFile.reload(); kittyConfFile.reload() }
+            if (shell.settingsTab === 4) { confFile.reload(); win.loadTermOpacity() }
             else if (shell.settingsTab === 3) win.loadGlass()
             else if (shell.settingsTab === 2) tuneFile.reload()
             else if (shell.settingsTab === 1) win.refreshWallpapers()
@@ -198,34 +198,61 @@ FloatingWindow {
         termSetProc.running = true
     }
 
-    // ── Terminal transparency (System tab) ── kitty's own background_opacity, so
-    // only the background goes see-through and the text stays fully solid (a
-    // compositor windowrule would fade the text with it). Source of truth is
-    // ~/.config/kitty/kitty.conf; kitty-opacity.sh writes it and SIGUSR1s every
-    // running kitty, which re-reads the config on the spot. No reload needed here.
-    // Deliberately NOT watchChanges: the slider writes the file as you drag, and a
-    // watcher firing a stale value mid-drag would yank the knob backwards.
-    property real termOpacity: 1.0
-    FileView {
-        id: kittyConfFile
-        path: win.homeDir + "/.config/kitty/kitty.conf"
-        onLoaded: { var m = this.text().match(/^[ \t]*background_opacity[ \t]+([0-9.]+)/m); win.termOpacity = m ? parseFloat(m[1]) : 1.0 }
-        onLoadFailed: win.termOpacity = 1.0
+    // ── Terminal transparency (System tab) ── the terminal's OWN background alpha,
+    // so only the background goes see-through and the text stays fully solid (a
+    // compositor windowrule would fade the text with it). Every terminal spells
+    // that differently, so terminal-opacity.py owns the per-terminal knowledge and
+    // this side stays dumb: ask it for the current value, hand it a new one.
+    // It reports `support` — live (open windows change as you drag) / restart
+    // (applies to new windows) / none — and the UI below says exactly that rather
+    // than promising something the terminal can't do.
+    // Hung off the property rather than off the picker's click, so the slider
+    // re-targets however the default terminal changed — the picker above, a hand
+    // edit of terminal.conf, or terminal.conf simply finishing its first load.
+    onCurrentTerminalChanged: win.loadTermOpacity()
+    property real   termOpacity: 1.0
+    property string termOpacityName: ""       // pretty name, e.g. "Alacritty"
+    property string termOpacitySupport: ""    // live | restart | none
+    property string termOpacityNote: ""       // why it's limited, when it is
+    Process {
+        id: termOpacityGetProc
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var lines = this.text.split("\n")
+                for (var i = 0; i < lines.length; i++) {
+                    var eq = lines[i].indexOf("=")
+                    if (eq < 0) continue
+                    var k = lines[i].substring(0, eq), v = lines[i].substring(eq + 1)
+                    if (k === "opacity") { var f = parseFloat(v); if (!isNaN(f)) win.termOpacity = f }
+                    else if (k === "name") win.termOpacityName = v
+                    else if (k === "support") win.termOpacitySupport = v
+                    else if (k === "note") win.termOpacityNote = v
+                }
+            }
+        }
+    }
+    // Always pass --term explicitly: setTerminal() writes terminal.conf and
+    // re-queries in the same breath, and letting the script re-read that file
+    // would race its own write.
+    function termOpacityCmd(verb) {
+        return ["bash", "-c", "\"$HOME/.config/hypr/terminal-opacity.py\" " + verb
+                + " --term '" + win.currentTerminal + "'"]
+    }
+    function loadTermOpacity() {
+        termOpacityGetProc.command = win.termOpacityCmd("get")
+        termOpacityGetProc.running = true
     }
     // Same split as the Glass tab: live() is throttled skip-if-busy while dragging,
     // commit() always lands so the released value is the one that persists.
     Process { id: termOpacityLiveProc }
     Process { id: termOpacityCommitProc }
-    function termOpacityCmd(v) {
-        return ["bash", "-c", "\"$HOME/.config/hypr/kitty-opacity.sh\" '" + v.toFixed(2) + "'"]
-    }
     function liveTermOpacity(v) {
         if (termOpacityLiveProc.running) return
-        termOpacityLiveProc.command = win.termOpacityCmd(v)
+        termOpacityLiveProc.command = win.termOpacityCmd("set " + v.toFixed(2))
         termOpacityLiveProc.running = true
     }
     function commitTermOpacity(v) {
-        termOpacityCommitProc.command = win.termOpacityCmd(v)
+        termOpacityCommitProc.command = win.termOpacityCmd("set " + v.toFixed(2))
         termOpacityCommitProc.running = true
     }
 
@@ -2068,17 +2095,22 @@ FloatingWindow {
                         }
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
-                        // ── Terminal transparency (kitty's background_opacity) ──
+                        // ── Terminal transparency ── follows whichever terminal is set
+                        // above; terminal-opacity.py knows where each one keeps it.
                         // Slider runs 1.0 → 0.0 on purpose: dragging RIGHT makes it more
                         // see-through, which is what the label reads out.
                         Item {
                             width: parent.width; height: 22
-                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Terminal transparency"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
-                            Text { anchors.right: rstTO.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                text: "Terminal transparency" + (win.termOpacityName ? " — " + win.termOpacityName : "")
+                                color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { visible: win.termOpacitySupport !== "none"
+                                anchors.right: rstTO.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
                                 text: Math.round((1 - win.termOpacity) * 100) + "% see-through"
                                 color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
                             Rectangle {
-                                id: rstTO; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                id: rstTO; visible: win.termOpacitySupport !== "none"
+                                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                                 width: 54; height: 22; radius: 7; color: rstTOm.containsMouse ? win.rowHover : win.rowBg
                                 Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 11; font.family: win.ff }
                                 MouseArea { id: rstTOm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -2086,12 +2118,24 @@ FloatingWindow {
                             }
                         }
                         TcSlider {
+                            visible: win.termOpacitySupport !== "none"
                             width: parent.width; from: 1.0; to: 0.0; value: win.termOpacity
                             onMoved: (v) => { win.termOpacity = v; win.liveTermOpacity(v) }
                             onCommitted: (v) => win.commitTermOpacity(win.termOpacity)
                         }
                         Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
-                            text: "Only the terminal's BACKGROUND goes see-through — the text stays fully solid and readable, which is why this rides kitty's own opacity rather than a compositor rule. Every open window changes as you drag, and it persists in ~/.config/kitty/kitty.conf. kitty only; other terminals ignore it." }
+                            text: {
+                                if (win.termOpacitySupport === "none")
+                                    return (win.termOpacityName || "This terminal") + " has no transparency setting Technicolor can drive"
+                                           + (win.termOpacityNote ? " — " + win.termOpacityNote + "." : ".")
+                                           + " Pick a different default terminal above and the slider comes back."
+                                var base = "Only the terminal's BACKGROUND goes see-through — the text stays fully solid and readable, which is why this drives "
+                                         + (win.termOpacityName || "the terminal") + "'s own opacity rather than a compositor rule. "
+                                var how = win.termOpacitySupport === "restart"
+                                        ? "Saved to its config now; windows you open from here on come up see-through."
+                                        : "Every open window changes as you drag, and it's saved to its config."
+                                return base + how + (win.termOpacityNote ? " (" + win.termOpacityNote + ")" : "")
+                            } }
 
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 

@@ -156,17 +156,21 @@ EOF
 chmod +x "$HOME/.config/hypr/effects-governor.sh" 2>/dev/null
 ok "effects governor installed (Settings → Effects to tune or turn off)"
 
-# Terminal transparency (Settings → System) drives kitty's own background_opacity,
-# which kitty will only let you change at runtime if dynamic_background_opacity was
-# on when the window opened. Seed it here so the slider works on windows you already
-# have open, instead of silently doing nothing until you reopen every terminal.
-chmod +x "$HOME/.config/hypr/kitty-opacity.sh" 2>/dev/null
-mkdir -p "$HOME/.config/kitty"
-touch "$HOME/.config/kitty/kitty.conf"
-if ! grep -qE '^[[:space:]]*dynamic_background_opacity[[:space:]]' "$HOME/.config/kitty/kitty.conf"; then
-  printf 'dynamic_background_opacity yes\n%s' "$(cat "$HOME/.config/kitty/kitty.conf")" \
-    > "$HOME/.config/kitty/kitty.conf.tmp" && mv "$HOME/.config/kitty/kitty.conf.tmp" "$HOME/.config/kitty/kitty.conf"
-  ok "kitty set up for live transparency (Settings → System → Terminal transparency)"
+# Terminal transparency (Settings → System) drives your terminal's own background
+# alpha — see hypr/terminal-opacity.py for the per-terminal adapters.
+chmod +x "$HOME/.config/hypr/terminal-opacity.py" 2>/dev/null
+# kitty is the one that needs a hand up front: it only allows opacity changes at
+# runtime if dynamic_background_opacity was on when the window OPENED. Seeding it
+# here means the slider works on terminals you already have open, instead of
+# silently doing nothing until you reopen every one of them.
+if command -v kitty >/dev/null 2>&1; then
+  mkdir -p "$HOME/.config/kitty"
+  touch "$HOME/.config/kitty/kitty.conf"
+  if ! grep -qE '^[[:space:]]*dynamic_background_opacity[[:space:]]' "$HOME/.config/kitty/kitty.conf"; then
+    printf 'dynamic_background_opacity yes\n%s' "$(cat "$HOME/.config/kitty/kitty.conf")" \
+      > "$HOME/.config/kitty/kitty.conf.tmp" && mv "$HOME/.config/kitty/kitty.conf.tmp" "$HOME/.config/kitty/kitty.conf"
+    ok "kitty set up for live transparency (Settings → System → Terminal transparency)"
+  fi
 fi
 
 # LibreOffice only maps XDG_CURRENT_DESKTOP=KDE -> kf6 and GNOME -> gtk3. Under
