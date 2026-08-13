@@ -192,7 +192,7 @@ the gear on the launcher popup or `qs ipc call settings open`.
 | **Water** | Speed, scale, depth, viscosity, activity, warping. |
 | **Effects** | The GPU governor and its thresholds. |
 | **Hotkeys** | Every keybind, searchable and editable. Read live from `hyprctl binds`, so it matches your real config. Click the keys to rebind; conflicts are caught and named. |
-| **System** | UI font, default file manager, default terminal, a `local.conf` editor, the update checker, and Spotify library tools. |
+| **System** | UI font, default file manager, default terminal, terminal transparency, a `local.conf` editor, the update checker, and Spotify library tools. |
 
 **Spotify library tools** (System tab): *Scan for AI music* checks your likes against the
 community [soul-over-ai](https://github.com/xoundbyte/soul-over-ai) list by artist ID. *Back up

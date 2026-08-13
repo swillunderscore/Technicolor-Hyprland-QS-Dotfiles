@@ -33,14 +33,14 @@ FloatingWindow {
     function close() { win.addOpen = false; if (shell) shell.settingsOpen = false }
     onVisibleChanged: {
         if (visible) {
-            confFile.reload(); curWpFile.reload(); tuneFile.reload(); win.loadGlass(); win.loadHotkeys()
+            confFile.reload(); curWpFile.reload(); tuneFile.reload(); kittyConfFile.reload(); win.loadGlass(); win.loadHotkeys()
             if (shell && shell.settingsTab === 1) win.refreshWallpapers()
         } else { win.addOpen = false; win.endCapture() }
     }
     Connections {
         target: shell
         function onSettingsTabChanged() {
-            if (shell.settingsTab === 4) confFile.reload()
+            if (shell.settingsTab === 4) { confFile.reload(); kittyConfFile.reload() }
             else if (shell.settingsTab === 3) win.loadGlass()
             else if (shell.settingsTab === 2) tuneFile.reload()
             else if (shell.settingsTab === 1) win.refreshWallpapers()
@@ -196,6 +196,37 @@ FloatingWindow {
             "hyprctl reload >/dev/null 2>&1; " +
             "kwriteconfig6 --file kdeglobals --group General --key TerminalApplication '" + cmd + "' 2>/dev/null"]
         termSetProc.running = true
+    }
+
+    // ── Terminal transparency (System tab) ── kitty's own background_opacity, so
+    // only the background goes see-through and the text stays fully solid (a
+    // compositor windowrule would fade the text with it). Source of truth is
+    // ~/.config/kitty/kitty.conf; kitty-opacity.sh writes it and SIGUSR1s every
+    // running kitty, which re-reads the config on the spot. No reload needed here.
+    // Deliberately NOT watchChanges: the slider writes the file as you drag, and a
+    // watcher firing a stale value mid-drag would yank the knob backwards.
+    property real termOpacity: 1.0
+    FileView {
+        id: kittyConfFile
+        path: win.homeDir + "/.config/kitty/kitty.conf"
+        onLoaded: { var m = this.text().match(/^[ \t]*background_opacity[ \t]+([0-9.]+)/m); win.termOpacity = m ? parseFloat(m[1]) : 1.0 }
+        onLoadFailed: win.termOpacity = 1.0
+    }
+    // Same split as the Glass tab: live() is throttled skip-if-busy while dragging,
+    // commit() always lands so the released value is the one that persists.
+    Process { id: termOpacityLiveProc }
+    Process { id: termOpacityCommitProc }
+    function termOpacityCmd(v) {
+        return ["bash", "-c", "\"$HOME/.config/hypr/kitty-opacity.sh\" '" + v.toFixed(2) + "'"]
+    }
+    function liveTermOpacity(v) {
+        if (termOpacityLiveProc.running) return
+        termOpacityLiveProc.command = win.termOpacityCmd(v)
+        termOpacityLiveProc.running = true
+    }
+    function commitTermOpacity(v) {
+        termOpacityCommitProc.command = win.termOpacityCmd(v)
+        termOpacityCommitProc.running = true
     }
 
     // ── Wallpaper auto-cycle timer (Wallpaper tab) ── source of truth =
@@ -2035,6 +2066,33 @@ FloatingWindow {
                                 }
                             }
                         }
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+
+                        // ── Terminal transparency (kitty's background_opacity) ──
+                        // Slider runs 1.0 → 0.0 on purpose: dragging RIGHT makes it more
+                        // see-through, which is what the label reads out.
+                        Item {
+                            width: parent.width; height: 22
+                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Terminal transparency"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
+                            Text { anchors.right: rstTO.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                                text: Math.round((1 - win.termOpacity) * 100) + "% see-through"
+                                color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
+                            Rectangle {
+                                id: rstTO; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                width: 54; height: 22; radius: 7; color: rstTOm.containsMouse ? win.rowHover : win.rowBg
+                                Text { anchors.centerIn: parent; text: "Reset"; color: win.fg; font.pixelSize: 11; font.family: win.ff }
+                                MouseArea { id: rstTOm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: { win.termOpacity = 1.0; win.commitTermOpacity(1.0) } }
+                            }
+                        }
+                        TcSlider {
+                            width: parent.width; from: 1.0; to: 0.0; value: win.termOpacity
+                            onMoved: (v) => { win.termOpacity = v; win.liveTermOpacity(v) }
+                            onCommitted: (v) => win.commitTermOpacity(win.termOpacity)
+                        }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.55; font.pixelSize: 11; font.family: win.ff
+                            text: "Only the terminal's BACKGROUND goes see-through — the text stays fully solid and readable, which is why this rides kitty's own opacity rather than a compositor rule. Every open window changes as you drag, and it persists in ~/.config/kitty/kitty.conf. kitty only; other terminals ignore it." }
+
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
                         // ── local.conf (advanced) ──
