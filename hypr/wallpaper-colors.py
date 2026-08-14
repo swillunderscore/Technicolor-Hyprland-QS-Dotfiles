@@ -345,6 +345,15 @@ def main():
         except Exception:
             pass
 
+        # Terminal transparency, if it's set to follow the wallpaper: a brighter
+        # wallpaper needs a more opaque terminal for white text to stay readable.
+        # No-op unless Settings → System → Adapt to wallpaper is on.
+        try:
+            subprocess.run(['python3', os.path.expanduser('~/.config/hypr/terminal-opacity.py'),
+                            'refresh'], capture_output=True, timeout=15)
+        except Exception:
+            pass
+
         print(f"Focused:        {to_hex(focused)}")
         print(f"Occupied:       {to_hex(occupied)}")
         print(f"Visible:        {to_hex(visible)}")

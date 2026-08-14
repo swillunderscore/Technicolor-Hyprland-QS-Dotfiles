@@ -423,6 +423,91 @@ ADAPTERS = {
 }
 
 
+# ───────────────────── wallpaper-aware transparency ─────────────────────────
+# The slider alone can't win on every wallpaper: the setting that looks best over
+# a dark photo leaves white terminal text unreadable over a bright one. So the
+# slider is a FLOOR — the most see-through you ever want, which is what you get
+# on a dark wallpaper — and a bright wallpaper lifts opacity off it. Auto only
+# ever makes the terminal MORE opaque, never more transparent than you asked.
+STATE = CONF_DIR / "hypr/terminal-opacity.conf"
+
+# Luminance either side of which nothing more happens: at or below DARK you get
+# the floor exactly, at or above BRIGHT you get the full lift.
+LUMA_DARK   = 0.20
+LUMA_BRIGHT = 0.65
+# How far toward fully opaque the brightest wallpaper is allowed to push. Not
+# 1.0 — a terminal that goes solid isn't the look anyone set transparency for.
+MAX_LIFT    = 0.75
+
+
+def read_state() -> dict:
+    out = {}
+    try:
+        for line in STATE.read_text().splitlines():
+            k, _, v = line.partition("=")
+            if _:
+                out[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return out
+
+
+def wallpaper_luma() -> float | None:
+    """Mean perceived brightness of the current wallpaper, 0..1.
+
+    The MEAN rather than a peak on purpose: what sits behind the text is the
+    blurred backdrop, and blurring is averaging. A small bright highlight that a
+    peak statistic would panic about is smeared into its surroundings before you
+    ever read text over it."""
+    try:
+        path = Path("/tmp/wallpaper-current-path").read_text().strip()
+    except OSError:
+        return None
+    if not path or not Path(path).exists():
+        return None
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            im.thumbnail((160, 160))          # plenty for a mean, and fast
+            px = list(im.getdata())
+    except Exception:
+        return None
+    if not px:
+        return None
+    # Same coefficients as wallpaper-colors.py's perceived_brightness, so the
+    # two agree about what "bright" means.
+    return sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in px) / (255.0 * len(px))
+
+
+def effective_opacity(floor: float, auto: bool, luma: float | None) -> float:
+    if not auto or luma is None:
+        return floor
+    lift = (luma - LUMA_DARK) / (LUMA_BRIGHT - LUMA_DARK)
+    lift = max(0.0, min(1.0, lift))
+    return min(1.0, floor + (1.0 - floor) * lift * MAX_LIFT)
+
+
+def apply_and_publish(term_entry, floor: float, auto: bool) -> float:
+    """Work out the opacity this wallpaper needs, push it to the terminal, and
+    publish it for the bar. Returns what was applied."""
+    luma = wallpaper_luma()
+    applied = effective_opacity(floor, auto, luma)
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if term_entry is not None:
+            term_entry[2](applied)
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE.with_suffix(".conf.tc-tmp")
+    # OPACITY is the applied value — that's what the bar's pills match. FLOOR and
+    # AUTO are the intent, so a wallpaper change can recompute without the UI.
+    tmp.write_text(f"OPACITY={applied:.2f}\nFLOOR={floor:.2f}\nAUTO={1 if auto else 0}\n"
+                   f"LUMA={-1 if luma is None else luma:.3f}\n")
+    tmp.replace(STATE)
+    return applied
+
+
 def default_term() -> str:
     conf = CONF_DIR / "hypr/terminal.conf"
     m = re.search(r"^\s*\$terminal\s*=\s*(\S+)", conf.read_text(), re.M) if conf.exists() else None
@@ -463,20 +548,35 @@ def main() -> int:
         if entry is None:
             return 0
         v = max(0.0, min(1.0, float(args[1])))
-        # The slider writes live while you drag AND once more on release, so two
-        # of these can overlap. Serialise them or they interleave mid-rewrite.
-        LOCK.parent.mkdir(parents=True, exist_ok=True)
-        with open(LOCK, "w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            entry[2](v)
-        # Publish the resolved value in one terminal-agnostic place. The
-        # quickshell bar watches this so its pills can match whatever terminal
-        # you're on without knowing where that terminal keeps its alpha.
-        pub = CONF_DIR / "hypr/terminal-opacity.conf"
-        pub.parent.mkdir(parents=True, exist_ok=True)
-        tmp = pub.with_suffix(".conf.tc-tmp")
-        tmp.write_text(f"OPACITY={v:.2f}\n")
-        tmp.replace(pub)
+        st = read_state()
+        apply_and_publish(entry, v, st.get("AUTO", "0") == "1")
+        return 0
+
+    if args[0] == "auto":
+        # Turn wallpaper-adaptive opacity on or off, keeping the floor.
+        on = len(args) > 1 and args[1] in ("1", "on", "true", "yes")
+        st = read_state()
+        floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
+        apply_and_publish(entry, floor, on)
+        return 0
+
+    if args[0] == "refresh":
+        # Called after a wallpaper change: same floor, new wallpaper, new answer.
+        st = read_state()
+        if st.get("AUTO", "0") != "1":
+            return 0
+        floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
+        apply_and_publish(entry, floor, True)
+        return 0
+
+    if args[0] == "state":
+        st = read_state()
+        luma = wallpaper_luma()
+        floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
+        auto = st.get("AUTO", "0") == "1"
+        print(f"floor={floor:.2f}\nauto={1 if auto else 0}\n"
+              f"luma={-1 if luma is None else luma:.3f}\n"
+              f"applied={effective_opacity(floor, auto, luma):.2f}")
         return 0
 
     print(f"unknown command: {args[0]}", file=sys.stderr)

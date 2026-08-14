@@ -211,6 +211,9 @@ FloatingWindow {
     // edit of terminal.conf, or terminal.conf simply finishing its first load.
     onCurrentTerminalChanged: win.loadTermOpacity()
     property real   termOpacity: 1.0
+    property bool   termAuto: false           // lift opacity on bright wallpapers
+    property real   termLuma: -1              // current wallpaper brightness, -1 = unknown
+    property real   termApplied: 1.0          // what the terminal is actually set to
     property string termOpacityName: ""       // pretty name, e.g. "Alacritty"
     property string termOpacitySupport: ""    // live | restart | none
     property string termOpacityNote: ""       // why it's limited, when it is
@@ -241,7 +244,42 @@ FloatingWindow {
     function loadTermOpacity() {
         termOpacityGetProc.command = win.termOpacityCmd("get")
         termOpacityGetProc.running = true
+        termStateGetProc.running = true
     }
+    // The floor + auto flag live in terminal-opacity.conf, separately from what
+    // the terminal is currently set to (which `get` reports). On a bright
+    // wallpaper with auto on those two deliberately differ.
+    Process {
+        id: termStateGetProc
+        command: ["bash", "-c", "\"$HOME/.config/hypr/terminal-opacity.py\" state"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var lines = this.text.split("\n")
+                for (var i = 0; i < lines.length; i++) {
+                    var eq = lines[i].indexOf("=")
+                    if (eq < 0) continue
+                    var k = lines[i].substring(0, eq), v = parseFloat(lines[i].substring(eq + 1))
+                    if (isNaN(v)) continue
+                    if (k === "floor") win.termOpacity = v
+                    else if (k === "auto") win.termAuto = (v === 1)
+                    else if (k === "luma") win.termLuma = v
+                    else if (k === "applied") win.termApplied = v
+                }
+            }
+        }
+    }
+    Process { id: termAutoProc }
+    function setTermAuto(on) {
+        win.termAuto = on
+        termAutoProc.command = ["bash", "-c",
+            "\"$HOME/.config/hypr/terminal-opacity.py\" auto " + (on ? "1" : "0")
+            + " --term '" + win.currentTerminal + "'"]
+        termAutoProc.running = true
+        termStateRefresh.restart()
+    }
+    // The script re-reads the wallpaper and recomputes, so pick the answer back
+    // up rather than guessing it here.
+    Timer { id: termStateRefresh; interval: 350; onTriggered: termStateGetProc.running = true }
     // Same split as the Glass tab: live() is throttled skip-if-busy while dragging,
     // commit() always lands so the released value is the one that persists.
     Process { id: termOpacityLiveProc }
@@ -254,6 +292,7 @@ FloatingWindow {
     function commitTermOpacity(v) {
         termOpacityCommitProc.command = win.termOpacityCmd("set " + v.toFixed(2))
         termOpacityCommitProc.running = true
+        termStateRefresh.restart()
     }
 
     // ── Wallpaper auto-cycle timer (Wallpaper tab) ── source of truth =
@@ -2120,7 +2159,12 @@ FloatingWindow {
                                 color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
                             Text { visible: win.termOpacitySupport !== "none"
                                 anchors.right: rstTO.left; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
-                                text: Math.round((1 - win.termOpacity) * 100) + "% see-through"
+                                // With auto on the two differ, so show both: what you asked
+                                // for, and what this wallpaper actually got.
+                                text: win.termAuto && Math.abs(win.termApplied - win.termOpacity) > 0.005
+                                      ? Math.round((1 - win.termOpacity) * 100) + "% → now "
+                                        + Math.round((1 - win.termApplied) * 100) + "%"
+                                      : Math.round((1 - win.termOpacity) * 100) + "% see-through"
                                 color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff }
                             Rectangle {
                                 id: rstTO; visible: win.termOpacitySupport !== "none"
@@ -2148,8 +2192,36 @@ FloatingWindow {
                                 var how = win.termOpacitySupport === "restart"
                                         ? "Saved to its config now; windows you open from here on come up see-through."
                                         : "Every open window changes as you drag, and it's saved to its config."
-                                return base + how + (win.termOpacityNote ? " (" + win.termOpacityNote + ")" : "")
+                                var auto = win.termAuto
+                                         ? " With Adapt on, this is the MOST see-through it goes — dark wallpapers get exactly this, brighter ones pull back from it."
+                                         : ""
+                                return base + how + auto + (win.termOpacityNote ? " (" + win.termOpacityNote + ")" : "")
                             } }
+
+                        // ── Adapt to wallpaper ──
+                        Rectangle {
+                            visible: win.termOpacitySupport !== "none"
+                            width: parent.width; height: 56; radius: 9; color: win.rowBg
+                            Column {
+                                anchors.left: parent.left; anchors.leftMargin: 12
+                                anchors.right: autoTg.left; anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                Text { text: "Adapt to wallpaper brightness"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                    text: {
+                                        var l = win.termLuma >= 0
+                                              ? " This wallpaper reads " + Math.round(win.termLuma * 100) + "% bright."
+                                              : ""
+                                        return "Keep white text readable: a bright wallpaper pulls the terminal back toward opaque, a dark one leaves it exactly where you set it. Never goes more see-through than the slider." + l
+                                    } }
+                            }
+                            TcToggle {
+                                id: autoTg
+                                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                on: win.termAuto
+                                onToggled: (v) => win.setTermAuto(v)
+                            }
+                        }
 
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
