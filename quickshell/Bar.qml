@@ -104,6 +104,16 @@ PanelWindow {
     // transparency moves, whichever terminal you're on. 0.65 is the old fixed
     // value, used until that file exists.
     property real pillOpacity: 0.65
+    // Adapt-to-wallpaper measures what the terminal actually looks like on
+    // screen, so it has to re-check as the screen changes — a white page opening
+    // behind a see-through terminal is exactly the case the wallpaper can't see.
+    // Cheap: one small screengrab, and only while the toggle is on.
+    property bool termAutoOn: false
+    Timer {
+        interval: 5000; repeat: true; running: bar.termAutoOn
+        onTriggered: Quickshell.execDetached(["sh", "-c",
+            "cd \"$HOME\" && \"$HOME/.config/hypr/terminal-opacity.py\" autotune"])
+    }
     // The published value jumps in one step; the pills shouldn't. Matches the
     // ~1.2s ramp terminal-opacity.py runs on the terminal itself, so the bar and
     // the terminal move together through a wallpaper change.
@@ -125,8 +135,9 @@ PanelWindow {
             var m = this.text().match(/OPACITY\s*=\s*([0-9.]+)/)
             var f = m ? parseFloat(m[1]) : NaN
             if (!isNaN(f)) bar.pillOpacity = Math.max(0, Math.min(1, f))
+            bar.termAutoOn = /AUTO\s*=\s*1/.test(this.text())
         }
-        onLoadFailed: bar.pillOpacity = 0.65
+        onLoadFailed: { bar.pillOpacity = 0.65; bar.termAutoOn = false }
     }
 
     FileView {

@@ -23,6 +23,7 @@ terminal's own background alpha instead, so glyphs stay fully solid.
 """
 
 import fcntl
+import json
 import os
 import re
 import subprocess
@@ -444,7 +445,7 @@ LUMA_DARK   = 0.20
 LUMA_BRIGHT = 0.85
 # How far toward fully opaque the brightest wallpaper is allowed to push. Not
 # 1.0 — a terminal that goes solid isn't the look anyone set transparency for.
-MAX_LIFT    = 0.55
+MAX_LIFT    = 0.70
 
 
 def read_state() -> dict:
@@ -457,6 +458,66 @@ def read_state() -> dict:
     except OSError:
         pass
     return out
+
+
+# What the background BEHIND the text should read at. White text needs roughly
+# this or darker to stay comfortably legible (about a 4.5:1 contrast ratio).
+TARGET_LUMA = 0.18
+DEADBAND    = 0.02   # ignore smaller errors, or it never stops nudging
+GAIN        = 1.2    # correction per unit of error; >1 converges in a step or two
+
+
+def terminal_backdrop() -> float | None:
+    """How bright the terminal actually LOOKS on screen right now, 0..1.
+
+    Measures the composited result rather than the wallpaper file, because the
+    wallpaper is only sometimes what's behind the window. A white browser page
+    under a see-through terminal makes the text unreadable no matter how dark
+    the wallpaper is, and reading the wallpaper can't see that. This can.
+
+    Uses the 25th percentile, not the mean: the terminal's own text is bright and
+    would drag a mean upward, but the lower quartile of a text screen is the gaps
+    BETWEEN the glyphs, which is exactly the background we're trying to judge.
+
+    Takes the brightest window when several are open — opacity is one setting for
+    all of them, so the worst case is the one that has to stay readable."""
+    try:
+        cl = json.loads(subprocess.run(["hyprctl", "clients", "-j"],
+                                       capture_output=True, text=True, timeout=5).stdout)
+        ws = json.loads(subprocess.run(["hyprctl", "activeworkspace", "-j"],
+                                       capture_output=True, text=True, timeout=5).stdout)["id"]
+    except Exception:
+        return None
+
+    term = Path(default_term()).name
+    worst = None
+    for c in cl:
+        if c.get("workspace", {}).get("id") != ws or c.get("hidden") or not c.get("mapped"):
+            continue
+        if c.get("class", "").lower() != term.lower():
+            continue
+        x, y = c["at"]; w, h = c["size"]
+        if w < 80 or h < 80:
+            continue
+        # Inset so the glass rim and border don't skew it.
+        geo = f"{x + 20},{y + 20} {w - 40}x{h - 40}"
+        try:
+            from PIL import Image
+            tmp = "/tmp/.tc-termshot.png"
+            subprocess.run(["grim", "-g", geo, "-t", "png", tmp],
+                           capture_output=True, timeout=5, check=True)
+            with Image.open(tmp) as im:
+                im = im.convert("L")
+                im.thumbnail((200, 200))
+                px = sorted(im.getdata())
+        except Exception:
+            continue
+        if not px:
+            continue
+        p25 = px[len(px) // 4] / 255.0
+        if worst is None or p25 > worst:
+            worst = p25
+    return worst
 
 
 def wallpaper_luma() -> float | None:
@@ -517,39 +578,48 @@ RAMP_MS    = 1200
 RAMP_STEPS = 16
 
 
+def ramp_to(term_entry, start: float, target: float, support: str, ms: int) -> None:
+    """Walk the terminal from start to target on a smoothstep curve. Single step
+    for terminals that can't change live, or when there's nothing to cover."""
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if support != "live" or abs(target - start) <= 0.01 or ms <= 0:
+            term_entry[2](target)
+            return
+        for i in range(1, RAMP_STEPS + 1):
+            t = i / RAMP_STEPS
+            t = t * t * (3.0 - 2.0 * t)              # no abrupt start/stop
+            term_entry[2](start + (target - start) * t)
+            if i < RAMP_STEPS:
+                time.sleep(ms / 1000.0 / RAMP_STEPS)
+
+
+def publish(applied: float, floor: float, auto: bool, luma: float | None) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE.with_suffix(".conf.tc-tmp")
+    # Carry the hand-tuned curve keys through. This file is rewritten on every
+    # apply, so anything not copied here is silently lost the next time you move
+    # the slider — which would make them look like they don't work.
+    prev = read_state()
+    extra = "".join(f"{k}={prev[k]}\n"
+                    for k in ("LUMA_DARK", "LUMA_BRIGHT", "MAX_LIFT", "TARGET") if k in prev)
+    tmp.write_text(f"OPACITY={applied:.2f}\nFLOOR={floor:.2f}\nAUTO={1 if auto else 0}\n"
+                   f"LUMA={-1 if luma is None else luma:.3f}\n" + extra)
+    tmp.replace(STATE)
+
+
 def apply_and_publish(term_entry, floor: float, auto: bool, ramp: bool = False) -> float:
     """Work out the opacity this wallpaper needs, push it to the terminal, and
     publish it for the bar. Returns what was applied."""
     luma = wallpaper_luma()
     applied = effective_opacity(floor, auto, luma)
-    LOCK.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOCK, "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if term_entry is not None:
-            start, support, _ = term_entry[1]()
-            # Only worth ramping on a terminal that changes live and when there's
-            # a visible distance to cover. Everything else lands in one step.
-            if ramp and support == "live" and abs(applied - start) > 0.01:
-                for i in range(1, RAMP_STEPS + 1):
-                    t = i / RAMP_STEPS
-                    t = t * t * (3.0 - 2.0 * t)          # smoothstep, no abrupt start/stop
-                    term_entry[2](start + (applied - start) * t)
-                    if i < RAMP_STEPS:
-                        time.sleep(RAMP_MS / 1000.0 / RAMP_STEPS)
-            else:
-                term_entry[2](applied)
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE.with_suffix(".conf.tc-tmp")
+    if term_entry is not None:
+        start, support, _ = term_entry[1]()
+        ramp_to(term_entry, start, applied, support, RAMP_MS if ramp else 0)
     # OPACITY is the applied value — that's what the bar's pills match. FLOOR and
     # AUTO are the intent, so a wallpaper change can recompute without the UI.
-    # Carry the hand-tuned curve keys through. This file is rewritten on every
-    # apply, so anything not copied here is silently lost the next time you move
-    # the slider — which would make them look like they don't work.
-    prev = read_state()
-    extra = "".join(f"{k}={prev[k]}\n" for k in ("LUMA_DARK", "LUMA_BRIGHT", "MAX_LIFT") if k in prev)
-    tmp.write_text(f"OPACITY={applied:.2f}\nFLOOR={floor:.2f}\nAUTO={1 if auto else 0}\n"
-                   f"LUMA={-1 if luma is None else luma:.3f}\n" + extra)
-    tmp.replace(STATE)
+    publish(applied, floor, auto, luma)
     return applied
 
 
@@ -603,6 +673,38 @@ def main() -> int:
         st = read_state()
         floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
         apply_and_publish(entry, floor, on)
+        return 0
+
+    if args[0] == "autotune":
+        # One correction step from what the terminal actually looks like. Called
+        # on a timer by the bar and after a wallpaper change.
+        st = read_state()
+        if st.get("AUTO", "0") != "1" or entry is None:
+            return 0
+        floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
+        try:
+            target = float(st.get("TARGET", TARGET_LUMA))
+            max_lift = float(st.get("MAX_LIFT", MAX_LIFT))
+        except ValueError:
+            target, max_lift = TARGET_LUMA, MAX_LIFT
+
+        measured = terminal_backdrop()
+        if measured is None:
+            # Nothing on screen to measure — fall back to judging the wallpaper.
+            apply_and_publish(entry, floor, True, ramp=True)
+            return 0
+
+        current, support, _ = entry[1]()
+        err = measured - target
+        if abs(err) < DEADBAND:
+            return 0
+        ceiling = min(1.0, floor + (1.0 - floor) * max_lift)
+        want = max(floor, min(ceiling, current + GAIN * err))
+        if abs(want - current) < 0.01:
+            return 0
+        ramp_to(entry, current, want, support,
+                RAMP_MS if len(args) > 1 and args[1] == "--slow" else 400)
+        publish(want, floor, True, measured)
         return 0
 
     if args[0] == "refresh":
