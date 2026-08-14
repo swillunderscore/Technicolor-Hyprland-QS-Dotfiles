@@ -1252,7 +1252,10 @@ FloatingWindow {
         Rectangle { anchors.centerIn: parent; width: 34; height: 4; radius: 2
             color: Qt.rgba(win.fg.r, win.fg.g, win.fg.b, (ddM.containsMouse || ddM.pressed) ? 0.55 : 0.30) }
         MouseArea {
-            id: ddM; anchors.fill: parent; anchors.margins: -3; hoverEnabled: true; cursorShape: Qt.SizeVerCursor
+            // Same grab-stealing problem as TcSlider, and worse here: this drag IS
+            // vertical, which is exactly what a Flickable grabs for itself.
+            id: ddM; anchors.fill: parent; anchors.margins: -3; hoverEnabled: true
+            preventStealing: true; cursorShape: Qt.SizeVerCursor
             property real lastY: 0
             onPressed: (m) => ddM.lastY = dd.mapToGlobal(m.x, m.y).y
             onPositionChanged: (m) => {
@@ -1288,6 +1291,13 @@ FloatingWindow {
         }
         MouseArea {
             anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+            // Every one of these lives inside a scrolling list, and a Flickable
+            // STEALS the mouse grab the moment a drag looks vertical. That is why
+            // dragging a slider used to stop dead as soon as the pointer wandered
+            // off the track's own height. preventStealing keeps the grab here for
+            // the whole press, so you can drag anywhere on screen and the value
+            // keeps tracking — which is how every other slider behaves.
+            preventStealing: true
             // Emit the computed value; the OWNER updates the bound property (which
             // feeds sl.value back) — never assign sl.value here, or the binding breaks.
             function emit(mx) { sl.moved(sl.from + Math.max(0, Math.min(1, mx / sl.width)) * (sl.to - sl.from)) }
