@@ -2168,6 +2168,80 @@ PanelWindow {
     property int lastHoveredWsId: -1
     property bool previewOpen: false
     property var wsLayoutData: []
+
+    // Preview tile placement, worked out once for the whole set rather than
+    // re-derived inside every delegate. Two jobs: scale real window geometry
+    // into the preview card, then pull apart windows that sit on top of each
+    // other — a stack of six terminals at the same position used to render as
+    // one tile you couldn't pick any of them out of.
+    function previewTiles(list, areaW, areaH) {
+        if (!list || list.length === 0) return []
+        var pad = 4, i, j
+        var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9
+        for (i = 0; i < list.length; i++) {
+            minX = Math.min(minX, list[i].x);           minY = Math.min(minY, list[i].y)
+            maxX = Math.max(maxX, list[i].x + list[i].w); maxY = Math.max(maxY, list[i].y + list[i].h)
+        }
+        var totW = maxX - minX, totH = maxY - minY
+        var sf = Math.min(totW > 0 ? (areaW - pad * 2) / totW : 1,
+                          totH > 0 ? (areaH - pad * 2) / totH : 1)
+        var offX = (areaW - totW * sf) / 2, offY = (areaH - totH * sf) / 2
+        var out = []
+        for (i = 0; i < list.length; i++)
+            out.push({ x: offX + (list[i].x - minX) * sf, y: offY + (list[i].y - minY) * sf,
+                       w: Math.max(list[i].w * sf, 1),     h: Math.max(list[i].h * sf, 1) })
+
+        // Fan out anything buried. Nudging tiles one at a time doesn't work here:
+        // a pile of maximised windows fills the whole card, so every nudge runs
+        // off the edge and lands back on the pile. Instead find each cluster of
+        // mutually-buried windows and re-lay the WHOLE cluster as a shrunk
+        // diagonal fan inside the footprint it already occupied. Windows that
+        // genuinely sit side by side are never touched.
+        function buried(a, b) {
+            var ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+            var oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+            if (ox <= 0 || oy <= 0) return false
+            return (ox * oy) / Math.max(1, Math.min(a.w * a.h, b.w * b.h)) > 0.55
+        }
+        var group = []
+        for (i = 0; i < out.length; i++) group.push(i)
+        function root(k) { while (group[k] !== k) k = group[k]; return k }
+        for (i = 0; i < out.length; i++)
+            for (j = i + 1; j < out.length; j++)
+                if (buried(out[i], out[j])) group[root(j)] = root(i)
+
+        var members = ({})
+        for (i = 0; i < out.length; i++) {
+            var r = root(i)
+            if (!members[r]) members[r] = []
+            members[r].push(i)
+        }
+        for (var key in members) {
+            var g = members[key]
+            if (g.length < 2) continue
+            var bx = 1e9, by = 1e9, bx2 = -1e9, by2 = -1e9
+            for (i = 0; i < g.length; i++) {
+                bx = Math.min(bx, out[g[i]].x);                by = Math.min(by, out[g[i]].y)
+                bx2 = Math.max(bx2, out[g[i]].x + out[g[i]].w); by2 = Math.max(by2, out[g[i]].y + out[g[i]].h)
+            }
+            var bw = bx2 - bx, bh = by2 - by
+            // Step far enough apart to tell them apart, but never so far that the
+            // last one in a deep pile shrinks to nothing.
+            var st = Math.min(Math.min(bw, bh) * 0.22, Math.min(bw, bh) * 0.6 / (g.length - 1))
+            for (i = 0; i < g.length; i++)
+                out[g[i]] = { x: bx + i * st, y: by + i * st,
+                              w: Math.max(bw - st * (g.length - 1), 8),
+                              h: Math.max(bh - st * (g.length - 1), 8) }
+        }
+        return out
+    }
+
+    // Start dragging a real window from its preview tile. See window-grab.sh.
+    function grabWindowToCursor(addr) {
+        if (!addr) return
+        Quickshell.execDetached(["sh", "-c",
+            "cd \"$HOME\" && \"$HOME/.config/hypr/window-grab.sh\" " + addr])
+    }
     property color hoveredDotColor: colorEmpty
     property real hoveredDotGlobalX: 0
     property string hoveredDotState: ""
@@ -2590,27 +2664,14 @@ PanelWindow {
                             readonly property var winData: bar.wsLayoutData[index]
                             readonly property real areaW: wsArea.width
                             readonly property real areaH: wsArea.height
-                            readonly property var bounds: {
-                                var minX = 99999, minY = 99999, maxX = 0, maxY = 0
-                                for (var i = 0; i < bar.wsLayoutData.length; i++) {
-                                    var w = bar.wsLayoutData[i]
-                                    if (w.x < minX) minX = w.x
-                                        if (w.y < minY) minY = w.y
-                                            if (w.x + w.w > maxX) maxX = w.x + w.w
-                                                if (w.y + w.h > maxY) maxY = w.y + w.h
-                                }
-                                return { minX: minX, minY: minY, totalW: maxX - minX, totalH: maxY - minY }
-                            }
-                            readonly property real pad: 4
-                            readonly property real scaleX: bounds.totalW > 0 ? (areaW - pad * 2) / bounds.totalW : 1
-                            readonly property real scaleY: bounds.totalH > 0 ? (areaH - pad * 2) / bounds.totalH : 1
-                            readonly property real sf: Math.min(scaleX, scaleY)
-                            readonly property real offX: (areaW - bounds.totalW * sf) / 2
-                            readonly property real offY: (areaH - bounds.totalH * sf) / 2
-                            x: offX + (winData.x - bounds.minX) * sf
-                            y: offY + (winData.y - bounds.minY) * sf
-                            width: Math.max(winData.w * sf, 1)
-                            height: Math.max(winData.h * sf, 1)
+                            readonly property var tiles: bar.previewTiles(bar.wsLayoutData, areaW, areaH)
+                            readonly property var tile: (tiles && tiles.length > index) ? tiles[index] : null
+                            x: tile ? tile.x : 0
+                            y: tile ? tile.y : 0
+                            width: tile ? tile.w : 1
+                            height: tile ? tile.h : 1
+                            Behavior on x { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+                            Behavior on y { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
 
                             Rectangle {
                                 anchors.fill: parent; anchors.margins: 1
@@ -2644,8 +2705,27 @@ PanelWindow {
                                     elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter
                                 }
                                 MouseArea {
-                                    id: winMouse; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                    id: winMouse; anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: winMouse.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                                    // Hold the grab: without this the popup swallows the drag the
+                                    // moment the pointer leaves the tile, which is immediately.
+                                    preventStealing: true
+                                    property point pressPt
+                                    property bool dragging: false
+                                    onPressed: (m) => { winMouse.pressPt = Qt.point(m.x, m.y); winMouse.dragging = false }
+                                    onPositionChanged: (m) => {
+                                        if (!winMouse.pressed || winMouse.dragging) return
+                                        // A few px of slop so a slightly sloppy click still counts
+                                        // as a click. Past that, you meant to drag.
+                                        if (Math.abs(m.x - winMouse.pressPt.x) < 6 && Math.abs(m.y - winMouse.pressPt.y) < 6) return
+                                        winMouse.dragging = true
+                                        var a = (winItem.winData && winItem.winData.address) ? winItem.winData.address : ""
+                                        bar.lastHoveredWsId = -1
+                                        wsPreviewPopup.closePreview()
+                                        bar.grabWindowToCursor(a)
+                                    }
                                     onClicked: {
+                                        if (winMouse.dragging) return   // that was a drag, not a click
                                         var addr = (winItem.winData && winItem.winData.address) ? winItem.winData.address : ""
                                         var wsTarget = wsPreviewPopup.hovWsId
                                         var monTarget = wsPreviewPopup.hovMonId
