@@ -16,5 +16,8 @@
 # the areas you wanted it (the opaque icons keep theirs, which is what makes it
 # look like a bug rather than a setting). 0.002 leaves headroom to 99.8%.
 plugin:hyprwater:layers:enabled = 1
-plugin:hyprwater:layers:namespaces = quickshell:bar
-plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:bar=0.002
+# NOTE: this REPLACES the list in hyprland.conf, it does not add to it. Keep
+# quickshell:pie and wofi here or the alt-tab pie and the wofi menu lose their
+# glass — which is exactly what happened when this line first said only the bar.
+plugin:hyprwater:layers:namespaces = quickshell:pie, wofi, quickshell:bar
+plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:pie=0.03, wofi=0.03, quickshell:bar=0.002
