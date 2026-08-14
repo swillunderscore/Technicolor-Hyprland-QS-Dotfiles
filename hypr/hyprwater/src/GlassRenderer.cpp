@@ -1386,7 +1386,8 @@ void stepWaveSim() {
 
 }
 
-void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,
+void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer>& tempFramebuffer,
+                    float radius, int iterations,
                     GLuint callerFramebufferID, int viewportWidth, int viewportHeight) {
     auto& shaderManager = g_pGlobalState->shaderManager;
     if (!sampleFramebuffer || radius <= 0.0f || iterations <= 0 || !shaderManager.isInitialized())
@@ -1395,7 +1396,11 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
     int width  = static_cast<int>(sampleFramebuffer->m_size.x);
     int height = static_cast<int>(sampleFramebuffer->m_size.y);
 
-    auto& blurTempFramebuffer = g_pGlobalState->blurTempFramebuffer;
+    // The caller's own scratch, sized to the caller's own sample. When this was
+    // one global buffer it was resized by whichever window blurred last, so a
+    // desktop of differently-sized windows reallocated it every window every
+    // frame and the blur only ever came out right for one of them.
+    auto& blurTempFramebuffer = tempFramebuffer;
     if (!blurTempFramebuffer)
         blurTempFramebuffer = g_pHyprRenderer->createFB("hyprwater-blur-temp");
 

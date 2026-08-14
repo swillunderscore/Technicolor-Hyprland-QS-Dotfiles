@@ -25,6 +25,8 @@ class CGlassLayerSurface {
     PHLLSREF     m_layerSurface;
     SP<Render::IFramebuffer> m_sampleFramebuffer;
     SP<Render::IFramebuffer> m_surfaceTempFramebuffer;
+    // Per-layer blur ping-pong scratch — see blurBackground(); must not be shared.
+    SP<Render::IFramebuffer> m_blurTempFramebuffer;
     Vector2D     m_samplePaddingRatio;
     bool         m_hasCachedSample = false;
 

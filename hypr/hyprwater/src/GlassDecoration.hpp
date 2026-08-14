@@ -30,6 +30,9 @@ class CGlassDecoration : public IHyprWindowDecoration {
   private:
     PHLWINDOWREF m_window;
     SP<Render::IFramebuffer> m_sampleFramebuffer;
+    // Per-window blur ping-pong scratch. Sized to THIS window's sample, so it
+    // must not be shared with other decorations — see blurBackground().
+    SP<Render::IFramebuffer> m_blurTempFramebuffer;
     Vector2D     m_samplePaddingRatio;
 
     // Track last rendered position/size to detect actual changes and seed damage

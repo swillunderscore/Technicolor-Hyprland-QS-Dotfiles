@@ -40,7 +40,12 @@ struct SMaskInfo {
 void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IFramebuffer> sourceFramebuffer,
                        CBox box, Vector2D& outPaddingRatio, int downscale = 1);
 
-void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,
+// tempFramebuffer is the caller's OWN ping-pong scratch. It must not be shared
+// between callers: it is sized to the sample being blurred, so a shared one
+// thrashes between differently-sized windows and only the one whose size it
+// currently holds gets a correct blur.
+void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer>& tempFramebuffer,
+                    float radius, int iterations,
                     GLuint callerFramebufferID, int viewportWidth, int viewportHeight);
 
 // When mask is non-null (layers only), the shader composites the surface content
