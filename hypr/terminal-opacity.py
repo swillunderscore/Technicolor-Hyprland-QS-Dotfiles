@@ -161,7 +161,28 @@ def kitty_set(v):
     conf = CONF_DIR / "kitty/kitty.conf"
     put_key(conf, "dynamic_background_opacity", "yes", sep=" ")
     put_key(conf, "background_opacity", f"{v:.2f}", sep=" ")
+    # Per-window opacity needs remote control, and kitty only reads these at
+    # startup — so seed them here and windows opened from now on can be tuned
+    # individually. socket-only keeps it off the general remote-control surface:
+    # only something that can open this socket can drive kitty.
+    put_key(conf, "allow_remote_control", "socket-only", sep=" ")
+    put_key(conf, "listen_on", "unix:/tmp/kitty-{kitty_pid}", sep=" ")
     signal("kitty")            # kitty re-reads its whole config on SIGUSR1
+
+
+def kitty_set_window(pid: int, v: float) -> bool:
+    """Set ONE kitty OS window's opacity, leaving the others alone. False if that
+    window predates remote control being switched on (no socket to talk to)."""
+    sock = f"/tmp/kitty-{pid}"
+    if not Path(sock).exists():
+        return False
+    try:
+        r = subprocess.run(["kitten", "@", "--to", f"unix:{sock}",
+                            "set-background-opacity", f"{v:.2f}"],
+                           capture_output=True, timeout=5)
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def alacritty_conf():
@@ -467,8 +488,35 @@ DEADBAND    = 0.02   # ignore smaller errors, or it never stops nudging
 GAIN        = 1.2    # correction per unit of error; >1 converges in a step or two
 
 
-def terminal_backdrop() -> float | None:
-    """How bright the terminal actually LOOKS on screen right now, 0..1.
+def terminal_windows() -> list:
+    """Visible windows of the default terminal on the active workspace."""
+    try:
+        cl = json.loads(subprocess.run(["hyprctl", "clients", "-j"],
+                                       capture_output=True, text=True, timeout=5).stdout)
+        ws = json.loads(subprocess.run(["hyprctl", "activeworkspace", "-j"],
+                                       capture_output=True, text=True, timeout=5).stdout)["id"]
+        act = json.loads(subprocess.run(["hyprctl", "activewindow", "-j"],
+                                        capture_output=True, text=True, timeout=5).stdout).get("address")
+    except Exception:
+        return []
+    term = Path(default_term()).name
+    out = []
+    for c in cl:
+        if c.get("workspace", {}).get("id") != ws or c.get("hidden") or not c.get("mapped"):
+            continue
+        if c.get("class", "").lower() != term.lower():
+            continue
+        w, h = c["size"]
+        if w < 80 or h < 80:
+            continue
+        out.append({"pid": c.get("pid"), "address": c.get("address"),
+                    "at": c["at"], "size": c["size"],
+                    "focused": c.get("address") == act})
+    return out
+
+
+def window_backdrop(win) -> float | None:
+    """How bright this window actually LOOKS on screen right now, 0..1.
 
     Measures the composited result rather than the wallpaper file, because the
     wallpaper is only sometimes what's behind the window. A white browser page
@@ -477,46 +525,31 @@ def terminal_backdrop() -> float | None:
 
     Uses the 25th percentile, not the mean: the terminal's own text is bright and
     would drag a mean upward, but the lower quartile of a text screen is the gaps
-    BETWEEN the glyphs, which is exactly the background we're trying to judge.
-
-    Takes the brightest window when several are open — opacity is one setting for
-    all of them, so the worst case is the one that has to stay readable."""
+    BETWEEN the glyphs, which is exactly the background we're trying to judge."""
+    x, y = win["at"]; w, h = win["size"]
+    geo = f"{x + 20},{y + 20} {w - 40}x{h - 40}"   # inset past the glass rim
     try:
-        cl = json.loads(subprocess.run(["hyprctl", "clients", "-j"],
-                                       capture_output=True, text=True, timeout=5).stdout)
-        ws = json.loads(subprocess.run(["hyprctl", "activeworkspace", "-j"],
-                                       capture_output=True, text=True, timeout=5).stdout)["id"]
+        from PIL import Image
+        tmp = f"/tmp/.tc-termshot-{win.get('pid', 0)}.png"
+        subprocess.run(["grim", "-g", geo, "-t", "png", tmp],
+                       capture_output=True, timeout=5, check=True)
+        with Image.open(tmp) as im:
+            im = im.convert("L")
+            im.thumbnail((200, 200))
+            px = sorted(im.getdata())
     except Exception:
         return None
+    return (px[len(px) // 4] / 255.0) if px else None
 
-    term = Path(default_term()).name
+
+def terminal_backdrop() -> float | None:
+    """Brightest of the visible terminals — used by the single-value path, where
+    one setting has to keep the worst case readable."""
     worst = None
-    for c in cl:
-        if c.get("workspace", {}).get("id") != ws or c.get("hidden") or not c.get("mapped"):
-            continue
-        if c.get("class", "").lower() != term.lower():
-            continue
-        x, y = c["at"]; w, h = c["size"]
-        if w < 80 or h < 80:
-            continue
-        # Inset so the glass rim and border don't skew it.
-        geo = f"{x + 20},{y + 20} {w - 40}x{h - 40}"
-        try:
-            from PIL import Image
-            tmp = "/tmp/.tc-termshot.png"
-            subprocess.run(["grim", "-g", geo, "-t", "png", tmp],
-                           capture_output=True, timeout=5, check=True)
-            with Image.open(tmp) as im:
-                im = im.convert("L")
-                im.thumbnail((200, 200))
-                px = sorted(im.getdata())
-        except Exception:
-            continue
-        if not px:
-            continue
-        p25 = px[len(px) // 4] / 255.0
-        if worst is None or p25 > worst:
-            worst = p25
+    for w in terminal_windows():
+        v = window_backdrop(w)
+        if v is not None and (worst is None or v > worst):
+            worst = v
     return worst
 
 
@@ -623,6 +656,36 @@ def apply_and_publish(term_entry, floor: float, auto: bool, ramp: bool = False) 
     return applied
 
 
+def main_autotune(entry, st):
+    """One correction step using a single opacity for every window. Used when
+    the terminal has no per-window control — the brightest window wins, since one
+    setting has to keep the worst case readable."""
+    floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
+    try:
+        target = float(st.get("TARGET", TARGET_LUMA))
+        max_lift = float(st.get("MAX_LIFT", MAX_LIFT))
+    except ValueError:
+        target, max_lift = TARGET_LUMA, MAX_LIFT
+
+    measured = terminal_backdrop()
+    if measured is None:
+        # Nothing on screen to measure — fall back to judging the wallpaper.
+        apply_and_publish(entry, floor, True, ramp=True)
+        return 0
+
+    current, support, _ = entry[1]()
+    err = measured - target
+    if abs(err) < DEADBAND:
+        return 0
+    ceiling = min(1.0, floor + (1.0 - floor) * max_lift)
+    want = max(floor, min(ceiling, current + GAIN * err))
+    if abs(want - current) < 0.01:
+        return 0
+    ramp_to(entry, current, want, support, 400)
+    publish(want, floor, True, measured)
+    return 0
+
+
 def default_term() -> str:
     conf = CONF_DIR / "hypr/terminal.conf"
     m = re.search(r"^\s*\$terminal\s*=\s*(\S+)", conf.read_text(), re.M) if conf.exists() else None
@@ -675,11 +738,11 @@ def main() -> int:
         apply_and_publish(entry, floor, on)
         return 0
 
-    if args[0] == "autotune":
-        # One correction step from what the terminal actually looks like. Called
-        # on a timer by the bar and after a wallpaper change.
+    if args[0] == "autotune-per-window":
+        # Each window judged against what's behind IT. A white page under one
+        # terminal shouldn't darken the one sitting over your wallpaper.
         st = read_state()
-        if st.get("AUTO", "0") != "1" or entry is None:
+        if st.get("AUTO", "0") != "1" or key != "kitty":
             return 0
         floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
         try:
@@ -687,25 +750,50 @@ def main() -> int:
             max_lift = float(st.get("MAX_LIFT", MAX_LIFT))
         except ValueError:
             target, max_lift = TARGET_LUMA, MAX_LIFT
-
-        measured = terminal_backdrop()
-        if measured is None:
-            # Nothing on screen to measure — fall back to judging the wallpaper.
-            apply_and_publish(entry, floor, True, ramp=True)
-            return 0
-
-        current, support, _ = entry[1]()
-        err = measured - target
-        if abs(err) < DEADBAND:
-            return 0
         ceiling = min(1.0, floor + (1.0 - floor) * max_lift)
-        want = max(floor, min(ceiling, current + GAIN * err))
-        if abs(want - current) < 0.01:
+
+        # Last value we set per window, so the controller knows where it is.
+        seen = {}
+        try:
+            seen = json.loads(Path("/tmp/.tc-term-opacity-map.json").read_text())
+        except Exception:
+            pass
+
+        wins = terminal_windows()
+        if not wins:
             return 0
-        ramp_to(entry, current, want, support,
-                RAMP_MS if len(args) > 1 and args[1] == "--slow" else 400)
-        publish(want, floor, True, measured)
+        any_socket = False
+        for w in wins:
+            measured = window_backdrop(w)
+            if measured is None:
+                continue
+            cur = float(seen.get(str(w["pid"]), st.get("OPACITY", floor)))
+            err = measured - target
+            if abs(err) < DEADBAND:
+                continue
+            want = max(floor, min(ceiling, cur + GAIN * err))
+            if abs(want - cur) < 0.01:
+                continue
+            if kitty_set_window(w["pid"], want):
+                seen[str(w["pid"])] = round(want, 3)
+                any_socket = True
+                if w.get("focused"):
+                    publish(want, floor, True, measured)
+        try:
+            Path("/tmp/.tc-term-opacity-map.json").write_text(json.dumps(seen))
+        except Exception:
+            pass
+        # No window had a socket: they all predate remote control being enabled,
+        # so fall back to the one-value-for-everything path.
+        if not any_socket:
+            return main_autotune(entry, st)
         return 0
+
+    if args[0] == "autotune":
+        st = read_state()
+        if st.get("AUTO", "0") != "1" or entry is None:
+            return 0
+        return main_autotune(entry, st)
 
     if args[0] == "refresh":
         # Called after a wallpaper change: same floor, new wallpaper, new answer.

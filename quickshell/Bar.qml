@@ -112,7 +112,7 @@ PanelWindow {
     Timer {
         interval: 5000; repeat: true; running: bar.termAutoOn
         onTriggered: Quickshell.execDetached(["sh", "-c",
-            "cd \"$HOME\" && \"$HOME/.config/hypr/terminal-opacity.py\" autotune"])
+            "cd \"$HOME\" && \"$HOME/.config/hypr/terminal-opacity.py\" autotune-per-window"])
     }
     // The published value jumps in one step; the pills shouldn't. Matches the
     // ~1.2s ramp terminal-opacity.py runs on the terminal itself, so the bar and
