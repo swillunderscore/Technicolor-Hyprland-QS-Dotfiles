@@ -434,11 +434,17 @@ STATE = CONF_DIR / "hypr/terminal-opacity.conf"
 
 # Luminance either side of which nothing more happens: at or below DARK you get
 # the floor exactly, at or above BRIGHT you get the full lift.
+#
+# All three are overridable from terminal-opacity.conf (LUMA_DARK / LUMA_BRIGHT
+# / MAX_LIFT) so the response can be tuned without editing code.
 LUMA_DARK   = 0.20
-LUMA_BRIGHT = 0.65
+# Where the lift maxes out. Everything above this gets identical treatment, so
+# set too low it flattens: a merely-bright wallpaper and a blinding one both
+# land on the ceiling and the terminal looks arbitrarily dark on the first one.
+LUMA_BRIGHT = 0.85
 # How far toward fully opaque the brightest wallpaper is allowed to push. Not
 # 1.0 — a terminal that goes solid isn't the look anyone set transparency for.
-MAX_LIFT    = 0.75
+MAX_LIFT    = 0.55
 
 
 def read_state() -> dict:
@@ -484,9 +490,23 @@ def wallpaper_luma() -> float | None:
 def effective_opacity(floor: float, auto: bool, luma: float | None) -> float:
     if not auto or luma is None:
         return floor
-    lift = (luma - LUMA_DARK) / (LUMA_BRIGHT - LUMA_DARK)
+    st = read_state()
+    def tune(key, default):
+        try:
+            return float(st.get(key, default))
+        except (TypeError, ValueError):
+            return default
+    dark, bright, lift_max = tune("LUMA_DARK", LUMA_DARK), tune("LUMA_BRIGHT", LUMA_BRIGHT), tune("MAX_LIFT", MAX_LIFT)
+    if bright <= dark:
+        return floor
+    lift = (luma - dark) / (bright - dark)
     lift = max(0.0, min(1.0, lift))
-    return min(1.0, floor + (1.0 - floor) * lift * MAX_LIFT)
+    # Ease it. A straight ramp puts most of the movement in the middle of the
+    # range, which is where most wallpapers actually sit — so near-identical
+    # wallpapers came out visibly different. Smoothstep flattens the middle and
+    # pushes the change out to the extremes, where it belongs.
+    lift = lift * lift * (3.0 - 2.0 * lift)
+    return min(1.0, floor + (1.0 - floor) * lift * lift_max)
 
 
 # A wallpaper switch takes ~1.5s end to end, so ramp the terminal across most of
@@ -522,8 +542,13 @@ def apply_and_publish(term_entry, floor: float, auto: bool, ramp: bool = False) 
     tmp = STATE.with_suffix(".conf.tc-tmp")
     # OPACITY is the applied value — that's what the bar's pills match. FLOOR and
     # AUTO are the intent, so a wallpaper change can recompute without the UI.
+    # Carry the hand-tuned curve keys through. This file is rewritten on every
+    # apply, so anything not copied here is silently lost the next time you move
+    # the slider — which would make them look like they don't work.
+    prev = read_state()
+    extra = "".join(f"{k}={prev[k]}\n" for k in ("LUMA_DARK", "LUMA_BRIGHT", "MAX_LIFT") if k in prev)
     tmp.write_text(f"OPACITY={applied:.2f}\nFLOOR={floor:.2f}\nAUTO={1 if auto else 0}\n"
-                   f"LUMA={-1 if luma is None else luma:.3f}\n")
+                   f"LUMA={-1 if luma is None else luma:.3f}\n" + extra)
     tmp.replace(STATE)
     return applied
 
