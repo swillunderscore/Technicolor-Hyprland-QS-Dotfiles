@@ -2168,6 +2168,11 @@ PanelWindow {
     property int lastHoveredWsId: -1
     property bool previewOpen: false
     property var wsLayoutData: []
+    // True from the moment a preview tile starts dragging until the mouse is
+    // released. While it's set, nothing is allowed to rebuild or close the
+    // preview: doing so destroys the very MouseArea we need the release from,
+    // and the window would keep following the cursor until the safety timeout.
+    property bool draggingWindow: false
 
     // Preview tile placement, worked out once for the whole set rather than
     // re-derived inside every delegate. Two jobs: scale real window geometry
@@ -2236,11 +2241,17 @@ PanelWindow {
         return out
     }
 
-    // Start dragging a real window from its preview tile. See window-grab.sh.
+    // Start dragging a real window from its preview tile. The flag file is the
+    // stop signal: window-grab.sh follows the cursor for as long as it exists,
+    // and endWindowGrab() removes it when you let go. Created BEFORE launching,
+    // or the script can start, see no flag and exit before the drag begins.
     function grabWindowToCursor(addr) {
         if (!addr) return
         Quickshell.execDetached(["sh", "-c",
-            "cd \"$HOME\" && \"$HOME/.config/hypr/window-grab.sh\" " + addr])
+            "cd \"$HOME\" && touch /tmp/tc-window-drag && \"$HOME/.config/hypr/window-grab.sh\" " + addr])
+    }
+    function endWindowGrab() {
+        Quickshell.execDetached(["sh", "-c", "rm -f /tmp/tc-window-drag"])
     }
     property color hoveredDotColor: colorEmpty
     property real hoveredDotGlobalX: 0
@@ -2260,7 +2271,7 @@ PanelWindow {
     // Refresh layout while preview is open
     Timer {
         interval: 1500; repeat: true
-        running: bar.previewOpen && bar.hoveredWsId > 0
+        running: bar.previewOpen && bar.hoveredWsId > 0 && !bar.draggingWindow
         onTriggered: layoutProc.running = true
     }
 
@@ -2713,15 +2724,30 @@ PanelWindow {
                                     property point pressPt
                                     property bool dragging: false
                                     onPressed: (m) => { winMouse.pressPt = Qt.point(m.x, m.y); winMouse.dragging = false }
+                                    // Let go and the window stops following. Also fires if the
+                                    // pointer is released outside the tile, which it always is.
+                                    // Let go: stop the follow, then tear the preview down.
+                                    function finishDrag() {
+                                        if (!winMouse.dragging) return
+                                        bar.endWindowGrab()
+                                        winMouse.dragging = false
+                                        bar.draggingWindow = false
+                                        bar.lastHoveredWsId = -1
+                                        wsPreviewPopup.closePreview()
+                                    }
+                                    onReleased: winMouse.finishDrag()
+                                    onCanceled: winMouse.finishDrag()
                                     onPositionChanged: (m) => {
                                         if (!winMouse.pressed || winMouse.dragging) return
                                         // A few px of slop so a slightly sloppy click still counts
                                         // as a click. Past that, you meant to drag.
                                         if (Math.abs(m.x - winMouse.pressPt.x) < 6 && Math.abs(m.y - winMouse.pressPt.y) < 6) return
                                         winMouse.dragging = true
+                                        bar.draggingWindow = true
                                         var a = (winItem.winData && winItem.winData.address) ? winItem.winData.address : ""
-                                        bar.lastHoveredWsId = -1
-                                        wsPreviewPopup.closePreview()
+                                        // The preview deliberately stays open until release —
+                                        // closing it here destroys this MouseArea, and then no
+                                        // onReleased ever arrives to stop the window following.
                                         bar.grabWindowToCursor(a)
                                     }
                                     onClicked: {
@@ -2749,7 +2775,7 @@ PanelWindow {
     // ── Close preview with grace period ──
     property int closeCountdown: 0
     Timer {
-        interval: 50; repeat: true; running: bar.previewOpen
+        interval: 50; repeat: true; running: bar.previewOpen && !bar.draggingWindow
         onTriggered: {
             var mouseIsRelevant = false
 
