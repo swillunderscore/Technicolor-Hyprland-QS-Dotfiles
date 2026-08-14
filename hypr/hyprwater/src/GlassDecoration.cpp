@@ -95,23 +95,6 @@ void CGlassDecoration::draw(PHLMONITOR monitor, float const& alpha) {
     if (!g_pGlobalState || !resolveEnabled())
         return;
 
-    // Put the glass box into this frame's damage, every frame, unconditionally.
-    //
-    // The composite at the end of applyGlassEffect is clipped to the frame's
-    // damage region. The glass reads a backdrop that spans the whole window, so
-    // any frame whose damage is SMALLER than the window repaints only a strip of
-    // glass and leaves the rest as it was. A window that damages nothing keeps
-    // its last good blurred frame and looks fine; a window that damages a little
-    // every frame — a blinking cursor, a prompt, i.e. THE FOCUSED ONE — never
-    // gets a frame where the blur covers it, and reads as permanently unblurred.
-    // That is the "blur works on every window except the one I'm using, and
-    // hops when I click" bug.
-    //
-    // damageEntire() is scoped to this window's own surface box (+ padding), not
-    // the screen. Measured cost on a 2560x1440 + 1920x1080 desktop with three
-    // glassed windows: GPU busy 38% -> 41% median.
-    damageEntire();
-
     CGlassPassElement::SGlassPassData data{m_self, alpha};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CGlassPassElement>(data));
 

@@ -1424,10 +1424,35 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFram
     g_pHyprOpenGL->setViewport(0, 0, width, height);
     glActiveTexture(GL_TEXTURE0);
 
-    DBG("%.4f BLURFB sample=%d(%.0fx%.0f) temp=%d(%.0fx%.0f) rad=%.2f it=%d\n", dbgNow(),
-        fbId(sampleFramebuffer), sampleFramebuffer->m_size.x, sampleFramebuffer->m_size.y,
-        fbId(blurTempFramebuffer), blurTempFramebuffer->m_size.x, blurTempFramebuffer->m_size.y,
-        radius, iterations);
+    if (dbgLog()) {
+        // Is a leftover scissor from the render pass (or a previous window's
+        // composite) clipping these fullscreen quads inside the small sample FB?
+        GLint sb[4] = {0, 0, 0, 0};
+        glGetIntegerv(GL_SCISSOR_BOX, sb);
+        GLint vp[4] = {0, 0, 0, 0};
+        glGetIntegerv(GL_VIEWPORT, vp);
+        DBG("%.4f BLURFB sample=%d(%.0fx%.0f) temp=%d rad=%.2f it=%d scissor=%d[%d,%d %dx%d] vp=[%d,%d %dx%d]\n",
+            dbgNow(), fbId(sampleFramebuffer), sampleFramebuffer->m_size.x, sampleFramebuffer->m_size.y,
+            fbId(blurTempFramebuffer), radius, iterations,
+            glIsEnabled(GL_SCISSOR_TEST) ? 1 : 0, sb[0], sb[1], sb[2], sb[3],
+            vp[0], vp[1], vp[2], vp[3]);
+    }
+
+    // The render pass leaves a damage-rect scissor enabled, in MONITOR
+    // coordinates. The quads below are fullscreen draws into a sample FB that is
+    // a few hundred pixels across, so a rect like [1246,1073 925x16] doesn't
+    // clip the blur — it lands entirely outside the target and throws the whole
+    // pass away. The sample then composites exactly as sampled: unblurred.
+    //
+    // Only the first glassed window on a monitor happens to run with the scissor
+    // off, so precisely one window per monitor got a blur. Focusing a floating
+    // window raises it, which renders it later, which is why it was never the
+    // focused one and why the blur hopped as you clicked between windows.
+    //
+    // sampleBackground(), the wave sim and applyGlassEffect all already guard
+    // this. blurBackground was the one offscreen pass that never did.
+    const GLboolean blurScissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
 
     // Ping-pong at full resolution: sampleFramebuffer ↔ blurTempFramebuffer
     for (int iteration = 0; iteration < iterations; iteration++) {
@@ -1443,6 +1468,9 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFram
         glUniform2f(blurUniforms.direction, 0.0f, 1.0f / height);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
+
+    if (blurScissor)
+        glEnable(GL_SCISSOR_TEST);
 
     // Restore caller's GL state without querying (avoids pipeline stalls)
     glBindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
