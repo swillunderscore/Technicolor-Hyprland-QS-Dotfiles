@@ -469,6 +469,14 @@ def main() -> int:
         with open(LOCK, "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             entry[2](v)
+        # Publish the resolved value in one terminal-agnostic place. The
+        # quickshell bar watches this so its pills can match whatever terminal
+        # you're on without knowing where that terminal keeps its alpha.
+        pub = CONF_DIR / "hypr/terminal-opacity.conf"
+        pub.parent.mkdir(parents=True, exist_ok=True)
+        tmp = pub.with_suffix(".conf.tc-tmp")
+        tmp.write_text(f"OPACITY={v:.2f}\n")
+        tmp.replace(pub)
         return 0
 
     print(f"unknown command: {args[0]}", file=sys.stderr)

@@ -98,6 +98,25 @@ PanelWindow {
     }
 
     // Live pin config — edited by Settings > Apps, watched so edits apply with no restart.
+    // ── Section pill transparency ── follows the terminal, so the bar's pills and
+    // your terminal are see-through by the same amount. terminal-opacity.py
+    // publishes the resolved value here whenever Settings → System → Terminal
+    // transparency moves, whichever terminal you're on. 0.65 is the old fixed
+    // value, used until that file exists.
+    property real pillOpacity: 0.65
+    FileView {
+        id: pillOpacityFile
+        path: bar.homeDir + "/.config/hypr/terminal-opacity.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var m = this.text().match(/OPACITY\s*=\s*([0-9.]+)/)
+            var f = m ? parseFloat(m[1]) : NaN
+            if (!isNaN(f)) bar.pillOpacity = Math.max(0, Math.min(1, f))
+        }
+        onLoadFailed: bar.pillOpacity = 0.65
+    }
+
     FileView {
         id: pinsFile
         path: bar.homeDir + "/.config/quickshell/launcher-apps.json"
@@ -2051,7 +2070,7 @@ PanelWindow {
         Rectangle {
             Layout.preferredWidth: appLauncherRow.implicitWidth + (isPrimary ? 16 : 10)
             Layout.preferredHeight: parent.height - bar.vm * 2
-            color: Qt.rgba(0, 0, 0, 0.65); radius: bar.rad
+            color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: bar.rad
             readonly property int appCount: bar.appPins.length
 
             RowLayout {
@@ -2170,7 +2189,7 @@ PanelWindow {
         anchors.verticalCenter: parent.verticalCenter
         height: parent.height - (isPrimary ? 6 : 4)
         width: dotsRow.implicitWidth + (isPrimary ? 16 : 10)
-        color: Qt.rgba(0, 0, 0, 0.65); radius: isPrimary ? 14 : 12
+        color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: isPrimary ? 14 : 12
 
         RowLayout {
             id: dotsRow; anchors.centerIn: parent; spacing: 0
@@ -3648,8 +3667,8 @@ PanelWindow {
                                     Rectangle { width: parent.width * brDelegate.liveBrightness / 100; height: parent.height; radius: 3; color: launcherShape.fg; Behavior on width { NumberAnimation { duration: 80 } } }
                                     MouseArea {
                                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                        onPressed: function(mouse) { brDelegate.liveBrightness = Math.max(5, Math.min(100, Math.round(mouse.x / parent.width * 100))) }
-                                        onPositionChanged: function(mouse) { if (pressed) { brDelegate.liveBrightness = Math.max(5, Math.min(100, Math.round(mouse.x / parent.width * 100))) } }
+                                        onPressed: function(mouse) { brDelegate.liveBrightness = Math.max(0, Math.min(100, Math.round(mouse.x / parent.width * 100))) }
+                                        onPositionChanged: function(mouse) { if (pressed) { brDelegate.liveBrightness = Math.max(0, Math.min(100, Math.round(mouse.x / parent.width * 100))) } }
                                         // Also persist per-connector: some monitors forget
                                         // their DDC brightness when the DP link dies with a
                                         // crashed compositor, so the bar re-asserts the saved
@@ -5239,7 +5258,7 @@ PanelWindow {
             Layout.preferredWidth: minimizedRow.implicitWidth + (isPrimary ? 16 : 10)
             Layout.preferredHeight: parent.height - bar.vm * 2
             Layout.alignment: Qt.AlignVCenter
-            color: Qt.rgba(0, 0, 0, 0.65); radius: bar.rad
+            color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: bar.rad
             visible: bar.minimizedWindows.length > 0
 
             RowLayout {
@@ -5326,7 +5345,7 @@ PanelWindow {
             Layout.preferredWidth: trayRow.implicitWidth + (isPrimary ? 16 : 10)
             Layout.preferredHeight: parent.height - bar.vm * 2
             Layout.alignment: Qt.AlignVCenter
-            color: Qt.rgba(0, 0, 0, 0.65); radius: bar.rad
+            color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: bar.rad
             visible: SystemTray.items.values.length > 0
             RowLayout {
                 id: trayRow; anchors.centerIn: parent; spacing: isPrimary ? 6 : 4

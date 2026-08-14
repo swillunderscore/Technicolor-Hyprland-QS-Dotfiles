@@ -4,3 +4,11 @@
 # plugin:hyprwater:refraction_strength = 1.5
 # plugin:hyprwater:blur_strength = 0.4
 # plugin:hyprwater:chromatic_aberration = 0.0
+
+# Glass the quickshell bar's section pills (minimized apps, tray, workspace
+# dots, launcher) the same way windows are glassed. The mask threshold keeps the
+# effect on the pills themselves rather than the transparent gaps between them.
+# Only visible where the wallpaper behind the bar actually has detail to blur.
+plugin:hyprwater:layers:enabled = 1
+plugin:hyprwater:layers:namespaces = quickshell:bar
+plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:bar=0.1

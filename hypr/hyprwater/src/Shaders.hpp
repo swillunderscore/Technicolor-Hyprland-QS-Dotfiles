@@ -1454,7 +1454,13 @@ void main() {
     float sigma = max(blurRadius / 3.0, 0.001);
     float invSigma2 = -0.5 / (sigma * sigma);
 
-    int samples = min(int(ceil(blurRadius)), 8);
+    // Cap the tap count. sigma is radius/3, so a cap BELOW the radius truncates
+    // the kernel's tail instead of widening it: past this point turning
+    // blur_strength up stops adding blur and just squares off what's there. At
+    // 8 that ceiling landed at blur_strength ~1.33, well below the slider's max
+    // of 2.0, so the top third of the slider did nothing. 16 covers the whole
+    // range (strength 2.0 -> radius 12 at half-res sampling).
+    int samples = min(int(ceil(blurRadius)), 16);
 
     // Center tap
     float w0 = 1.0;
