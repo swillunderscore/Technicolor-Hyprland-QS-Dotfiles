@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HOME = Path.home()
@@ -488,7 +489,15 @@ def effective_opacity(floor: float, auto: bool, luma: float | None) -> float:
     return min(1.0, floor + (1.0 - floor) * lift * MAX_LIFT)
 
 
-def apply_and_publish(term_entry, floor: float, auto: bool) -> float:
+# A wallpaper switch takes ~1.5s end to end, so ramp the terminal across most of
+# it instead of snapping. Steps are deliberately few: for kitty each one rewrites
+# the config and signals a reload, and sixty of those in a second is a stutter,
+# not a fade.
+RAMP_MS    = 1200
+RAMP_STEPS = 16
+
+
+def apply_and_publish(term_entry, floor: float, auto: bool, ramp: bool = False) -> float:
     """Work out the opacity this wallpaper needs, push it to the terminal, and
     publish it for the bar. Returns what was applied."""
     luma = wallpaper_luma()
@@ -497,7 +506,18 @@ def apply_and_publish(term_entry, floor: float, auto: bool) -> float:
     with open(LOCK, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if term_entry is not None:
-            term_entry[2](applied)
+            start, support, _ = term_entry[1]()
+            # Only worth ramping on a terminal that changes live and when there's
+            # a visible distance to cover. Everything else lands in one step.
+            if ramp and support == "live" and abs(applied - start) > 0.01:
+                for i in range(1, RAMP_STEPS + 1):
+                    t = i / RAMP_STEPS
+                    t = t * t * (3.0 - 2.0 * t)          # smoothstep, no abrupt start/stop
+                    term_entry[2](start + (applied - start) * t)
+                    if i < RAMP_STEPS:
+                        time.sleep(RAMP_MS / 1000.0 / RAMP_STEPS)
+            else:
+                term_entry[2](applied)
     STATE.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATE.with_suffix(".conf.tc-tmp")
     # OPACITY is the applied value — that's what the bar's pills match. FLOOR and
@@ -566,7 +586,7 @@ def main() -> int:
         if st.get("AUTO", "0") != "1":
             return 0
         floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
-        apply_and_publish(entry, floor, True)
+        apply_and_publish(entry, floor, True, ramp=True)
         return 0
 
     if args[0] == "state":

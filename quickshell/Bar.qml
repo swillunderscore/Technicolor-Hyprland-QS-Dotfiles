@@ -104,6 +104,10 @@ PanelWindow {
     // transparency moves, whichever terminal you're on. 0.65 is the old fixed
     // value, used until that file exists.
     property real pillOpacity: 0.65
+    // The published value jumps in one step; the pills shouldn't. Matches the
+    // ~1.2s ramp terminal-opacity.py runs on the terminal itself, so the bar and
+    // the terminal move together through a wallpaper change.
+    Behavior on pillOpacity { NumberAnimation { duration: 1200; easing.type: Easing.InOutQuad } }
     // The pills' own fill is only a black TINT — their body comes from the glass
     // behind them. But that glass is masked to where this layer has content, as a
     // hard alpha cutoff, so a pill filled at exactly 0 takes the glass down with

@@ -348,9 +348,12 @@ def main():
         # Terminal transparency, if it's set to follow the wallpaper: a brighter
         # wallpaper needs a more opaque terminal for white text to stay readable.
         # No-op unless Settings → System → Adapt to wallpaper is on.
+        # Popen, not run: this ramps the opacity across ~1.2s to match the
+        # wallpaper fade, and it should be doing that WHILE the wallpaper fades,
+        # not after the rest of the pipeline has waited for it.
         try:
-            subprocess.run(['python3', os.path.expanduser('~/.config/hypr/terminal-opacity.py'),
-                            'refresh'], capture_output=True, timeout=15)
+            subprocess.Popen(['python3', os.path.expanduser('~/.config/hypr/terminal-opacity.py'),
+                              'refresh'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
