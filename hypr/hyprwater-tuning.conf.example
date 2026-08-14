@@ -9,6 +9,12 @@
 # dots, launcher) the same way windows are glassed. The mask threshold keeps the
 # effect on the pills themselves rather than the transparent gaps between them.
 # Only visible where the wallpaper behind the bar actually has detail to blur.
+#
+# Keep the threshold well BELOW the pills' own alpha. The pills follow the
+# terminal transparency slider, so at 91% see-through they are 0.09 opaque — a
+# threshold of 0.1 masks them out and the glass silently vanishes from exactly
+# the areas you wanted it (the opaque icons keep theirs, which is what makes it
+# look like a bug rather than a setting). 0.002 leaves headroom to 99.8%.
 plugin:hyprwater:layers:enabled = 1
 plugin:hyprwater:layers:namespaces = quickshell:bar
-plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:bar=0.1
+plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:bar=0.002
