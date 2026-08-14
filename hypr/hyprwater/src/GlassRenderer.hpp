@@ -25,6 +25,25 @@ inline constexpr int SAMPLE_PADDING_PX = 60;
 // resolution — weak blur at half-res shows visible pixelation.
 inline constexpr int   BLUR_DOWNSCALE_MAX       = 2;
 inline constexpr float BLUR_DOWNSCALE_THRESHOLD = 0.35f; // min blur_strength for downscale
+inline constexpr float BLUR_DOWNSCALE_QUARTER   = 1.30f; // min blur_strength for quarter-res
+
+// How far down to sample the backdrop before blurring it.
+//
+// Screen-space reach is blur_strength * 12px whatever this returns, because the
+// radius is divided by it — downscaling doesn't weaken the blur, it buys the
+// SAME blur for a quarter of the work per step. What it does change is the
+// ceiling: the shader caps its taps at 16, so the reachable radius is
+// 16 * downscale, and at half-res that ceiling lands at blur_strength 2.67.
+// Sampling at quarter-res doubles the headroom to 5.33 AND costs 4x less.
+//
+// The floor matters too: at low strength the blur is too tight to hide the
+// lower resolution and you see the backdrop pixelate, so each step down only
+// engages once the blur is wide enough to cover for it.
+[[nodiscard]] inline int blurDownscale(float strength) {
+    if (strength >= BLUR_DOWNSCALE_QUARTER)  return BLUR_DOWNSCALE_MAX * 2;
+    if (strength >= BLUR_DOWNSCALE_THRESHOLD) return BLUR_DOWNSCALE_MAX;
+    return 1;
+}
 
 // Layers only: alpha mask from the temp FBO that captured the rendered surface.
 // Constrains the glass effect to regions where the layer has visible content.

@@ -1139,7 +1139,11 @@ FloatingWindow {
         { key: "lens_distortion",      label: "Lens distortion",      from: 0, to: 1,  def: 0.1,  step: 0 },
         { key: "edge_thickness",       label: "Edge thickness",       from: 0, to: 1,  def: 0.2,  step: 0 },
         { key: "chromatic_aberration", label: "Chromatic aberration", from: 0, to: 1,  def: 0.0,  step: 0 },
-        { key: "blur_strength",        label: "Blur strength",        from: 0, to: 2,  def: 0.2,  step: 0 },
+        // to:5 not 2 — the shader caps its taps at 16, and at quarter-res
+        // sampling (which kicks in at 1.3) that ceiling sits at 5.33. Past there
+        // the kernel truncates instead of widening and the slider stops doing
+        // anything, which is exactly what the old to:2 felt like from 1.33 up.
+        { key: "blur_strength",        label: "Blur strength",        from: 0, to: 5,  def: 0.2,  step: 0 },
         { key: "blur_iterations",      label: "Blur iterations",      from: 0, to: 4,  def: 1.0,  step: 1 },
         { key: "brightness",           label: "Brightness",           from: 0, to: 2,  def: 1.0,  step: 0 },
         { key: "contrast",             label: "Contrast",             from: 0, to: 2,  def: 1.0,  step: 0 },
