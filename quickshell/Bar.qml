@@ -104,6 +104,14 @@ PanelWindow {
     // transparency moves, whichever terminal you're on. 0.65 is the old fixed
     // value, used until that file exists.
     property real pillOpacity: 0.65
+    // The pills' own fill is only a black TINT — their body comes from the glass
+    // behind them. But that glass is masked to where this layer has content, as a
+    // hard alpha cutoff, so a pill filled at exactly 0 takes the glass down with
+    // it and the section vanishes instead of going clear. Keep a sliver of alpha:
+    // 0.012 is well above the mask threshold (0.002) and is 1% black, i.e. not
+    // visible as tint. Full transparency then reads as a clear glass pill rather
+    // than nothing at all.
+    readonly property color pillFill: Qt.rgba(0, 0, 0, Math.max(bar.pillOpacity, 0.012))
     FileView {
         id: pillOpacityFile
         path: bar.homeDir + "/.config/hypr/terminal-opacity.conf"
@@ -2070,7 +2078,7 @@ PanelWindow {
         Rectangle {
             Layout.preferredWidth: appLauncherRow.implicitWidth + (isPrimary ? 16 : 10)
             Layout.preferredHeight: parent.height - bar.vm * 2
-            color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: bar.rad
+            color: bar.pillFill; radius: bar.rad
             readonly property int appCount: bar.appPins.length
 
             RowLayout {
@@ -2189,7 +2197,7 @@ PanelWindow {
         anchors.verticalCenter: parent.verticalCenter
         height: parent.height - (isPrimary ? 6 : 4)
         width: dotsRow.implicitWidth + (isPrimary ? 16 : 10)
-        color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: isPrimary ? 14 : 12
+        color: bar.pillFill; radius: isPrimary ? 14 : 12
 
         RowLayout {
             id: dotsRow; anchors.centerIn: parent; spacing: 0
@@ -5258,7 +5266,7 @@ PanelWindow {
             Layout.preferredWidth: minimizedRow.implicitWidth + (isPrimary ? 16 : 10)
             Layout.preferredHeight: parent.height - bar.vm * 2
             Layout.alignment: Qt.AlignVCenter
-            color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: bar.rad
+            color: bar.pillFill; radius: bar.rad
             visible: bar.minimizedWindows.length > 0
 
             RowLayout {
@@ -5345,7 +5353,7 @@ PanelWindow {
             Layout.preferredWidth: trayRow.implicitWidth + (isPrimary ? 16 : 10)
             Layout.preferredHeight: parent.height - bar.vm * 2
             Layout.alignment: Qt.AlignVCenter
-            color: Qt.rgba(0, 0, 0, bar.pillOpacity); radius: bar.rad
+            color: bar.pillFill; radius: bar.rad
             visible: SystemTray.items.values.length > 0
             RowLayout {
                 id: trayRow; anchors.centerIn: parent; spacing: isPrimary ? 6 : 4
