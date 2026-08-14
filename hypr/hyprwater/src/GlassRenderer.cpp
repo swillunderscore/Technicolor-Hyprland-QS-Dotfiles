@@ -1424,6 +1424,11 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFram
     g_pHyprOpenGL->setViewport(0, 0, width, height);
     glActiveTexture(GL_TEXTURE0);
 
+    DBG("%.4f BLURFB sample=%d(%.0fx%.0f) temp=%d(%.0fx%.0f) rad=%.2f it=%d\n", dbgNow(),
+        fbId(sampleFramebuffer), sampleFramebuffer->m_size.x, sampleFramebuffer->m_size.y,
+        fbId(blurTempFramebuffer), blurTempFramebuffer->m_size.x, blurTempFramebuffer->m_size.y,
+        radius, iterations);
+
     // Ping-pong at full resolution: sampleFramebuffer ↔ blurTempFramebuffer
     for (int iteration = 0; iteration < iterations; iteration++) {
         // Horizontal pass: sampleFramebuffer → blurTempFramebuffer
