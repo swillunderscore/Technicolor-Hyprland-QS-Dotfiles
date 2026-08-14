@@ -238,6 +238,22 @@ def main():
         sys.exit(1)
 
     img_path = sys.argv[1]
+
+    # Terminal transparency, if it's set to follow the wallpaper: a brighter
+    # wallpaper needs a more opaque terminal for white text to stay readable.
+    # No-op unless Settings → System → Adapt to wallpaper is on.
+    #
+    # FIRST, and detached. It ramps the opacity over ~1.2s to ride the wallpaper
+    # fade, so it has to start WITH the fade. Run from the end of this script it
+    # queued up behind six theme generators and only began once the fade had
+    # already finished. It reads the image itself and needs nothing from the
+    # palette work below.
+    try:
+        subprocess.Popen(['python3', os.path.expanduser('~/.config/hypr/terminal-opacity.py'),
+                          'refresh'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
     frame = extract_frame(img_path)
 
     try:
@@ -342,18 +358,6 @@ def main():
         try:
             subprocess.run(['python3', os.path.expanduser('~/.config/hypr/gen-wlogout-style.py')],
                            capture_output=True)
-        except Exception:
-            pass
-
-        # Terminal transparency, if it's set to follow the wallpaper: a brighter
-        # wallpaper needs a more opaque terminal for white text to stay readable.
-        # No-op unless Settings → System → Adapt to wallpaper is on.
-        # Popen, not run: this ramps the opacity across ~1.2s to match the
-        # wallpaper fade, and it should be doing that WHILE the wallpaper fades,
-        # not after the rest of the pipeline has waited for it.
-        try:
-            subprocess.Popen(['python3', os.path.expanduser('~/.config/hypr/terminal-opacity.py'),
-                              'refresh'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
