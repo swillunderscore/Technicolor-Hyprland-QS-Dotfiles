@@ -700,20 +700,6 @@ void main() {
     // line one pixel wide. Scaling the dim by coverage keeps the fringe at the
     // brightness it had before, so the discontinuity — and the flicker with it —
     // goes away.
-    // Ramp the dim in over the outermost few pixels, not just the ~2px
-    // antialias fringe. Those pixels are a BLEND of glass and whatever is behind
-    // the window, so their value tracks the backdrop; making the glass much
-    // darker than the desktop beside it widens the gap that blend spans and
-    // turns ordinary backdrop movement into a visibly flickering line one pixel
-    // wide. Fading the dim to nothing at the boundary keeps the edge at the
-    // brightness it had before, so there is no step for anything to flicker
-    // across. cornerSdf is 0 at the edge and negative inside.
-    // NB edge0 < edge1: smoothstep with them reversed is UNDEFINED in GLSL and
-    // this driver returns 0, which silently disables the dim everywhere.
-    // cornerSdf is 0 at the boundary and negative inside, so invert instead.
-    float dimFade = (1.0 - smoothstep(-3.0, 0.0, cornerSdf)) * cornerAlpha;
-    color *= mix(1.0, adaptiveScale, dimFade);
-
     color = mix(color, tintColor, tintAlpha);
 
     // ========================================
@@ -944,6 +930,31 @@ void main() {
         float shadow = bottomBias * edgeProximity * edgeProximity * 0.06;
         color *= 1.0 - shadow;
     }
+
+    // Apply the adaptive dim to the FINISHED pixel — backdrop, caustics, fresnel
+    // rim and specular together. Dimming only the backdrop leaves those additive
+    // edge terms at full strength, and edge_thickness puts them ~20px inside the
+    // border; over a bright backdrop, where the dim is strongest, that undimmed
+    // band shimmers against a darkened interior and reads as a flickering
+    // border. Scaling the whole pixel keeps every proportion inside the glass
+    // exactly as it was and just makes the window darker, which is the one
+    // treatment that cannot introduce an edge of its own.
+    // ...but fade it out across the outermost pixels. Those are a BLEND of glass
+    // and whatever is behind the window, so their value tracks sub-pixel
+    // coverage; if the glass there is much darker than the desktop beside it,
+    // ordinary coverage jitter becomes a visible flickering line one pixel wide.
+    // Fading to no dim at the boundary removes the step, so there is nothing for
+    // that jitter to swing across. edge0 < edge1 — reversed is undefined in GLSL
+    // and returns 0 on this driver, which silently disables the whole feature.
+    // Confine the fade to the ANTIALIASED pixel only. A wider ramp lands on the
+    // 2px transparent border Hyprland leaves around an unfocused window — the
+    // one place the glass is visible uncovered by window content — leaving that
+    // band undimmed and mismatched against the dimmed interior, which reads as a
+    // border of its own. cornerAlpha is already the coverage ramp, so using it
+    // alone dims everything the eye sees as "the window" and only backs off
+    // where the pixel is genuinely part glass, part desktop.
+    float dimFade = cornerAlpha;
+    color *= mix(1.0, adaptiveScale, dimFade);
 
     float glassA = glassOpacity * cornerAlpha;
 

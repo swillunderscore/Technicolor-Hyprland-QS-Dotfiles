@@ -95,6 +95,17 @@ void CGlassDecoration::draw(PHLMONITOR monitor, float const& alpha) {
     if (!g_pGlobalState || !resolveEnabled())
         return;
 
+    // With the adaptive dim on, the glass must redraw WHOLE every frame. Damage
+    // only re-renders part of it, so the rest keeps pixels rendered at an
+    // earlier moment — and the compositor alternates swapchain buffers holding
+    // those two moments. Undimmed the two are near enough to be invisible;
+    // dimming widens the gap between them and the boundary row visibly toggles
+    // between two values. Costs a full redraw per frame (~3% GPU here) and buys
+    // a stable edge.
+    if (const auto& adCfg = g_pGlobalState->config;
+        adCfg.adaptiveTint && **adCfg.adaptiveTint > 0.001f)
+        damageEntire();
+
     CGlassPassElement::SGlassPassData data{m_self, alpha};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CGlassPassElement>(data));
 
