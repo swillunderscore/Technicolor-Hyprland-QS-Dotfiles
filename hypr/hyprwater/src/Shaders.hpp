@@ -692,7 +692,27 @@ void main() {
     // which is worse than the readability problem this is here to solve.
     // Sunglasses darken what you see through them; they do not darken a
     // reflection on their own surface.
-    color *= adaptiveScale;
+    // Fade the dim out across the antialiased edge. That 2px fringe is a BLEND
+    // of glass and whatever is behind the window, so its value depends on
+    // coverage — and coverage jitters sub-pixel frame to frame (4 levels of it
+    // even with adaptive off). Dimming makes the glass darker than the desktop
+    // beside it, which turns that existing jitter into a visible flickering dark
+    // line one pixel wide. Scaling the dim by coverage keeps the fringe at the
+    // brightness it had before, so the discontinuity — and the flicker with it —
+    // goes away.
+    // Ramp the dim in over the outermost few pixels, not just the ~2px
+    // antialias fringe. Those pixels are a BLEND of glass and whatever is behind
+    // the window, so their value tracks the backdrop; making the glass much
+    // darker than the desktop beside it widens the gap that blend spans and
+    // turns ordinary backdrop movement into a visibly flickering line one pixel
+    // wide. Fading the dim to nothing at the boundary keeps the edge at the
+    // brightness it had before, so there is no step for anything to flicker
+    // across. cornerSdf is 0 at the edge and negative inside.
+    // NB edge0 < edge1: smoothstep with them reversed is UNDEFINED in GLSL and
+    // this driver returns 0, which silently disables the dim everywhere.
+    // cornerSdf is 0 at the boundary and negative inside, so invert instead.
+    float dimFade = (1.0 - smoothstep(-3.0, 0.0, cornerSdf)) * cornerAlpha;
+    color *= mix(1.0, adaptiveScale, dimFade);
 
     color = mix(color, tintColor, tintAlpha);
 
