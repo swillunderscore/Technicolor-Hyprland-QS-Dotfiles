@@ -487,6 +487,47 @@ TARGET_LUMA = 0.18
 DEADBAND    = 0.02   # ignore smaller errors, or it never stops nudging
 GAIN        = 1.2    # correction per unit of error; >1 converges in a step or two
 
+# Per-window control. The single-value path above nudges proportionally, which
+# oscillates: the thing it measures is the terminal's OWN composited output, so
+# every correction changes the next reading, and any gain near 1 hunts instead of
+# settling — visibly, as the opacity snapping back and forth.
+#
+# So don't nudge. What's measured is  backdrop * (1 - opacity), and the opacity
+# we want satisfies  backdrop * (1 - want) = target. Two equations, one unknown:
+# solve it and go straight there in one step. No gain, nothing to oscillate.
+OPACITY_DEADBAND = 0.04   # don't chase changes smaller than this
+OPACITY_MAX_STEP = 0.20   # cap per tick, so one bad reading can't lurch
+BACKDROP_SMOOTH  = 0.5    # EMA weight on the new reading; the rest is history
+BACKDROP_STATE   = Path("/tmp/.tc-term-backdrop.json")
+
+
+def solve_opacity(backdrop: float, target: float,
+                  floor: float, ceiling: float) -> float:
+    """The opacity that puts a window's displayed background at `target`, given
+    how bright the thing behind it is. Displayed = backdrop * (1 - opacity)."""
+    if backdrop <= 1e-4:
+        return floor                      # nothing behind it; be as clear as allowed
+    return max(floor, min(ceiling, 1.0 - target / backdrop))
+
+
+def kitty_window_opacity(pid: int) -> float | None:
+    """What kitty says this OS window's opacity currently is — ground truth,
+    rather than us remembering what we last set."""
+    sock = f"/tmp/kitty-{pid}"
+    if not Path(sock).exists():
+        return None
+    try:
+        r = subprocess.run(["kitten", "@", "--to", f"unix:{sock}", "ls"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return None
+        for osw in json.loads(r.stdout):
+            if "background_opacity" in osw:
+                return float(osw["background_opacity"])
+    except Exception:
+        return None
+    return None
+
 
 def terminal_windows() -> list:
     """Visible windows of the default terminal on the active workspace."""
@@ -752,35 +793,52 @@ def main() -> int:
             target, max_lift = TARGET_LUMA, MAX_LIFT
         ceiling = min(1.0, floor + (1.0 - floor) * max_lift)
 
-        # Last value we set per window, so the controller knows where it is.
-        seen = {}
+        # Smoothed backdrop estimate per window. The raw reading twitches as the
+        # terminal's own text scrolls under the sample, and reacting to that is
+        # what makes it flicker; averaging across ticks rides over it.
         try:
-            seen = json.loads(Path("/tmp/.tc-term-opacity-map.json").read_text())
+            hist = json.loads(BACKDROP_STATE.read_text())
         except Exception:
-            pass
+            hist = {}
 
         wins = terminal_windows()
         if not wins:
             return 0
-        any_socket = False
+        any_socket, live = False, {}
         for w in wins:
+            pid = w.get("pid")
+            cur = kitty_window_opacity(pid)
+            if cur is None:
+                continue                      # predates remote control; no socket
+            any_socket = True
             measured = window_backdrop(w)
             if measured is None:
                 continue
-            cur = float(seen.get(str(w["pid"]), st.get("OPACITY", floor)))
-            err = measured - target
-            if abs(err) < DEADBAND:
+            if cur >= 0.97:
+                continue                      # opaque: no backdrop left to read
+            raw = measured / (1.0 - cur)
+            prev = hist.get(str(pid))
+            smoothed = raw if prev is None else (BACKDROP_SMOOTH * raw +
+                                                 (1 - BACKDROP_SMOOTH) * float(prev))
+            live[str(pid)] = round(smoothed, 4)
+
+            want = solve_opacity(smoothed, target, floor, ceiling)
+            if abs(want - cur) < OPACITY_DEADBAND:
                 continue
-            want = max(floor, min(ceiling, cur + GAIN * err))
-            if abs(want - cur) < 0.01:
-                continue
-            if kitty_set_window(w["pid"], want):
-                seen[str(w["pid"])] = round(want, 3)
-                any_socket = True
-                if w.get("focused"):
-                    publish(want, floor, True, measured)
+            step = max(-OPACITY_MAX_STEP, min(OPACITY_MAX_STEP, want - cur))
+            new_a = max(floor, min(ceiling, cur + step))
+            # Walk it rather than jumping, but only a few steps — each one is a
+            # round trip to kitty.
+            for i in range(1, 5):
+                t = i / 4
+                kitty_set_window(pid, cur + (new_a - cur) * (t * t * (3 - 2 * t)))
+                if i < 4:
+                    time.sleep(0.06)
+            if w.get("focused"):
+                publish(new_a, floor, True, smoothed)
+
         try:
-            Path("/tmp/.tc-term-opacity-map.json").write_text(json.dumps(seen))
+            BACKDROP_STATE.write_text(json.dumps(live))
         except Exception:
             pass
         # No window had a socket: they all predate remote control being enabled,

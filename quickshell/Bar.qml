@@ -110,7 +110,7 @@ PanelWindow {
     // Cheap: one small screengrab, and only while the toggle is on.
     property bool termAutoOn: false
     Timer {
-        interval: 5000; repeat: true; running: bar.termAutoOn
+        interval: 8000; repeat: true; running: bar.termAutoOn
         onTriggered: Quickshell.execDetached(["sh", "-c",
             "cd \"$HOME\" && \"$HOME/.config/hypr/terminal-opacity.py\" autotune-per-window"])
     }
