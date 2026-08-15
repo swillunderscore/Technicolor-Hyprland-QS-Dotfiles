@@ -772,11 +772,24 @@ def main() -> int:
         return 0
 
     if args[0] == "auto":
-        # Turn wallpaper-adaptive opacity on or off, keeping the floor.
+        # Adaptivity lives in the compositor now: hyprwater's glass shader tints
+        # per-pixel, per-frame, from the backdrop it already samples
+        # (adaptive_tint in the plugin). This verb flips that flag and parks the
+        # terminal at the slider value. The old poll-and-correct loop below is
+        # retired — it stepped every few seconds by construction, because any
+        # poller steps at its tick rate.
         on = len(args) > 1 and args[1] in ("1", "on", "true", "yes")
         st = read_state()
         floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
-        apply_and_publish(entry, floor, on)
+        try:
+            subprocess.run(["bash", "-c",
+                "\"$HOME/.config/hypr/hyprwater-set.sh\" adaptive_tint " + ("1" if on else "0")],
+                capture_output=True, timeout=15)
+        except Exception:
+            pass
+        if entry is not None:
+            entry[2](floor)
+        publish(floor, floor, on, None)
         return 0
 
     if args[0] == "autotune-per-window":
@@ -854,12 +867,9 @@ def main() -> int:
         return main_autotune(entry, st)
 
     if args[0] == "refresh":
-        # Called after a wallpaper change: same floor, new wallpaper, new answer.
-        st = read_state()
-        if st.get("AUTO", "0") != "1":
-            return 0
-        floor = float(st.get("FLOOR", st.get("OPACITY", "1.0")))
-        apply_and_publish(entry, floor, True, ramp=True)
+        # Nothing to do: the tint follows the backdrop per frame in the shader,
+        # including through wallpaper changes. Kept because wallpaper-colors.py
+        # still calls it on every switch.
         return 0
 
     if args[0] == "state":

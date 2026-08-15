@@ -21,3 +21,11 @@ plugin:hyprwater:layers:enabled = 1
 # glass — which is exactly what happened when this line first said only the bar.
 plugin:hyprwater:layers:namespaces = quickshell:pie, wofi, quickshell:bar
 plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:pie=0.03, wofi=0.03, quickshell:bar=0.002
+
+# Per-pixel adaptive tint: wherever the backdrop showing through the glass is
+# brighter than adaptive_target, tint exactly enough to bring it down to that
+# luma; darker backdrops get no tint at all. Computed in the glass shader from
+# the backdrop it already samples — per-pixel, per-frame, no polling. This is
+# what Settings → System → "Adapt to what's behind" drives.
+plugin:hyprwater:adaptive_tint = 1
+plugin:hyprwater:adaptive_target = 0.18

@@ -2193,7 +2193,7 @@ FloatingWindow {
                                         ? "Saved to its config now; windows you open from here on come up see-through."
                                         : "Every open window changes as you drag, and it's saved to its config."
                                 var auto = win.termAuto
-                                         ? " With Adapt on, this is the MOST see-through it goes — dark wallpapers get exactly this, brighter ones pull back from it."
+                                         ? " With Adapt on, this is the MOST see-through it goes — readability is handled where the glass is."
                                          : ""
                                 return base + how + auto + (win.termOpacityNote ? " (" + win.termOpacityNote + ")" : "")
                             } }
@@ -2206,13 +2206,13 @@ FloatingWindow {
                                 anchors.left: parent.left; anchors.leftMargin: 12
                                 anchors.right: autoTg.left; anchors.rightMargin: 12
                                 anchors.verticalCenter: parent.verticalCenter; spacing: 2
-                                Text { text: "Adapt to wallpaper brightness"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { text: "Adapt to what\u2019s behind"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
                                 Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
                                     text: {
                                         var l = win.termLuma >= 0
                                               ? " This wallpaper reads " + Math.round(win.termLuma * 100) + "% bright."
                                               : ""
-                                        return "Keep white text readable: a bright wallpaper pulls the terminal back toward opaque, a dark one leaves it exactly where you set it. Never goes more see-through than the slider." + l
+                                        return "The glass tints per-pixel wherever the backdrop showing through is bright \u2014 a white page behind a clear window included \u2014 and stays fully clear over dark ones. Live, no stepping. The slider stays the see-through amount." + l
                                     } }
                             }
                             TcToggle {

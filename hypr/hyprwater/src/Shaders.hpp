@@ -42,6 +42,12 @@ uniform float glassOpacity;
 uniform float edgeThickness;
 uniform vec3 tintColor;
 uniform float tintAlpha;
+// Per-pixel adaptive tint. The glass already holds the backdrop sample here, so
+// readability costs a few ALU ops: bring bright backdrops down to adaptiveTarget
+// luma by solving mix() for the alpha that gets there — 1 - target/luma. No
+// polling, no stepping; it is correct on the frame the backdrop changes.
+uniform float adaptiveTint;
+uniform float adaptiveTarget;
 uniform float lensDistortion;
 uniform float brightness;
 uniform float contrast;
@@ -657,7 +663,15 @@ void main() {
     // ========================================
     // COLOR TINT OVERLAY
     // ========================================
-    color = mix(color, tintColor, tintAlpha);
+    float aTint = tintAlpha;
+    if (adaptiveTint > 0.001) {
+        // luma of what is about to be tinted — AFTER blur/refraction/tonemap,
+        // i.e. exactly what the eye will sit over, minus the tint itself.
+        float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        float needed = clamp(1.0 - adaptiveTarget / max(l, 1e-4), 0.0, 1.0);
+        aTint = max(aTint, needed * adaptiveTint);
+    }
+    color = mix(color, tintColor, aTint);
 
     // ========================================
     // CAUSTIC SHIMMER — light through a moving surface

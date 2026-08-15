@@ -1831,6 +1831,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         static_cast<float>((tintColorValue >> 8) & 0xFF) / 255.0f);
     glUniform1f(uniforms.tintAlpha,
         static_cast<float>(tintColorValue & 0xFF) / 255.0f);
+    {
+        const auto& cfgAd = g_pGlobalState->config;
+        glUniform1f(uniforms.adaptiveTint,
+            cfgAd.adaptiveTint ? static_cast<float>(**cfgAd.adaptiveTint) : 0.0f);
+        glUniform1f(uniforms.adaptiveTarget,
+            cfgAd.adaptiveTarget ? static_cast<float>(**cfgAd.adaptiveTarget) : 0.18f);
+    }
     if (dbgLog()) {
         // Read BACK the effective program state right before the draw: any
         // mismatch means something rewrote a uniform after the upload above,

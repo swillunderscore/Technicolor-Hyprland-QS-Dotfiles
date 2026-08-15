@@ -45,6 +45,12 @@ inline constexpr auto SPECULAR_STRENGTH    = "plugin:hyprwater:specular_strength
 inline constexpr auto GLASS_OPACITY        = "plugin:hyprwater:glass_opacity";
 inline constexpr auto EDGE_THICKNESS       = "plugin:hyprwater:edge_thickness";
 inline constexpr auto TINT_COLOR           = "plugin:hyprwater:tint_color";
+// Per-pixel adaptive tint: where the backdrop showing through the glass is
+// bright, tint just enough to bring it down to `adaptive_target` luma; where it
+// is already dark, no tint at all. 0 disables (the static tint_alpha still
+// applies). This is the passive/live replacement for polling the screen.
+inline constexpr auto ADAPTIVE_TINT          = "plugin:hyprwater:adaptive_tint";
+inline constexpr auto ADAPTIVE_TARGET        = "plugin:hyprwater:adaptive_target";
 inline constexpr auto LENS_DISTORTION      = "plugin:hyprwater:lens_distortion";
 inline constexpr auto BRIGHTNESS           = "plugin:hyprwater:brightness";
 inline constexpr auto CONTRAST             = "plugin:hyprwater:contrast";
@@ -196,6 +202,8 @@ struct SPluginConfig {
 
     Hyprlang::INT* const* layersEnabled                  = nullptr;
     Hyprlang::INT* const*   shimmerEnabled              = nullptr;
+    Hyprlang::FLOAT* const* adaptiveTint                = nullptr;
+    Hyprlang::FLOAT* const* adaptiveTarget              = nullptr;
     Hyprlang::FLOAT* const* shimmerIntensity            = nullptr;
     Hyprlang::FLOAT* const* shimmerSpeed                = nullptr;
     Hyprlang::FLOAT* const* shimmerScale                = nullptr;

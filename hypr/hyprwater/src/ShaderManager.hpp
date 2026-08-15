@@ -35,6 +35,8 @@ struct SGlassUniforms {
     GLint uvPadding = -1;
     GLint tintColor = -1;
     GLint tintAlpha = -1;
+    GLint adaptiveTint = -1;
+    GLint adaptiveTarget = -1;
     GLint lensDistortion = -1;
     GLint saturation = -1;
     GLint brightness = -1;
