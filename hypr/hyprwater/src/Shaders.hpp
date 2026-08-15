@@ -953,7 +953,14 @@ void main() {
     // border of its own. cornerAlpha is already the coverage ramp, so using it
     // alone dims everything the eye sees as "the window" and only backs off
     // where the pixel is genuinely part glass, part desktop.
-    float dimFade = cornerAlpha;
+    // Only dim pixels the window FULLY covers. A partially covered pixel is a
+    // blend with the desktop behind it, and the glass already wobbles ~10 levels
+    // there on its own (measured: 0 with the plugin off, 10 with it on and the
+    // dim off). Dimming widens the gap that wobble swings across and triples it.
+    // Leaving those pixels undimmed keeps the edge exactly as it behaves without
+    // the feature. The untouched band is only the antialias pixel — far thinner
+    // than the 2px transparent border, so it does not read as a ring.
+    float dimFade = smoothstep(0.85, 1.0, cornerAlpha);
     color *= mix(1.0, adaptiveScale, dimFade);
 
     float glassA = glassOpacity * cornerAlpha;
