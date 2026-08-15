@@ -685,6 +685,15 @@ void main() {
         adaptiveScale = mix(1.0, dim, adaptiveTint);
     }
 
+    // Applied to the BACKDROP, before the caustic shimmer and the
+    // fresnel/specular rim. Those are additive edge terms and represent light
+    // reflecting OFF the glass surface, not light coming through it — dimming
+    // them turns the bright rim into a dark outline around every glass window,
+    // which is worse than the readability problem this is here to solve.
+    // Sunglasses darken what you see through them; they do not darken a
+    // reflection on their own surface.
+    color *= adaptiveScale;
+
     color = mix(color, tintColor, tintAlpha);
 
     // ========================================
@@ -915,10 +924,6 @@ void main() {
         float shadow = bottomBias * edgeProximity * edgeProximity * 0.06;
         color *= 1.0 - shadow;
     }
-
-    // Apply the adaptive dim LAST, so the rim glow, specular and caustics scale
-    // with the glass instead of riding on top of it at full brightness.
-    color *= adaptiveScale;
 
     float glassA = glassOpacity * cornerAlpha;
 
