@@ -42,11 +42,10 @@ uniform float glassOpacity;
 uniform float edgeThickness;
 uniform vec3 tintColor;
 uniform float tintAlpha;
-// Per-pixel adaptive dimming. The glass already holds the backdrop sample here,
-// so readability costs a few ALU ops: scale luminance down to adaptiveTarget by
-// MULTIPLYING (hue/saturation preserved — mixing toward a tint color would
-// desaturate). No polling, no stepping; correct on the frame the backdrop
-// changes.
+// Adaptive dimming. One uniform factor per window, computed from a fixed grid
+// across the backdrop the glass already holds — so it is per-frame and live with
+// no polling, while identical content always renders identically. MULTIPLIES
+// (hue/saturation preserved); mixing toward a tint colour would desaturate.
 uniform float adaptiveTint;
 uniform float adaptiveTarget;
 uniform float lensDistortion;
@@ -670,8 +669,28 @@ void main() {
     // brings luminance down: l * (target/l) = target. Strength blends between
     // no correction and the full solve.
     if (adaptiveTint > 0.001) {
-        float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
-        float dim = clamp(adaptiveTarget / max(l, 1e-4), 0.0, 1.0);
+        // ONE dim factor for the whole window — sunglasses, not a tone curve.
+        //
+        // The taps below sit at FIXED window positions, not offsets from this
+        // pixel, so every fragment averages the same 16 texels and computes an
+        // identical dim. That is the whole point: anything driven by the local
+        // pixel (or a local neighbourhood) gives two identical objects two
+        // different colours depending on what happens to surround them, which
+        // is what made repeated pillars in a wallpaper render mismatched.
+        // Uniform scaling leaves the image's own light/dark structure and all
+        // of its contrast completely intact; only overall brightness moves.
+        float lAvg = 0.0;
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                vec2 wuv = (vec2(float(i), float(j)) + 0.5) * 0.25;
+                lAvg += dot(sampleBlurred(wuv).rgb, vec3(0.2126, 0.7152, 0.0722));
+            }
+        }
+        lAvg /= 16.0;
+        // Match the tonemap the visible pixels went through, so adaptiveTarget
+        // is expressed in what actually reaches the screen.
+        lAvg *= brightness;
+        float dim = clamp(adaptiveTarget / max(lAvg, 1e-4), 0.0, 1.0);
         color *= mix(1.0, dim, adaptiveTint);
     }
     color = mix(color, tintColor, tintAlpha);
