@@ -1407,12 +1407,20 @@ void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer,
 
     // Frame delta -> EMA weight, so the settle time is the same whatever the
     // compositor is running at. Clamped: a long stall must not snap the value.
-    static std::chrono::steady_clock::time_point last{};
-    const auto now = std::chrono::steady_clock::now();
+    //
+    // PER FRAMEBUFFER, not one static clock. A single shared timestamp gets
+    // consumed by whichever glass surface renders first; every other surface in
+    // the same frame then sees dt~0 and its average stops advancing. Which
+    // surface wins depends on render order, and focusing a window changes that
+    // order — so the smoothing rate silently depended on which window you last
+    // clicked.
+    static std::unordered_map<const void*, std::chrono::steady_clock::time_point> lastSeen;
+    const auto  key = static_cast<const void*>(lumaFb[0].get());
+    const auto  now = std::chrono::steady_clock::now();
     float dt = 1.0f / 60.0f;
-    if (last.time_since_epoch().count() != 0)
-        dt = std::clamp(std::chrono::duration<float>(now - last).count(), 0.0f, 0.25f);
-    last = now;
+    if (auto it = lastSeen.find(key); it != lastSeen.end())
+        dt = std::clamp(std::chrono::duration<float>(now - it->second).count(), 0.0f, 0.25f);
+    lastSeen[key] = now;
 
     const auto& cfg = g_pGlobalState->config;
     const float tau = cfg.adaptiveSpeed ? std::max(0.01f, static_cast<float>(**cfg.adaptiveSpeed)) : 2.0f;
@@ -1441,6 +1449,12 @@ void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer,
 
     glActiveTexture(GL_TEXTURE0);
     sampleFramebuffer->getTexture()->bind();
+    // Build the mip chain so the shader can read the whole-window average from
+    // the 1x1 level. Needs a mipmap min-filter to be sampled; put it back to
+    // LINEAR afterwards because applyGlassEffect samples this same texture and
+    // expects no mip selection.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
     glActiveTexture(GL_TEXTURE1);
     lumaFb[prev]->getTexture()->bind();
 
@@ -1448,6 +1462,8 @@ void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer,
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     glActiveTexture(GL_TEXTURE0);
+    sampleFramebuffer->getTexture()->bind();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glBindVertexArray(0);
     glBindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
     g_pHyprOpenGL->setViewport(0, 0, viewportWidth, viewportHeight);

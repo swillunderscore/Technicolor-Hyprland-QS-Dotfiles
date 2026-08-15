@@ -669,18 +669,22 @@ void main() {
     // fucked". A per-channel scale preserves hue and saturation exactly and only
     // brings luminance down: l * (target/l) = target. Strength blends between
     // no correction and the full solve.
+    // Adaptive dim FACTOR — computed here where the backdrop luma is meaningful,
+    // but NOT applied yet. See the end of main(): applying it before the caustic
+    // shimmer and the fresnel/specular rim leaves those additive terms at full
+    // strength over a darkened base, so the rim goes proportionally brighter and
+    // its animation turns into a shimmering fringe on every window edge.
+    // Sunglasses dim the glints too.
+    float adaptiveScale = 1.0;
     if (adaptiveTint > 0.001) {
-        // ONE dim factor for the whole window — sunglasses, not a tone curve.
-        // The value arrives pre-averaged and time-smoothed in a 1x1 texture
-        // (adaptiveluma.frag), so it is identical for every fragment: identical
-        // content renders identically wherever it sits, and the image's own
-        // light/dark structure passes through untouched. Anything derived from
-        // the local pixel would give two identical objects two different
-        // colours depending on what surrounds them.
+        // ONE value for the whole window: pre-averaged and time-smoothed in a
+        // 1x1 texture (adaptiveluma.frag), so it is identical for every fragment
+        // and identical content always renders identically.
         float lAvg = texture(adaptiveLumaTex, vec2(0.5)).r * brightness;
         float dim  = clamp(adaptiveTarget / max(lAvg, 1e-4), 0.0, 1.0);
-        color *= mix(1.0, dim, adaptiveTint);
+        adaptiveScale = mix(1.0, dim, adaptiveTint);
     }
+
     color = mix(color, tintColor, tintAlpha);
 
     // ========================================
@@ -911,6 +915,10 @@ void main() {
         float shadow = bottomBias * edgeProximity * edgeProximity * 0.06;
         color *= 1.0 - shadow;
     }
+
+    // Apply the adaptive dim LAST, so the rim glow, specular and caustics scale
+    // with the glass instead of riding on top of it at full brightness.
+    color *= adaptiveScale;
 
     float glassA = glassOpacity * cornerAlpha;
 
@@ -1488,17 +1496,25 @@ uniform float seedPrev;      // 0 on the first frame: take the reading as-is
 out vec4 fragColor;
 
 void main() {
-    float lAvg = 0.0;
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            vec2 uv = (vec2(float(i), float(j)) + 0.5) * 0.25;
-            lAvg += dot(texture(tex, uv).rgb, vec3(0.2126, 0.7152, 0.0722));
-        }
-    }
-    lAvg /= 16.0;
+    // The smallest mip level is the average of EVERY texel, computed in
+    // hardware. Point-sampling a fixed grid instead (16 taps) is not an average
+    // but a sparse estimator: as an animated wallpaper slides high-frequency
+    // detail under those 16 fixed points, the "average" lurches around even
+    // though the scene's real brightness barely moves. That noise reached the
+    // dim, and a uniform multiply shows up worst on the brightest pixels — the
+    // fresnel/specular rim — which is why it read as flickering window EDGES.
+    float lAvg = dot(textureLod(tex, vec2(0.5), 30.0).rgb, vec3(0.2126, 0.7152, 0.0722));
 
     float prev = texture(prevTex, vec2(0.5)).r;
-    float outL = mix(prev, lAvg, clamp(emaAlpha, 0.0, 1.0));
+
+    // Deadband. Once converged, mix(prev, lAvg, tiny alpha) lands between two
+    // representable values and rounds inconsistently frame to frame — a limit
+    // cycle of about one grey level that never settles, on a scene where
+    // nothing is moving. Below this threshold, hold the stored value exactly.
+    float outL = (abs(lAvg - prev) < 0.002)
+               ? prev
+               : mix(prev, lAvg, clamp(emaAlpha, 0.0, 1.0));
+
     fragColor = vec4(mix(lAvg, outL, seedPrev), 0.0, 0.0, 1.0);
 }
 )GLSL"},
