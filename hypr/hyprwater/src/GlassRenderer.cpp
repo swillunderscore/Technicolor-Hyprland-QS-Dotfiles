@@ -1386,6 +1386,78 @@ void stepWaveSim() {
 
 }
 
+void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer,
+                        SP<Render::IFramebuffer> lumaFb[2], int& current, bool& seeded,
+                        GLuint callerFramebufferID, int viewportWidth, int viewportHeight) {
+    auto& sm = g_pGlobalState->shaderManager;
+    if (!sampleFramebuffer || !sm.isInitialized())
+        return;
+
+    for (int i = 0; i < 2; i++) {
+        if (!lumaFb[i])
+            lumaFb[i] = g_pHyprRenderer->createFB("hyprwater-adaptive-luma");
+        if (lumaFb[i]->m_size.x != 1 || lumaFb[i]->m_size.y != 1)
+            lumaFb[i]->alloc(1, 1, DRM_FORMAT_ABGR16161616F);
+        if (!lumaFb[i]->getTexture() || fbId(lumaFb[i]) == 0)
+            return;
+    }
+
+    const int prev = current;
+    const int next = 1 - current;
+
+    // Frame delta -> EMA weight, so the settle time is the same whatever the
+    // compositor is running at. Clamped: a long stall must not snap the value.
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    float dt = 1.0f / 60.0f;
+    if (last.time_since_epoch().count() != 0)
+        dt = std::clamp(std::chrono::duration<float>(now - last).count(), 0.0f, 0.25f);
+    last = now;
+
+    const auto& cfg = g_pGlobalState->config;
+    const float tau = cfg.adaptiveSpeed ? std::max(0.01f, static_cast<float>(**cfg.adaptiveSpeed)) : 2.0f;
+    const float alpha = 1.0f - std::exp(-dt / tau);
+
+    // Offscreen pass: the render pass's damage scissor is in monitor coords and
+    // would discard a 1x1 draw entirely. Same trap as blurBackground().
+    const GLboolean hadScissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+
+    auto shader = g_pHyprOpenGL->useShader(sm.adaptiveLumaShader);
+    static constexpr std::array<float, 9> PROJ = {
+        2.0f, 0.0f, 0.0f,
+        0.0f, 2.0f, 0.0f,
+       -1.0f,-1.0f, 1.0f,
+    };
+    shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, PROJ);
+    shader->setUniformInt(SHADER_TEX, 0);
+    glUniform1i(sm.adaptiveLumaUniforms.prevTex, 1);
+    glUniform1f(sm.adaptiveLumaUniforms.emaAlpha, alpha);
+    glUniform1f(sm.adaptiveLumaUniforms.seedPrev, seeded ? 1.0f : 0.0f);
+
+    glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+    glBindFramebuffer(GL_FRAMEBUFFER, fbId(lumaFb[next]));
+    g_pHyprOpenGL->setViewport(0, 0, 1, 1);
+
+    glActiveTexture(GL_TEXTURE0);
+    sampleFramebuffer->getTexture()->bind();
+    glActiveTexture(GL_TEXTURE1);
+    lumaFb[prev]->getTexture()->bind();
+
+    g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
+    g_pHyprOpenGL->setViewport(0, 0, viewportWidth, viewportHeight);
+    if (hadScissor)
+        glEnable(GL_SCISSOR_TEST);
+
+    current = next;
+    seeded  = true;
+}
+
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer>& tempFramebuffer,
                     float radius, int iterations,
                     GLuint callerFramebufferID, int viewportWidth, int viewportHeight) {
@@ -1482,7 +1554,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
-                       const SMaskInfo* mask) {
+                       const SMaskInfo* mask, SP<Render::IFramebuffer> adaptiveLumaFb) {
     // ONE scissor guard for the ENTIRE effect, raw GL, not the compositor's
     // cached cap wrapper (the cache can disagree with real state and skip the
     // disable). The render pass leaves a damage-rect scissor enabled; every
@@ -1833,10 +1905,19 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         static_cast<float>(tintColorValue & 0xFF) / 255.0f);
     {
         const auto& cfgAd = g_pGlobalState->config;
+        // No 1x1 luma yet (first frame, or alloc failed) means no trustworthy
+        // window average — leave the glass alone rather than guess at a dim.
+        const bool haveLuma = adaptiveLumaFb && adaptiveLumaFb->getTexture();
         glUniform1f(uniforms.adaptiveTint,
-            cfgAd.adaptiveTint ? static_cast<float>(**cfgAd.adaptiveTint) : 0.0f);
+            (haveLuma && cfgAd.adaptiveTint) ? static_cast<float>(**cfgAd.adaptiveTint) : 0.0f);
         glUniform1f(uniforms.adaptiveTarget,
             cfgAd.adaptiveTarget ? static_cast<float>(**cfgAd.adaptiveTarget) : 0.18f);
+        glUniform1i(uniforms.adaptiveLumaTex, 4);
+        if (haveLuma) {
+            glActiveTexture(GL_TEXTURE4);
+            adaptiveLumaFb->getTexture()->bind();
+            glActiveTexture(GL_TEXTURE0);
+        }
     }
     if (dbgLog()) {
         // Read BACK the effective program state right before the draw: any

@@ -177,6 +177,12 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
     int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.y);
     GlassRenderer::blurBackground(m_sampleFramebuffer, m_blurTempFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
+    // One time-smoothed average for the whole window, so the dim is uniform and
+    // does not pump with an animated wallpaper.
+    GlassRenderer::updateAdaptiveLuma(m_sampleFramebuffer, m_lumaFb, m_lumaCurrent, m_lumaSeeded,
+                                      dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(),
+                                      viewportWidth, viewportHeight);
+
     GlassRenderer::DBG_LOG("RP win=%lx alpha=%.3f BLURRED str=%.2f rad=%.2f it=%d sample=%.0fx%.0f srcfb=%u box=%.0f,%.0f %.0fx%.0f\n",
                            reinterpret_cast<uintptr_t>(window.get()), alpha, blurStrength, blurRadius, blurIterations,
                            m_sampleFramebuffer ? m_sampleFramebuffer->m_size.x : -1.0,
@@ -190,7 +196,8 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
 
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, source,
                                      windowBox, transformBox, alpha,
-                                     cornerRadius, roundingPower, m_samplePaddingRatio, ctx);
+                                     cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
+                                     nullptr, m_lumaFb[m_lumaCurrent]);
 }
 
 eDecorationType CGlassDecoration::getDecorationType() {

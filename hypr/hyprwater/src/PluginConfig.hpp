@@ -51,6 +51,10 @@ inline constexpr auto TINT_COLOR           = "plugin:hyprwater:tint_color";
 // applies). This is the passive/live replacement for polling the screen.
 inline constexpr auto ADAPTIVE_TINT          = "plugin:hyprwater:adaptive_tint";
 inline constexpr auto ADAPTIVE_TARGET        = "plugin:hyprwater:adaptive_target";
+// Seconds for the dim to settle. Animated wallpapers move the window average
+// every frame; without this the dim pumps with the animation. ~2s reads as the
+// eye adjusting rather than the picture flickering.
+inline constexpr auto ADAPTIVE_SPEED         = "plugin:hyprwater:adaptive_speed";
 inline constexpr auto LENS_DISTORTION      = "plugin:hyprwater:lens_distortion";
 inline constexpr auto BRIGHTNESS           = "plugin:hyprwater:brightness";
 inline constexpr auto CONTRAST             = "plugin:hyprwater:contrast";
@@ -204,6 +208,7 @@ struct SPluginConfig {
     Hyprlang::INT* const*   shimmerEnabled              = nullptr;
     Hyprlang::FLOAT* const* adaptiveTint                = nullptr;
     Hyprlang::FLOAT* const* adaptiveTarget              = nullptr;
+    Hyprlang::FLOAT* const* adaptiveSpeed               = nullptr;
     Hyprlang::FLOAT* const* shimmerIntensity            = nullptr;
     Hyprlang::FLOAT* const* shimmerSpeed                = nullptr;
     Hyprlang::FLOAT* const* shimmerScale                = nullptr;

@@ -67,6 +67,14 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFram
                     float radius, int iterations,
                     GLuint callerFramebufferID, int viewportWidth, int viewportHeight);
 
+// Reduce the blurred sample to ONE time-smoothed average luminance in a 1x1 FB.
+// Ping-ponged because a fragment shader cannot carry state between frames, and
+// an animated wallpaper would otherwise make the dim pump with the animation.
+void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer,
+                        SP<Render::IFramebuffer> lumaFb[2], int& current, bool& seeded,
+                        GLuint callerFramebufferID, int viewportWidth, int viewportHeight);
+
+
 // When mask is non-null (layers only), the shader composites the surface content
 // over the glass effect in a single pass. When mask is null (windows), the shader
 // outputs the glass effect alone.
@@ -74,6 +82,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
-                       const SMaskInfo* mask = nullptr);
+                       const SMaskInfo* mask = nullptr,
+                       SP<Render::IFramebuffer> adaptiveLumaFb = nullptr);
 
 } // namespace GlassRenderer

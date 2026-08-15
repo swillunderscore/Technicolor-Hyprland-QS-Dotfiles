@@ -48,6 +48,7 @@ uniform float tintAlpha;
 // (hue/saturation preserved); mixing toward a tint colour would desaturate.
 uniform float adaptiveTint;
 uniform float adaptiveTarget;
+uniform sampler2D adaptiveLumaTex;   // 1x1: window-average backdrop luma, time-smoothed
 uniform float lensDistortion;
 uniform float brightness;
 uniform float contrast;
@@ -670,27 +671,14 @@ void main() {
     // no correction and the full solve.
     if (adaptiveTint > 0.001) {
         // ONE dim factor for the whole window — sunglasses, not a tone curve.
-        //
-        // The taps below sit at FIXED window positions, not offsets from this
-        // pixel, so every fragment averages the same 16 texels and computes an
-        // identical dim. That is the whole point: anything driven by the local
-        // pixel (or a local neighbourhood) gives two identical objects two
-        // different colours depending on what happens to surround them, which
-        // is what made repeated pillars in a wallpaper render mismatched.
-        // Uniform scaling leaves the image's own light/dark structure and all
-        // of its contrast completely intact; only overall brightness moves.
-        float lAvg = 0.0;
-        for (int i = 0; i < 4; i++) {
-            for (int j = 0; j < 4; j++) {
-                vec2 wuv = (vec2(float(i), float(j)) + 0.5) * 0.25;
-                lAvg += dot(sampleBlurred(wuv).rgb, vec3(0.2126, 0.7152, 0.0722));
-            }
-        }
-        lAvg /= 16.0;
-        // Match the tonemap the visible pixels went through, so adaptiveTarget
-        // is expressed in what actually reaches the screen.
-        lAvg *= brightness;
-        float dim = clamp(adaptiveTarget / max(lAvg, 1e-4), 0.0, 1.0);
+        // The value arrives pre-averaged and time-smoothed in a 1x1 texture
+        // (adaptiveluma.frag), so it is identical for every fragment: identical
+        // content renders identically wherever it sits, and the image's own
+        // light/dark structure passes through untouched. Anything derived from
+        // the local pixel would give two identical objects two different
+        // colours depending on what surrounds them.
+        float lAvg = texture(adaptiveLumaTex, vec2(0.5)).r * brightness;
+        float dim  = clamp(adaptiveTarget / max(lAvg, 1e-4), 0.0, 1.0);
         color *= mix(1.0, dim, adaptiveTint);
     }
     color = mix(color, tintColor, tintAlpha);
@@ -1471,6 +1459,47 @@ void main() {
     float w = max(0.0, 1.0 - abs(gl_FragCoord.x - vLand.x))
             * max(0.0, 1.0 - abs(gl_FragCoord.y - vLand.y));
     fragColor = vec4(w, w, w, 0.0);
+}
+)GLSL"},
+
+    {"adaptiveluma.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+// Renders to a 1x1 framebuffer: the whole window's average backdrop luminance,
+// smoothed over time. Two reasons this is its own pass rather than 16 taps
+// inside the glass shader:
+//
+//  1. A fragment shader cannot remember anything between frames, and an
+//     animated wallpaper moves the average every frame — the dim would pump.
+//     Ping-ponging a 1x1 texture gives it the memory it needs, exactly how the
+//     wave simulation keeps its state.
+//  2. It is 16 fetches per WINDOW per frame instead of 16 per pixel.
+//
+// prevTex holds last frame's smoothed value; emaAlpha is derived from the
+// configured time constant and the real frame delta, so the response is the
+// same however fast the compositor is running.
+
+uniform sampler2D tex;       // the blurred backdrop sample
+uniform sampler2D prevTex;   // 1x1, last frame's smoothed luma
+uniform float emaAlpha;      // 0 = frozen, 1 = no smoothing
+uniform float seedPrev;      // 0 on the first frame: take the reading as-is
+
+out vec4 fragColor;
+
+void main() {
+    float lAvg = 0.0;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            vec2 uv = (vec2(float(i), float(j)) + 0.5) * 0.25;
+            lAvg += dot(texture(tex, uv).rgb, vec3(0.2126, 0.7152, 0.0722));
+        }
+    }
+    lAvg /= 16.0;
+
+    float prev = texture(prevTex, vec2(0.5)).r;
+    float outL = mix(prev, lAvg, clamp(emaAlpha, 0.0, 1.0));
+    fragColor = vec4(mix(lAvg, outL, seedPrev), 0.0, 0.0, 1.0);
 }
 )GLSL"},
 

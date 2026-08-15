@@ -29,3 +29,8 @@ plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:pie=0.03, wofi=0.
 # what Settings → System → "Adapt to what's behind" drives.
 plugin:hyprwater:adaptive_tint = 1
 plugin:hyprwater:adaptive_target = 0.18
+# Seconds for the dim to settle. One value is computed per WINDOW (not per
+# pixel), so identical content always renders identically; this is how long it
+# takes to respond. Animated wallpapers move the window average every frame —
+# without this the dim would pump with the animation.
+plugin:hyprwater:adaptive_speed = 2.0

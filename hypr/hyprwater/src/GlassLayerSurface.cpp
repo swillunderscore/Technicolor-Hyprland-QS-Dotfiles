@@ -175,6 +175,10 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.y);
         GlassRenderer::blurBackground(m_sampleFramebuffer, m_blurTempFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
+        GlassRenderer::updateAdaptiveLuma(m_sampleFramebuffer, m_lumaFb, m_lumaCurrent, m_lumaSeeded,
+                                          dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(),
+                                          viewportWidth, viewportHeight);
+
         m_hasCachedSample      = true;
         m_lastSceneGeneration  = currentGeneration;
     }
@@ -277,5 +281,5 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
                                      rawBox, transformBox, alpha,
                                      cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
-                                     &maskInfo);
+                                     &maskInfo, m_lumaFb[m_lumaCurrent]);
 }
