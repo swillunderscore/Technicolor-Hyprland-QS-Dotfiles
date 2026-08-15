@@ -42,10 +42,11 @@ uniform float glassOpacity;
 uniform float edgeThickness;
 uniform vec3 tintColor;
 uniform float tintAlpha;
-// Per-pixel adaptive tint. The glass already holds the backdrop sample here, so
-// readability costs a few ALU ops: bring bright backdrops down to adaptiveTarget
-// luma by solving mix() for the alpha that gets there — 1 - target/luma. No
-// polling, no stepping; it is correct on the frame the backdrop changes.
+// Per-pixel adaptive dimming. The glass already holds the backdrop sample here,
+// so readability costs a few ALU ops: scale luminance down to adaptiveTarget by
+// MULTIPLYING (hue/saturation preserved — mixing toward a tint color would
+// desaturate). No polling, no stepping; correct on the frame the backdrop
+// changes.
 uniform float adaptiveTint;
 uniform float adaptiveTarget;
 uniform float lensDistortion;
@@ -663,15 +664,17 @@ void main() {
     // ========================================
     // COLOR TINT OVERLAY
     // ========================================
-    float aTint = tintAlpha;
+    // Adaptive dimming — MULTIPLY, never mix toward black. Mixing desaturates:
+    // every color slides toward grey murk and the whole glass reads as "colors
+    // fucked". A per-channel scale preserves hue and saturation exactly and only
+    // brings luminance down: l * (target/l) = target. Strength blends between
+    // no correction and the full solve.
     if (adaptiveTint > 0.001) {
-        // luma of what is about to be tinted — AFTER blur/refraction/tonemap,
-        // i.e. exactly what the eye will sit over, minus the tint itself.
         float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
-        float needed = clamp(1.0 - adaptiveTarget / max(l, 1e-4), 0.0, 1.0);
-        aTint = max(aTint, needed * adaptiveTint);
+        float dim = clamp(adaptiveTarget / max(l, 1e-4), 0.0, 1.0);
+        color *= mix(1.0, dim, adaptiveTint);
     }
-    color = mix(color, tintColor, aTint);
+    color = mix(color, tintColor, tintAlpha);
 
     // ========================================
     // CAUSTIC SHIMMER — light through a moving surface
