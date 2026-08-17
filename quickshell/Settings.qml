@@ -2225,6 +2225,27 @@ FloatingWindow {
 
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
+                        // ── Adaptive tint: terminals only ──
+                        Rectangle {
+                            width: parent.width; height: 56; radius: 9; color: win.rowBg
+                            Column {
+                                anchors.left: parent.left; anchors.leftMargin: 12
+                                anchors.right: termTintTg.left; anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                Text { text: "Adaptive tint: terminals only"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                    text: "Limit the per-pixel glass tint to terminal windows (kitty, alacritty, wezterm, foot, konsole, and friends). Every other window \u2014 and all overlays \u2014 keeps plain glass." }
+                            }
+                            TcToggle {
+                                id: termTintTg
+                                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                on: win.glassValue({ key: "adaptive_tint_terminals_only", def: 0 }) >= 0.5
+                                onToggled: (v) => { win.glassSet("adaptive_tint_terminals_only", v ? 1 : 0); win.loadGlass() }
+                            }
+                        }
+
+                        Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
+
                         // ── local.conf (advanced) ──
                         Text { width: parent.width; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff; wrapMode: Text.WordWrap
                             text: "Advanced — ~/.config/hypr/local.conf (GPU, input, monitors). Save then Apply." }

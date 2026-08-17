@@ -4,10 +4,11 @@
 # value via hyprctl (which already reflects hyprland.conf + hyprwater-tuning.conf).
 set -u
 
-INT_KEYS=" blur_iterations shimmer:enabled shimmer:currents shimmer:currents_resolution "
+INT_KEYS=" blur_iterations shimmer:enabled shimmer:currents shimmer:currents_resolution adaptive_tint_terminals_only "
 for k in refraction_strength fresnel_strength specular_strength lens_distortion \
          edge_thickness chromatic_aberration blur_strength blur_iterations \
            brightness contrast saturation vibrancy \
+           adaptive_tint_terminals_only \
            shimmer:enabled shimmer:intensity shimmer:depth shimmer:scale \
            shimmer:speed shimmer:agitation shimmer:viscosity shimmer:murk shimmer:mouse shimmer:absorption shimmer:bed_variation shimmer:currents shimmer:currents_resolution shimmer:window_physics; do
     field=float

@@ -175,9 +175,14 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.y);
         GlassRenderer::blurBackground(m_sampleFramebuffer, m_blurTempFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
-        GlassRenderer::updateAdaptiveLuma(m_sampleFramebuffer, m_lumaFb, m_lumaCurrent, m_lumaSeeded,
-                                          dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(),
-                                          viewportWidth, viewportHeight);
+        // Layers have no window class to test against: when the terminal-only
+        // restriction is on, overlays simply lose the adaptive tint.
+        const bool termOnly = g_pGlobalState->config.adaptiveTintTerminalsOnly &&
+                              **g_pGlobalState->config.adaptiveTintTerminalsOnly;
+        if (!termOnly)
+            GlassRenderer::updateAdaptiveLuma(m_sampleFramebuffer, m_lumaFb, m_lumaCurrent, m_lumaSeeded,
+                                              dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(),
+                                              viewportWidth, viewportHeight);
 
         m_hasCachedSample      = true;
         m_lastSceneGeneration  = currentGeneration;
@@ -278,8 +283,12 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
 
     // The glass shader composites both the glass effect and the surface content
     // in a single pass: glass behind, surface on top, using the temp FBO alpha.
+    // A null luma framebuffer disables the adaptive tint for this pass.
+    const bool termOnly = g_pGlobalState->config.adaptiveTintTerminalsOnly &&
+                          **g_pGlobalState->config.adaptiveTintTerminalsOnly;
+    SP<Render::IFramebuffer> lumaFb = termOnly ? nullptr : m_lumaFb[m_lumaCurrent];
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
                                      rawBox, transformBox, alpha,
                                      cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
-                                     &maskInfo, m_lumaFb[m_lumaCurrent]);
+                                     &maskInfo, lumaFb);
 }

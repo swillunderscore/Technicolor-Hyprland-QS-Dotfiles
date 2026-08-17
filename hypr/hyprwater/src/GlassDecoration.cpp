@@ -103,8 +103,13 @@ void CGlassDecoration::draw(PHLMONITOR monitor, float const& alpha) {
     // between two values. Costs a full redraw per frame (~3% GPU here) and buys
     // a stable edge.
     if (const auto& adCfg = g_pGlobalState->config;
-        adCfg.adaptiveTint && **adCfg.adaptiveTint > 0.001f)
-        damageEntire();
+        adCfg.adaptiveTint && **adCfg.adaptiveTint > 0.001f) {
+        const bool termOnly =
+            adCfg.adaptiveTintTerminalsOnly && **adCfg.adaptiveTintTerminalsOnly;
+        const auto w = m_window.lock();
+        if (!termOnly || !w || isTerminalClass(w->m_class))
+            damageEntire();
+    }
 
     CGlassPassElement::SGlassPassData data{m_self, alpha};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CGlassPassElement>(data));
@@ -151,7 +156,6 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
         GlassRenderer::DBG_LOG("RP bail=nowindow\n");
         return;
     }
-
     const auto source = g_pHyprRenderer->m_renderData.currentFB;
     if (!source) {
         GlassRenderer::DBG_LOG("RP win=%lx bail=nosource\n", reinterpret_cast<uintptr_t>(window.get()));
@@ -190,9 +194,18 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
 
     // One time-smoothed average for the whole window, so the dim is uniform and
     // does not pump with an animated wallpaper.
-    GlassRenderer::updateAdaptiveLuma(m_sampleFramebuffer, m_lumaFb, m_lumaCurrent, m_lumaSeeded,
-                                      dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(),
-                                      viewportWidth, viewportHeight);
+    const auto& lumaCfg = g_pGlobalState->config;
+    const bool adaptiveAllowed =
+        !(lumaCfg.adaptiveTintTerminalsOnly && **lumaCfg.adaptiveTintTerminalsOnly) ||
+        isTerminalClass(window->m_class);
+    SP<Render::IFramebuffer> adaptiveLumaFb = m_lumaFb[m_lumaCurrent];
+    if (adaptiveAllowed) {
+        GlassRenderer::updateAdaptiveLuma(m_sampleFramebuffer, m_lumaFb, m_lumaCurrent, m_lumaSeeded,
+                                          dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(),
+                                          viewportWidth, viewportHeight);
+    } else {
+        adaptiveLumaFb = nullptr;
+    }
 
     GlassRenderer::DBG_LOG("RP win=%lx alpha=%.3f BLURRED str=%.2f rad=%.2f it=%d sample=%.0fx%.0f srcfb=%u box=%.0f,%.0f %.0fx%.0f\n",
                            reinterpret_cast<uintptr_t>(window.get()), alpha, blurStrength, blurRadius, blurIterations,
@@ -208,7 +221,7 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, source,
                                      windowBox, transformBox, alpha,
                                      cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
-                                     nullptr, m_lumaFb[m_lumaCurrent]);
+                                     nullptr, adaptiveLumaFb);
 }
 
 eDecorationType CGlassDecoration::getDecorationType() {
