@@ -24,6 +24,20 @@ COUNT=${#WALLPAPERS[@]}
 
 if [ "$MODE" = "random" ]; then
     INDEX=$((RANDOM % COUNT))
+elif [ "$MODE" = "shuffle" ]; then
+    # Random but never the wallpaper already showing (Super+W / phone):
+    # re-roll until it differs from the current index. Always terminates —
+    # with COUNT > 1 at least one index is not CURRENT, and a stale/missing
+    # CURRENT (< 0 or >= COUNT) can never match a valid INDEX.
+    CURRENT=$(cat "$STATE_FILE" 2>/dev/null || echo "-1")
+    if [ "$COUNT" -le 1 ]; then
+        INDEX=0
+    else
+        while :; do
+            INDEX=$((RANDOM % COUNT))
+            [ "$INDEX" -ne "$CURRENT" ] && break
+        done
+    fi
 elif [ "$MODE" = "restore" ]; then
     INDEX=$(cat "$STATE_FILE" 2>/dev/null || echo "0")
 elif [ -f "$MODE" ]; then

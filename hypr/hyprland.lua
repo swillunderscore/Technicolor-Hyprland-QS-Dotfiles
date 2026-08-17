@@ -187,7 +187,14 @@ hl.config({
             enabled = true,
             range = 4,
             render_power = 3,
-            color = "rgba(1a1a1aee)",
+            -- Both transparent. range=4 with a near-opaque black is not a
+            -- shadow, it is a 1px outline hugging the frame: measured at luma
+            -- 104 against a 175-210 surround, on every edge, and identical
+            -- with hyprwater unloaded — so the "black border on the glass"
+            -- was this, not the plugin. It reads far harder on a glassed
+            -- window because the glass takes the interior from 208 down to
+            -- 133, leaving the rim as the brightest-to-darkest step on screen.
+            color = "rgba(00000000)",
             color_inactive = "rgba(00000000)",  -- no shadow on unfocused (dark rim looked like a border)
         },
         blur = {
@@ -433,7 +440,7 @@ local function write_kb_manifest()
 end
 
 bind("wallpaper-next", "Wallpaper", "Next wallpaper",
-     mainMod .. " + W",      exec(H .. "/.config/hypr/wallpaper-cycle.sh next"))
+     mainMod .. " + W",      exec(H .. "/.config/hypr/wallpaper-cycle.sh shuffle"))
 bind("open-terminal", "Apps", "Open terminal",
      mainMod .. " + Q",      exec(terminal))
 bind("close-window", "Windows", "Close window",
