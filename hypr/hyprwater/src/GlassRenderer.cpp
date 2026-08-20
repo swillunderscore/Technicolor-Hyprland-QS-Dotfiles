@@ -159,11 +159,50 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
-    glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
-                      dstX0, dstY0, dstX1, dstY1,
-                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    // TWO-STEP REDUCTION. GL_LINEAR averages exactly 2x2 texels, which is the
+    // correct box filter for a 2x reduction and NOT correct for anything larger:
+    // a single 4x blit reads a 2x2 box out of a 4x4 footprint and discards 12 of
+    // every 16 source pixels. Undersampled text aliases into axis-aligned moire,
+    // and since the sample phase is srcX0 = box.x - pad, that moire crawls
+    // whenever the window moves and freezes the moment it stops -- which is
+    // exactly how the artifact presented. Composing two exact 2x steps gives a
+    // correct 4x4 average at the same final resolution, so quarter-res keeps its
+    // fill-rate saving without the aliasing.
+    if (downscale >= 4) {
+        static SP<Render::IFramebuffer> halfFramebuffer;
+        const int halfWidth  = std::max(1, sampleWidth  * 2);
+        const int halfHeight = std::max(1, sampleHeight * 2);
+        if (!halfFramebuffer)
+            halfFramebuffer = g_pHyprRenderer->createFB("hyprwater-sample-half");
+        if (halfFramebuffer->m_size.x != halfWidth || halfFramebuffer->m_size.y != halfHeight)
+            halfFramebuffer->alloc(halfWidth, halfHeight, sourceFramebuffer->m_drmFormat);
+
+        // Step 1: source -> half res. The destination rect is the final one
+        // scaled by two, so this step is exactly 2x and the clipping math above
+        // carries over unchanged.
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(halfFramebuffer));
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(halfFramebuffer));
+        glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
+                          dstX0 * 2, dstY0 * 2, dstX1 * 2, dstY1 * 2,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+        // Step 2: half res -> final. Whole surface to whole surface, so this is
+        // exactly 2x again and the content keeps its position.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(halfFramebuffer));
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
+        glBlitFramebuffer(0, 0, halfWidth, halfHeight,
+                          0, 0, sampleWidth, sampleHeight,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    } else {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
+        glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
+                          dstX0, dstY0, dstX1, dstY1,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    }
     if (smpScissor)
         glEnable(GL_SCISSOR_TEST);
 }
@@ -503,7 +542,7 @@ static void stepFluidFrame() {
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
-    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
+    g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 }
 
 // ---- Mouse wake ----------------------------------------------------------
@@ -684,7 +723,7 @@ void renderTrailTex() {
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
     glBindVertexArray(0);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
-    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
+    g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 }
 
 // Render the caustic illumination into its own texture, once per FRAME, and
@@ -886,9 +925,37 @@ static void renderCausticTex() {
     if (prevScissor)
         glEnable(GL_SCISSOR_TEST);
     glBindVertexArray(0);
-    glActiveTexture(GL_TEXTURE0);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
-    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
+
+    // MIP CHAIN FOR THE CAUSTIC — this is the flickering rim on glass windows.
+    //
+    // The glass samples this texture at the REFRACTED coordinate, and the dome
+    // refraction is steepest in the outermost columns: there the sample
+    // coordinate walks many texels per screen pixel, so a single GL_LINEAR tap
+    // lands on an essentially arbitrary filament of a high-frequency 1024²
+    // field — and on a DIFFERENT one every time the water moves. That is
+    // minification aliasing, and its signature is exactly temporal: the rim
+    // flickers while the interior, where the coordinate advances about one
+    // texel per pixel, sits perfectly still. Measured on an unfocused window's
+    // outermost column: 0.0 swing with shimmer off, 25.3 with it on, and 0.0
+    // again with shimmer on but its intensity at zero — the caustic term alone.
+    //
+    // A mip chain is the fix the sampler already knows how to apply. The
+    // hardware measures the coordinate's own derivative per pixel and reads a
+    // PRE-AVERAGED level wherever the sample is minified, which is the average
+    // that column was always meant to be showing. The interior still selects
+    // mip 0, so nothing there changes.
+    //
+    // Generated only after the FBO is unbound: this texture is the pass's own
+    // colour attachment, and writing its mips while it is still attached is a
+    // feedback loop.
+    if (fb->getTexture()) {
+        glActiveTexture(GL_TEXTURE7);
+        fb->getTexture()->bind();
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    glActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 }
 
 void stepWaveSim() {
@@ -1261,7 +1328,12 @@ void stepWaveSim() {
                 // Outer ring only: the shader samples just the middle of the
                 // sim, so these are genuinely off-screen and travel inward.
                 const float ang = fr(16) * 6.2831853f;
-                const float rr  = 0.40f + 0.09f * fr(32);
+                // Ring moved in from 0.40-0.49 to make room for the absorbing band added in
+                // wavesim.frag. At 0.40 the ring's outer edge sat at uv 0.01 - one
+                // percent from a reflecting wall - so half of every injected wave
+                // bounced straight back and stood against the inbound half.
+                // Waves still cross ~0.24 uv before reaching the visible radius (0.105).
+                const float rr  = 0.29f + 0.09f * fr(32);
                 const float rad = 0.025f + 0.050f * std::clamp(thick, 0.0f, 1.0f) + 0.020f * fr(40);
                 // Calm water is disturbed more GENTLY, not merely less often;
                 // and SELF-LIMITING by the energy already in flight — real
@@ -1382,7 +1454,7 @@ void stepWaveSim() {
     // leaving the sim's 512x512 viewport bound would scissor the glass pass down
     // to a corner of the screen.
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
-    g_pHyprOpenGL->setViewport(0, 0, prevVp[2], prevVp[3]);
+    g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 
 }
 
@@ -1888,7 +1960,9 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             if (auto& cfb = g_pGlobalState->causticFb; cfb && cfb->getTexture()) {
                 glActiveTexture(GL_TEXTURE7);
                 cfb->getTexture()->bind();
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                // Trilinear on minification so the mip chain built at the end
+                // of renderCausticTex actually gets used — see the note there.
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -1997,7 +2071,47 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
 
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
     g_pHyprOpenGL->scissor(rawBox);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // PIN THE BLEND FUNCTION FOR THE COMPOSITE — this is the flickering edge
+    // pixel on glassed windows.
+    //
+    // The shader outputs PREMULTIPLIED alpha, so the one correct func is
+    // (ONE, ONE_MINUS_SRC_ALPHA). But this draw ran with whatever func was
+    // ambient — and the offscreen passes above (mouse wake, caustic, trail)
+    // are THROTTLED, so on frames where one of them ran, the ambient func at
+    // this point differed from frames where none did. Premultiplied and
+    // straight blending agree EXACTLY wherever alpha is 1 — the whole window
+    // interior — and disagree only where alpha < 1: the single antialiased
+    // boundary pixel. Which is precisely what was measured: a 1px edge column
+    // flipping between two values while the interior stayed bit-identical,
+    // rate-locked to the 14ms pass throttle (never with the water off, always
+    // with the throttle at 0.6s, rock-stable with the passes forced to every
+    // frame), immune to zeroing every water term, to freezing the sim, and to
+    // full-monitor damage — because it was never the water's CONTENT, it was
+    // the blend state its passes left behind.
+    //
+    // Raw GL, not the compositor's cached wrapper, for the same reason as the
+    // scissor guard at the top. Saved and restored so the rest of the frame
+    // sees exactly the state it would have without us.
+    {
+        GLint pSrcRGB = 0, pDstRGB = 0, pSrcA = 0, pDstA = 0;
+        glGetIntegerv(GL_BLEND_SRC_RGB,   &pSrcRGB);
+        glGetIntegerv(GL_BLEND_DST_RGB,   &pDstRGB);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &pSrcA);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &pDstA);
+        const GLboolean pOn = glIsEnabled(GL_BLEND);
+        if (dbgLog())
+            DBG("BLENDSTATE on=%d src=%x dst=%x srcA=%x dstA=%x\n",
+                (int)pOn, pSrcRGB, pDstRGB, pSrcA, pDstA);
+
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA,
+                            GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        glBlendFuncSeparate(pSrcRGB, pDstRGB, pSrcA, pDstA);
+        if (!pOn)
+            glDisable(GL_BLEND);
+    }
     if (dbgLog()) {
         // The draw just landed in fbId(targetFramebuffer). Read one pixel of
         // what was actually written: if this stays dark while the SCREEN

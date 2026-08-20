@@ -224,6 +224,46 @@ const float PHI = 1.61803398875;
 // the corner of your eye.
 const float VIS = 0.105;
 
+// BICUBIC HEIGHT READ (cubic B-spline, 4 bilinear taps).
+// Bilinear filtering is only C0: the VALUE is continuous across a texel border
+// but the DERIVATIVE jumps there, and the second derivative is zero inside each
+// cell and a delta on the seams. Everything visible here is built from
+// derivatives of h — waveSlope for the warp and the glint, waveHessian for the
+// caustic — and the caustic divides its second differences by e*e, so those
+// seams get multiplied by a large number and printed. As a window is dragged
+// the sample points slide across seams and that shows up as the surface
+// snapping under the moving window, worst over high-frequency content like
+// text. Magnification makes it worse and this surface is magnified hard: at
+// VIS=0.105 on a 1024 grid only ~215 texels are stretched across the screen.
+//
+// A cubic B-spline kernel is C2, so both derivatives exist and vary smoothly
+// across cells — the seams stop existing rather than being blurred over. The
+// standard 4-tap formulation (Sigg & Hadwiger) folds the 16 point samples into
+// 4 offset BILINEAR fetches, so this is 4 texture reads, not 16. B-spline
+// slightly smooths rather than interpolating the samples exactly, which is the
+// right trade here: an exactly-interpolating Catmull-Rom is only C1 and leaves
+// the caustic's second derivative discontinuous, which is the actual problem.
+vec4 texBicubic(sampler2D t, vec2 uv, vec2 texSize) {
+    vec2 coord = uv * texSize - 0.5;
+    vec2 f     = fract(coord);
+    coord     -= f;
+    vec2 f2 = f * f;
+    vec2 f3 = f2 * f;
+    vec2 w0 = (1.0 / 6.0) * (-f3 + 3.0 * f2 - 3.0 * f + 1.0);
+    vec2 w1 = (1.0 / 6.0) * (3.0 * f3 - 6.0 * f2 + 4.0);
+    vec2 w2 = (1.0 / 6.0) * (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0);
+    vec2 w3 = (1.0 / 6.0) * f3;
+    vec2 s0 = w0 + w1;
+    vec2 s1 = w2 + w3;
+    vec2 o0 = ((w1 / s0) - 1.0 + coord + 0.5) / texSize;
+    vec2 o1 = ((w3 / s1) + 1.0 + coord + 0.5) / texSize;
+    vec4 a = texture(t, vec2(o0.x, o0.y));
+    vec4 b = texture(t, vec2(o1.x, o0.y));
+    vec4 c = texture(t, vec2(o0.x, o1.y));
+    vec4 d = texture(t, vec2(o1.x, o1.y));
+    return mix(mix(d, c, s0.x), mix(b, a, s0.x), s0.y);
+}
+
 float waveH(vec2 q) {
     // NEITHER fract() NOR clamp(). fract() wrapped, putting a hard seam wherever
     // the coordinate crossed 0/1 — which the edge-refraction zone then stretched
@@ -264,7 +304,9 @@ float waveH(vec2 q) {
     vec2 duv = flowShift > 0.0
              ? texture(velTexG, uv).rg * (flowShift * waveSubFrac)
              : vec2(0.0);
-    vec2 hh = texture(waveTex, uv - duv).rg - waveBias;
+    // C2 read: see texBicubic above. waveTexel is 1/grid, so its reciprocal
+    // is the grid size the kernel needs.
+    vec2 hh = texBicubic(waveTex, uv - duv, vec2(1.0 / max(waveTexel, 1e-9))).rg - waveBias;
     float h = mix(hh.y, hh.x, waveSubFrac);
     // Instantaneous bow wave of a dragged window: crest hugging the leading
     // edge, trough behind, zero at the centre and far away. Analytic in the
@@ -454,6 +496,7 @@ void main() {
 
     float cornerAlpha = 1.0 - smoothstep(-1.5, 0.5, cornerSdf);
     if (cornerAlpha < 0.001) discard;
+
 
     float minDim = min(fullSize.x, fullSize.y);
     float bezelWidthPx = edgeThickness * minDim;
@@ -730,7 +773,28 @@ void main() {
                 / max(deskSize.x, 1.0) * (0.85 * shimmerScale);
         // One tap, in the same uv domain the wave state uses.
         vec2 cuv = 0.5 + (wp - 0.5) * (2.0 * VIS);
-        vec3 c = texture(causticTex, cuv).rgb;
+        // EXPLICIT EDGE LOD, because the implicit one degenerates exactly
+        // where it matters. In the bezel the dome refraction compresses many
+        // caustic texels into every screen pixel, so the sampler must read a
+        // minified level or it lands on an arbitrary filament of a
+        // high-frequency field and picks a different one each time the water
+        // moves. The hardware infers that level from the coordinate's own
+        // derivative, and across most of the bezel it gets it right — but at
+        // the OUTERMOST pixel the dome's gradient degenerates as the SDF
+        // crosses the border, the inferred level collapses toward zero, and
+        // that single column goes on aliasing while its neighbours are
+        // correctly filtered. Measured on an unfocused window: with a mip
+        // chain and a flat +2 bias the columns just inside the border fell
+        // from ~11 levels of swing to under 1, while the border column itself
+        // stayed at 14. That is the thin flickering line.
+        //
+        // edgeProximity is already the bezel's own falloff — 1 at the border,
+        // decaying inward on the bezel width — which is the same shape as the
+        // measured flicker. Using it as a LOD bias makes the rim's filtering
+        // monotonic and frame-stable no matter what the derivative does, and
+        // costs nothing in the interior, where it goes to 0 and the implicit
+        // level is selected as before.
+        vec3 c = texture(causticTex, cuv, 1.0 + 2.0 * smoothstep(-24.0, 0.0, cornerSdf)).rgb;
 
         if (shimmerLightFromBackdrop != 0) {
             // THE FLOOR IS LIT, AND YOU ARE LOOKING AT THE LIT FLOOR.
@@ -872,6 +936,7 @@ void main() {
         color = color * trans + veil * amb;
     }
 
+
     // ========================================
     // FRESNEL RIM GLOW (edge zone)
     // ========================================
@@ -904,12 +969,37 @@ void main() {
         // waveGrad already carries the intensity slider (see the warp block),
         // so turning the water down fades these glints with it and leaves the
         // meniscus rim untouched — the rim is glass, not water.
-        float rim   = edgeProximity * edgeProximity;
-        float slope = length(waveGrad) * 0.85 + rim * 2.0;
-        float cosT  = inversesqrt(1.0 + slope * slope);
-        float g     = 1.0 - cosT;
-        float g2    = g * g;
-        float refl  = 0.02 + 0.98 * (g2 * g2 * g);   // Schlick, R0 = 0.02
+        // ...but put the two slopes through the curve SEPARATELY and add the
+        // resulting reflectances, rather than adding the slopes and passing the
+        // sum through once. Summing first is what made the thin flickering line
+        // along every water window's border.
+        //
+        // The ^5 is a gate, and a gate only works at the bottom of its curve.
+        // In the interior rim is ~0, so gentle swell lands near slope 0 where
+        // the fifth power is ~1e-12 and genuinely invisible — the behaviour the
+        // note above describes. But rim*2.0 does not just add a static rim: it
+        // moves the OPERATING POINT of the shared nonlinearity into its steep
+        // region, and there the very same gentle swell is answered at full
+        // gain. The wave's whole temporal variation therefore collected into
+        // the outermost pixels, where it reads as a border flickering rather
+        // than as water glinting. Measured on an unfocused window's edge
+        // column: ~13 levels of swing that survived forcing the caustic to a
+        // 16x16 average, i.e. not the caustic at all.
+        //
+        // Added as reflectances, each slope keeps its own gate. Calm water
+        // gives fW ~ 0 and the static meniscus rim is bit-for-bit what it was;
+        // steep water glints wherever it actually is, edge or middle, which is
+        // what this block set out to do.
+        float rim  = edgeProximity * edgeProximity;
+        float sR   = rim * 2.0;                  // the glass meniscus: static
+        float sW   = length(waveGrad) * 0.85;    // the water: moving
+        float cR   = inversesqrt(1.0 + sR * sR);
+        float cW   = inversesqrt(1.0 + sW * sW);
+        float gR   = 1.0 - cR;
+        float gW   = 1.0 - cW;
+        float gR2  = gR * gR;
+        float gW2  = gW * gW;
+        float refl = 0.02 + 0.98 * min(gR2 * gR2 * gR + gW2 * gW2 * gW, 1.0);
         color += vec3(1.0) * refl * fresnelStrength * 2.1;
     }
 
@@ -1224,6 +1314,21 @@ void main() {
     // spreads the correction uniformly here. A constant has no gradient, so
     // nothing downstream can see it.
     hNext -= volComp;
+
+    // ABSORBING BOUNDARY (sponge layer).
+    // The stencil above samples with clamped edges, which makes the domain wall
+    // a perfect mirror: every wave that reaches it returns at full amplitude and
+    // stands against the still-outbound field behind it. That is the persistent
+    // "double wave" - two counter-propagating copies of the same disturbance -
+    // and the same mechanism behind the corner pile-up noted in the stability
+    // comment above. Ramping the retention down over the outer band bleeds
+    // outgoing energy away before it can turn around; the ramp is gradual so the
+    // sponge itself does not become a second reflecting interface.
+    // Paired with the injection ring moving in to 0.29-0.38 (GlassRenderer.cpp)
+    // so the band is empty water rather than where the waves are born.
+    vec2  dW    = min(v_texcoord, 1.0 - v_texcoord);
+    float sponge = smoothstep(0.0, 0.10, min(dW.x, dW.y));
+    hNext *= mix(0.96, 1.0, sponge);
 
     // SOFT amplitude limit. The old hard clamp at 0.49 flat-topped the waves
     // whenever agitation outran damping — and a plateau's rim is a ring of

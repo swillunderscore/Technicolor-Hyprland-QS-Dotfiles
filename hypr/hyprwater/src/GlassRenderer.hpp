@@ -40,6 +40,12 @@ inline constexpr float BLUR_DOWNSCALE_QUARTER   = 1.30f; // min blur_strength fo
 // lower resolution and you see the backdrop pixelate, so each step down only
 // engages once the blur is wide enough to cover for it.
 [[nodiscard]] inline int blurDownscale(float strength) {
+    // Quarter-res is safe again: sampleBackground() now reduces 4x as TWO
+    // sequential 2x blits, and GL_LINEAR's 2x2 average is the exact box
+    // filter for a 2x step. A single 4x GL_LINEAR blit was not — it read a
+    // 2x2 box out of a 4x4 footprint, discarding 12 of every 16 source
+    // pixels. Undersampled text aliased into axis-aligned moire that
+    // crawled with the window, because the sample phase is srcX0 = box.x-pad.
     if (strength >= BLUR_DOWNSCALE_QUARTER)  return BLUR_DOWNSCALE_MAX * 2;
     if (strength >= BLUR_DOWNSCALE_THRESHOLD) return BLUR_DOWNSCALE_MAX;
     return 1;
