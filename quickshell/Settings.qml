@@ -1129,10 +1129,12 @@ FloatingWindow {
     }
     // Append/replace the per-surface keys, then re-run the SAME pipeline as the
     // global commit so every surface regenerates. Reads color-tuning.conf, strips
-    // any existing *_SAT/_BRIGHT/_HUE surface lines, re-emits the current set.
+    // the old banner + any existing *_SAT/_BRIGHT/_HUE surface lines (any prefix,
+    // so surfaces retired from surfaceSpecs don't linger), re-emits the current
+    // set. Idempotent: committing twice leaves a byte-identical file.
     Process { id: surfaceCommitProc }
     function commitSurfaceTune() {
-        var body = "\n# per-surface tuning (Settings → Colors → Per-surface)\n"
+        var body = "# per-surface tuning (Settings → Colors → Per-surface)\n"
         for (var i = 0; i < win.surfaceSpecs.length; i++) {
             var key = win.surfaceSpecs[i].key
             var s = win.surfaceTune[key]; if (!s) continue
@@ -1142,11 +1144,12 @@ FloatingWindow {
             if (Math.abs((s.hue===undefined?0:s.hue)) > 1e-3)        body += KEY + "_HUE=" + s.hue.toFixed(1) + "\n"
         }
         var conf = win.homeDir + "/.config/hypr/color-tuning.conf"
-        // sed strips old surface lines (uppercase PREFIX_SAT/BRIGHT/HUE) but keeps
-        // the global CONTRAST_BIAS/SATURATION/BRIGHTNESS/HUE; then append the new set.
+        // grep strips the old banner and surface lines (uppercase PREFIX_SAT/BRIGHT/
+        // HUE, any prefix) but keeps the bare globals CONTRAST_BIAS/SATURATION/
+        // BRIGHTNESS/HUE — no underscore, so the generic pattern can't hit them.
         surfaceCommitProc.command = ["bash", "-c",
             "conf='" + conf + "'; " +
-            "tmp=\"$(grep -vE '^(BAR|NOTIFICATIONS|GTK|DISCORD|SPOTIFY|BRAVE|KDE|TELEGRAM)_(SAT|BRIGHT|HUE)=' \"$conf\" 2>/dev/null)\"; " +
+            "tmp=\"$(grep -vE '^# per-surface tuning|^[A-Z]+_(SAT|BRIGHT|HUE)=' \"$conf\" 2>/dev/null)\"; " +
             "printf '%s\\n' \"$tmp\" > \"$conf\"; " +
             "printf %s '" + Qt.btoa(body) + "' | base64 -d >> \"$conf\"; " +
             "wp=\"$(cat /tmp/wallpaper-current-path 2>/dev/null)\"; " +
