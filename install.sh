@@ -40,7 +40,7 @@ ok "cloned to $SRC"
 # ── core packages (official repos only — no AUR) ────────────────────────────
 say "Installing the core (official repos only)…"
 sudo pacman -S --needed --noconfirm \
-  hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
+  hyprland quickshell mako polkit-gnome xdg-desktop-portal-hyprland pipewire wireplumber \
   ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
   grim slurp satty wl-clipboard playerctl brightnessctl base-devel ttf-jetbrains-mono-nerd
 ok "core installed"
@@ -136,6 +136,23 @@ if ask "Theme your file manager + Qt apps?  (installs Dolphin + qt6ct-kde)"; the
   info "  color_scheme_path at ~/.local/share/color-schemes/Technicolor.colors"
   info "  (full details: README → App theming → Dolphin / Qt apps)"
 fi
+
+# A bare Hyprland session starts no polkit agent, and Arch installs none by
+# default — so every GUI password box (pkexec, mounting, package updates)
+# silently fails with "Error creating textual authentication agent" until one
+# runs. Autostart the lightweight gnome one. If your distro already provides an
+# agent, delete this file after install: two agents means two prompts.
+mkdir -p "$HOME/.config/autostart"
+cat > "$HOME/.config/autostart/polkit-gnome-authentication-agent-1.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Polkit authentication agent
+Comment=GUI password box for pkexec and mounts
+Exec=/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+ok "polkit agent autostarts (GUI password prompts now have a box to appear in)"
 
 # Effects governor: steps the desktop down while the GPU is busy so games and
 # local models get the frame time. Autostarted rather than left to the user
