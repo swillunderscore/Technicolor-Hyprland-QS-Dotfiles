@@ -1,0 +1,7 @@
+[Unit]
+Description=Rebuild quickshell-git when a Qt update breaks the bar
+
+[Service]
+Type=oneshot
+ExecStart=%h/.config/hypr/quickshell-autofix.sh
+TimeoutStartSec=45min

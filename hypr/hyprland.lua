@@ -243,6 +243,7 @@ hl.config({
     },
 })
 
+
 -- ── Environment variables ───────────────────────────────────────────────────
 hl.env("XDG_SESSION_TYPE", "wayland")
 hl.env("QT_QPA_PLATFORM", "wayland")
@@ -417,9 +418,48 @@ do
 end
 
 local kbManifest = {}
+-- Keys the keyboard cursor owns while Right Alt is down. local.lua binds these
+-- to no_op at mask 128/136 so WASD does not type while you are moving the
+-- pointer; a mirrored bind landing on the same mask would fight that.
+local cursorKeys = {
+    W = true, A = true, S = true, D = true, SPACE = true, RETURN = true,
+    BACKSLASH = true, SEMICOLON = true, BRACKETRIGHT = true, APOSTROPHE = true,
+}
+
 local function bind(id, cat, label, combo, dispatcher, opts, meta)
     local eff = kbOverrides[id] or combo
     hl.bind(eff, dispatcher, opts)
+    -- ...and again with MOD5, so HOLDING RIGHT ALT CHANGES NOTHING.
+    --
+    -- Right Alt is MOD5 (lv3:ralt_switch, see local.lua) and Hyprland matches
+    -- modmasks EXACTLY, so holding it silently adds 128 to every chord and
+    -- every shortcut stops matching -- the whole set goes dead precisely when
+    -- you are driving the desktop from the keyboard and need it most. Right Alt
+    -- is meant to be TRANSPARENT: it is the cursor trigger, not a modifier
+    -- anyone is chording with, so Right-Alt+Super+D must simply be Super+D.
+    -- LEFT Alt is the real Alt and is untouched here.
+    --
+    -- Mirrored for EVERY bind, not just the SUPER ones -- media keys, ALT+Tab
+    -- and bare Escape broke the same way. The only exclusion is a chord whose
+    -- key the cursor itself owns and that carries no other modifier: mirroring
+    -- those would land on mask 128/136 and fight the no_op suppression binds
+    -- that stop WASD typing. Nothing today hits that case; the guard is for
+    -- whatever gets added later.
+    --
+    -- MOD5 only, deliberately not MOD5+ALT. Left Alt is modY, and that variant
+    -- makes SUPER+D (start dictation) and SUPER+ALT+D (cancel it) collide on
+    -- mask 200 with both Alts down -- and per the rule above, holding Left Alt
+    -- SHOULD still mean Alt. modX is SPACE, not a modifier, so it never affects
+    -- the mask and every shortcut keeps working at that speed tier.
+    --
+    -- Deliberately NOT added to kbManifest: these are plumbing, and Settings ->
+    -- Hotkeys should show one row per shortcut, not two.
+    local up  = eff:upper()
+    local key = up:match("([^+]+)$"):gsub("^%s+", ""):gsub("%s+$", "")
+    local plain = not (up:find("SUPER") or up:find("CTRL") or up:find("SHIFT"))
+    if not (cursorKeys[key] and plain) then
+        hl.bind("MOD5 + " .. eff, dispatcher, opts)
+    end
     -- Editable = a plain keyboard chord. Mouse/scroll chords, locked media
     -- keys and repeating binds keep their hardware keys; meta.editable=false
     -- pins chords that have a paired release bind (the pair would not move
@@ -485,12 +525,17 @@ bind("move-down",  "Focus & layout", "Move window down",  mainMod .. " + SHIFT +
 bind("window-switcher", "Focus & layout", "Window switcher",
      "ALT + Tab", hl.dsp.global("quickshell:alttab"), nil, { editable = false })
 hl.bind("ALT + Tab", hl.dsp.global("quickshell:alttabrelease"), { release = true })
+-- MOD5 twins for the two RELEASE halves below. These are raw hl.bind calls, so
+-- the wrapper's Right-Alt mirroring never saw them -- and a switcher whose
+-- press fires but whose release does not just stays open on screen.
+hl.bind("MOD5 + ALT + Tab", hl.dsp.global("quickshell:alttabrelease"), { release = true })
 -- SUPER + scroll UP = raise the switcher, SUPER + scroll DOWN = send the
 -- hovered window away (minimize). Bound via scrollUp/scrollDown (see the top of
 -- this file) so the PHYSICAL gesture is what's fixed, not the axis name.
 bind("window-switcher-scroll", "Focus & layout", "Window switcher (scroll)",
      mainMod .. " + " .. scrollUp, hl.dsp.global("quickshell:alttab"))
 hl.bind("SUPER_L", hl.dsp.global("quickshell:alttabrelease"), { release = true })
+hl.bind("MOD5 + SUPER_L", hl.dsp.global("quickshell:alttabrelease"), { release = true })
 -- minimize the window under the cursor
 bind("minimize-under-cursor", "Windows", "Minimize window under cursor",
      mainMod .. " + " .. scrollDown, exec(H .. "/.config/hypr/minimize.sh"))
@@ -565,7 +610,7 @@ hl.on("hyprland.start", function()
     for _, c in ipairs(startup_execs) do hl.exec_cmd(c) end
     hl.exec_cmd("gnome-keyring-daemon --start --components=secrets")
     hl.exec_cmd("/usr/libexec/xdg-desktop-portal-hyprland &")
-    hl.exec_cmd("quickshell")
+    hl.exec_cmd(H .. "/.config/hypr/quickshell-launch.sh")
     hl.exec_cmd("mako")
     hl.exec_cmd("nwg-look -a")
     hl.exec_cmd("awww-daemon")

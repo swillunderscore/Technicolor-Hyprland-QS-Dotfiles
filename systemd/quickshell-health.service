@@ -1,0 +1,8 @@
+[Unit]
+Description=Check the quickshell binary still loads (Qt ABI watchdog)
+
+[Service]
+Type=oneshot
+# ExecCondition: nonzero exit SKIPS the rest without failing the unit.
+ExecCondition=/bin/sh -c '! /usr/bin/quickshell --private-check-compat >/dev/null 2>&1'
+ExecStart=/usr/bin/systemctl --user start quickshell-autofix.service

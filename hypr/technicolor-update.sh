@@ -45,6 +45,14 @@ main() {
     fi
     mkdir -p ~/.local/share/applications
     cp "$TMP"/applications/*.desktop ~/.local/share/applications/ 2>/dev/null
+    # Qt ABI watchdog units (see install.sh) — repeated here so installs that
+    # predate them pick them up on update.
+    if [ -d "$TMP"/systemd ]; then
+        mkdir -p ~/.config/systemd/user
+        cp "$TMP"/systemd/quickshell-*.service "$TMP"/systemd/quickshell-*.timer ~/.config/systemd/user/ 2>/dev/null
+        systemctl --user daemon-reload 2>/dev/null || true
+        systemctl --user enable --now quickshell-health.timer 2>/dev/null || true
+    fi
     # Files with safe defaults that are gitignored (so the copy above doesn't
     # touch the user's): create from the .example ONLY if missing — never clobber.
     cp -n ~/.config/hypr/hyprwater-tuning.conf.example ~/.config/hypr/hyprwater-tuning.conf 2>/dev/null

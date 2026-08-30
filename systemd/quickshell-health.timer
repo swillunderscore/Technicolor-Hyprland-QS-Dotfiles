@@ -1,0 +1,10 @@
+[Unit]
+Description=Catch Qt-update ABI breaks that kill the bar
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
