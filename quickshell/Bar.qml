@@ -346,6 +346,19 @@ PanelWindow {
     function resolveAppIcon(appId, title) {
         if (!appId || appId === "") return ""
 
+            // Quickshell's own desktop-entry index, asked FIRST and asked
+            // LIVE. iconCache below is built by one find(1) sweep at startup
+            // and never rebuilt, so anything installed while the bar is
+            // running has no icon until quickshell is restarted.
+            // heuristicLookup() is built for exactly this — window class to
+            // desktop entry, including the usual class-name mangling — and it
+            // reflects the current state of disk rather than a snapshot.
+            var de = DesktopEntries.heuristicLookup(appId)
+            if (de && de.icon) {
+                var dep = Quickshell.iconPath(de.icon, true)
+                if (dep !== "") return dep
+            }
+
             // Manual overrides for apps that can't be auto-resolved
             var overrides = {
                 "Slippi Launcher": "file://" + bar.homeDir + "/Slippi/73bff6acc99072beb352c16a24b3e6cd.png"
@@ -5274,10 +5287,25 @@ PanelWindow {
         brightnessReadAll.running = true
     }
 
-    // Discover DDC monitors: parse `ddcutil detect` into { connector, bus } pairs.
+    // Discover DDC monitors as { connector, bus } pairs, straight from
+    // /sys/class/drm: every connected connector with an EDID, on its DP AUX
+    // bus (the connector's i2c-N child) or, for HDMI/DVI, its `ddc` link.
+    // Takes milliseconds. `ddcutil detect` (3.0+) also probes each DP
+    // connector's unused DDC-pin bus and waits ~1.2 s for each to time out,
+    // which held the sliders ~2.5 s on every menu open. It's only the
+    // fallback now, for drivers that expose no connector i2c links.
+    // Monitors that don't answer DDC are dropped by brightnessReadAll.
     Process {
         id: ddcDetectProc
         command: ["bash", "-c",
+            "found=0; for c in /sys/class/drm/card*-*; do " +
+            "[ \"$(cat \"$c/status\" 2>/dev/null)\" = connected ] || continue; " +
+            "[ \"$(head -c 8 \"$c/edid\" 2>/dev/null | wc -c)\" = 8 ] || continue; " +
+            "bus=''; for d in \"$c\"/i2c-*; do [ -e \"$d\" ] && { bus=${d##*/i2c-}; break; }; done; " +
+            "if [ -z \"$bus\" ] && [ -e \"$c/ddc\" ]; then l=$(readlink \"$c/ddc\"); bus=${l##*/i2c-}; fi; " +
+            "case \"$bus\" in ''|*[!0-9]*) continue;; esac; " +
+            "n=${c##*/}; printf '%s\\t%s\\n' \"${n#card*-}\" \"$bus\"; found=1; " +
+            "done; [ $found = 1 ] && exit 0; " +
             "ddcutil detect --brief 2>/dev/null | awk '" +
             "/^Display/{if(bus!=\"\"){print conn\"\\t\"bus}; bus=\"\"; conn=\"\"} " +
             "/I2C bus:/{n=$NF; sub(/.*i2c-/,\"\",n); bus=n} " +
@@ -5331,6 +5359,9 @@ PanelWindow {
     }
 
     // Read each detected monitor's current brightness in one batched call.
+    // A monitor whose read fails doesn't speak DDC (or is powered off), so it
+    // loses its slider — the sysfs scan lists every connected display, and
+    // this is what keeps the list to monitors a slider can actually drive.
     Process {
         id: brightnessReadAll
         stdout: StdioCollector {
@@ -5343,10 +5374,8 @@ PanelWindow {
                     var b = parseInt(p[0]); var v = parseInt(p[1])
                     if (!isNaN(b) && !isNaN(v)) map[b] = v
                 }
-                var mons = bar.ddcMonitors.slice()
-                for (var j = 0; j < mons.length; j++) {
-                    if (map[mons[j].bus] !== undefined) mons[j].brightness = map[mons[j].bus]
-                }
+                var mons = bar.ddcMonitors.filter(function (m) { return map[m.bus] !== undefined })
+                for (var j = 0; j < mons.length; j++) mons[j].brightness = map[mons[j].bus]
                 bar.ddcMonitors = mons
             }
         }
