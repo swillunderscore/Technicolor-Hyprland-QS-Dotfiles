@@ -12,6 +12,11 @@
 # a kB/s RATE, and diffing rates yields acceleration ≈ 0 for steady transfers,
 # which flatlined the per-app graph lines); we diff between refreshes to
 # recover the per-second byte rate for that interval.
+#
+# -C makes nethogs capture UDP too. Without it nethogs sees TCP ONLY, so QUIC
+# (HTTP/3 — most of Brave/YouTube/Google traffic), game traffic, Sunshine and
+# WireGuard/Tailscale never reached the graph: measured 0.07 of 10.55 MB
+# attributed during a Brave download, vs 9.46 MB with -C.
 
 import os, select, signal, subprocess, sys
 
@@ -30,7 +35,7 @@ signal.signal(signal.SIGTERM, _shutdown)
 signal.signal(signal.SIGINT, _shutdown)
 
 proc = subprocess.Popen(
-    ["sudo", "-n", NETHOGS, "-t", "-d", "1", "-v", "2"],
+    ["sudo", "-n", NETHOGS, "-t", "-d", "1", "-v", "2", "-C"],
     stdout=subprocess.PIPE,
     stderr=subprocess.DEVNULL,
     text=True,
