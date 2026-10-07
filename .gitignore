@@ -56,3 +56,9 @@ hypr/Hypr-DarkWindow/out/
 hypr/hyprwater/.abi-stamp
 hypr/*/build-failed.log
 hypr/effects-governor.conf
+
+# Wallpaper sequence state (wallpaper-seed.py writes these per machine), and
+# private per-machine hooks such as wallpaper-cycle.local.sh
+hypr/wallpaper-seed
+hypr/wallpaper-epoch
+hypr/*.local.sh

@@ -93,23 +93,20 @@ def _surface_tuning_for(name):
     """(sat_cap, bright_cap, hue_deg) ceilings for `name` from color-tuning.conf."""
     pre = name.upper() + "_"
     sat, bright, hue = 1.0, 1.0, 0.0
-    try:
-        for line in open(TUNING_PATH):
-            line = line.strip()
-            if line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            try:
-                if k.strip() == pre + "SAT":
-                    sat = float(v.strip())
-                elif k.strip() == pre + "BRIGHT":
-                    bright = float(v.strip())
-                elif k.strip() == pre + "HUE":
-                    hue = float(v.strip())
-            except ValueError:
-                pass
-    except Exception:
-        pass
+    for line in _tuning_lines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        try:
+            if k.strip() == pre + "SAT":
+                sat = float(v.strip())
+            elif k.strip() == pre + "BRIGHT":
+                bright = float(v.strip())
+            elif k.strip() == pre + "HUE":
+                hue = float(v.strip())
+        except ValueError:
+            pass
     return sat, bright, hue
 
 
@@ -138,14 +135,38 @@ def _tune_palette(d, name):
         return d
     out = {}
     for k, v in d.items():
-        if isinstance(v, str) and v.startswith("#") and len(v) == 7:
+        if not isinstance(v, str):
+            out[k] = v
+        elif v.startswith("#") and len(v) == 7:
             try:
                 out[k] = hexs(_surface_apply(rgb(v), sat, bright, hue))
+            except Exception:
+                out[k] = v
+        elif v.startswith("hsl"):
+            # The ACCENT is emitted as hsl()/hsla(), not hex — so a hex-only
+            # rewrite left the single most visible colour untuned while every
+            # surface around it moved. Applied in HSL directly: no round trip
+            # through rgb, and the alpha on hsla() survives.
+            try:
+                out[k] = _hsl_apply(v, sat, bright, hue)
             except Exception:
                 out[k] = v
         else:
             out[k] = v
     return out
+
+
+def _hsl_apply(text, sat_cap, bright_cap, hue_deg):
+    """Same ceilings as _surface_apply, on an hsl()/hsla() string."""
+    head, rest = text.split("(", 1)
+    parts = [x.strip() for x in rest.rstrip(") ").split(",")]
+    h = (float(parts[0]) + hue_deg) % 360.0
+    s = min(float(parts[1].rstrip("%")) / 100.0, sat_cap)
+    l = min(float(parts[2].rstrip("%")) / 100.0, bright_cap)
+    if len(parts) > 3:
+        return "hsla({:.0f}, {:.0f}%, {:.0f}%, {})".format(
+            h, s * 100, l * 100, parts[3])
+    return "hsl({:.0f}, {:.0f}%, {:.0f}%)".format(h, s * 100, l * 100)
 
 
 def _surface_tune(d):
@@ -173,6 +194,36 @@ def rel_lum(c):
 # this module (Spotify, Telegram, KDE, GTK, Brave all use ink_rgb), so a single
 # slider moves the light/dark text crossover everywhere at once.
 TUNING_PATH = os.path.expanduser("~/.config/hypr/color-tuning.conf")
+# Optional untracked overlay. Same syntax; keys here win. Exists so surfaces
+# that should not be named in a public dotfiles repo can still be tuned.
+TUNING_LOCAL_PATH = os.path.expanduser("~/.config/hypr/color-tuning.local.conf")
+
+
+def _tuning_lines():
+    """Every tuning line, base file first so the local overlay wins."""
+    for path in (TUNING_PATH, TUNING_LOCAL_PATH):
+        try:
+            for line in open(path):
+                yield line
+        except Exception:
+            pass
+
+
+def extra_surfaces():
+    """Surface names from `SURFACES=a,b` — each gets its palette JSON written.
+
+    Lets a surface be added by config alone, with no generator edit and no
+    mention of it in this file.
+    """
+    names = []
+    for line in _tuning_lines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k.strip() == "SURFACES":
+            names = [n.strip().lower() for n in v.split(",") if n.strip()]
+    return names
 
 
 def load_tuning():
@@ -287,6 +338,13 @@ def compute_vars(primary, secondary, third, accent):
 
     return {
         "p": P, "s": S, "t": T, "a": A, "ai": Ai,
+        # The ink RULE, not just its results: a consumer that paints a surface
+        # the generator never saw (a frost step, a hover state) can then pick
+        # its ink the same way everything else does, instead of inheriting a
+        # parent's and drifting grey.
+        "_inkthreshold": "%.6f" % _ink_threshold(),
+        "_inkdark": hexs(DARK),
+        "_inklight": hexs(LIGHT),
         "ts0": ts[0], "ts1": ts[1], "ts2": ts[2], "ts3": ts[3], "ts4": ts[4],
         "tc0": tc[0], "tc1": tc[1], "tc2": tc[2], "tc3": tc[3], "tc4": tc[4],
         "acc1": hv(72), "acc2": hv(65), "acc3": hv(58), "acc4": hv(51), "acc5": hv(45), "accnew": hv(58),
@@ -561,6 +619,34 @@ def write_if_changed(path, data):
     write_atomic(path, data)
 
 
+def _palette_json(name):
+    """The computed palette dict for `name`, with that surface's tuning applied."""
+    d = _tune_palette(_raw_env(), name)
+    V = compute_vars(rgb(d.get("GRADIENT_END", "#cd9b39")),
+                     rgb(d.get("GRADIENT_START", "#3e71c0")),
+                     rgb(d.get("OCCUPIED", "#546c8a")),
+                     rgb(d.get("VISIBLE", "#758994")))
+    # _wallv = wallpaper version (path+mtime) -> lets a consumer notice the
+    # wallpaper itself changed, not just the colours
+    try:
+        wp = open("/tmp/wallpaper-current-path").read().strip()
+        V["_wallv"] = "{}-{}".format(abs(hash(wp)) % 10**8, int(os.path.getmtime(wp)))
+    except Exception:
+        pass
+    return V
+
+
+def write_surface_json(name, filename=None):
+    """Write `name`'s tuned palette to $XDG_RUNTIME_DIR/technicolor-<name>.json."""
+    import json
+    rt = os.environ.get("XDG_RUNTIME_DIR", "/run/user/{}".format(os.getuid()))
+    out = os.path.join(rt, filename or "technicolor-{}.json".format(name))
+    tmp = out + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(_palette_json(name), f)
+    os.replace(tmp, out)
+
+
 def main():
     p = load()
     # primary/secondary = THE BAR'S gradient pair (the only two colors the
@@ -582,24 +668,19 @@ def main():
     # Spotify is its own surface, so re-tune the raw env palette for spotify and
     # recompute its vars — otherwise Spotify would wrongly track Discord's slider.
     try:
-        import json
-        sp = _tune_palette(_raw_env(), "spotify")
-        Vsp = compute_vars(rgb(sp.get("GRADIENT_END", "#cd9b39")),
-                           rgb(sp.get("GRADIENT_START", "#3e71c0")),
-                           rgb(sp.get("OCCUPIED", "#546c8a")),
-                           rgb(sp.get("VISIBLE", "#758994")))
-        # _wallv = wallpaper version (path+mtime) -> tells the Spotify extension
-        # to refresh its wallpaper-background layer (served via /wall)
-        try:
-            wp = open("/tmp/wallpaper-current-path").read().strip()
-            Vsp["_wallv"] = "{}-{}".format(abs(hash(wp)) % 10**8, int(os.path.getmtime(wp)))
-        except Exception:
-            pass
-        rt = os.environ.get("XDG_RUNTIME_DIR", "/run/user/{}".format(os.getuid()))
-        with open(os.path.join(rt, "technicolor-colors.json"), "w") as f:
-            json.dump(Vsp, f)
+        write_surface_json("spotify", "technicolor-colors.json")
     except Exception:
         pass
+
+    # Any surface named in `SURFACES=` (color-tuning.conf or the untracked
+    # .local overlay) gets its own tuned palette at technicolor-<name>.json.
+    # Config-driven on purpose: adding a surface needs no edit here, so a
+    # private one never has to be named in this file.
+    for _name in extra_surfaces():
+        try:
+            write_surface_json(_name)
+        except Exception:
+            pass
 
     # static structures — written only-if-changed -> never reloaded on wallpaper change
     write_if_changed(OUT_BLOCKS, struct("Technicolor Blocks", BLOCKS_LAYER))

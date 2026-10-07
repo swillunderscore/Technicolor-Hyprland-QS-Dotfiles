@@ -2228,16 +2228,17 @@ FloatingWindow {
 
                         Rectangle { width: parent.width; height: 1; color: win.fg; opacity: 0.12 }
 
-                        // ── Adaptive tint: terminals only ──
+                        // ── Tint: terminals only ── (hyprwater key keeps its old
+                        // name, adaptive_tint_terminals_only, so saved configs still apply)
                         Rectangle {
                             width: parent.width; height: 56; radius: 9; color: win.rowBg
                             Column {
                                 anchors.left: parent.left; anchors.leftMargin: 12
                                 anchors.right: termTintTg.left; anchors.rightMargin: 12
                                 anchors.verticalCenter: parent.verticalCenter; spacing: 2
-                                Text { text: "Adaptive tint: terminals only"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { text: "Tint: terminals only"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
                                 Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
-                                    text: "Limit the per-pixel glass tint to terminal windows (kitty, alacritty, wezterm, foot, konsole, and friends). Every other window \u2014 and all overlays \u2014 keeps plain glass." }
+                                    text: "Only terminal windows (kitty, Alacritty, Ghostty, WezTerm, foot, Konsole, and friends) get tinted \u2014 the adaptive tint, the glass tint color, and its dimming of bright areas. Every other window, the bar and all overlays keep clear, untinted glass, and the bar\u2019s pills stop following the terminal transparency." }
                             }
                             TcToggle {
                                 id: termTintTg

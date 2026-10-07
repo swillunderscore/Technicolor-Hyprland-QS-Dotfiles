@@ -5,6 +5,49 @@ if ! flock -n 9; then
     exit 0
 fi
 
+# SESSION ENVIRONMENT, WHEN THE CALLER HAS NONE.
+#
+# Both apply branches below switch on XDG_CURRENT_DESKTOP, and awww and hyprctl
+# need WAYLAND_DISPLAY and the instance signature. A login shell has all of
+# that; a systemd USER service does not — it starts with barely more than HOME,
+# PATH and XDG_RUNTIME_DIR.
+#
+# A watcher running as a user service once called this with XDG_CURRENT_DESKTOP
+# unset: it matched neither branch, printed "Desktop environment not
+# recognized" and exited 1 — AFTER already writing the new index and seed. So
+# the state said one wallpaper while the screen still showed the previous one,
+# and nothing surfaced: the caller didn't check the exit code, and the message
+# went to the journal.
+#
+# Derive what is missing from the running session instead of trusting the
+# caller to have it, so this works however it is invoked — service, timer,
+# ssh or shell. Anything already set is left exactly as the caller set it.
+[ -z "$XDG_RUNTIME_DIR" ] && export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+if [ -z "$WAYLAND_DISPLAY" ]; then
+    for _s in "$XDG_RUNTIME_DIR"/wayland-*; do
+        _n="${_s##*/}"; _d="${_n#wayland-}"
+        # wayland-1, not wayland-1.lock or wayland-1-awww-daemon.sock
+        case "$_d" in ''|*[!0-9]*) continue ;; esac
+        [ -S "$_s" ] && export WAYLAND_DISPLAY="$_n" && break
+    done
+fi
+
+if [ -z "$HYPRLAND_INSTANCE_SIGNATURE" ] && [ -d "$XDG_RUNTIME_DIR/hypr" ]; then
+    # Newest first, so a stale instance left behind by a previous session
+    # cannot win over the one actually running.
+    _sig=$(ls -1t "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
+    [ -n "$_sig" ] && export HYPRLAND_INSTANCE_SIGNATURE="$_sig"
+fi
+
+if [ -z "$XDG_CURRENT_DESKTOP" ]; then
+    if [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
+        export XDG_CURRENT_DESKTOP=Hyprland
+    elif pgrep -x plasmashell >/dev/null 2>&1; then
+        export XDG_CURRENT_DESKTOP=KDE
+    fi
+fi
+
 # Source folder — set in Settings (writes wallpaper-dir.conf). Re-read every run,
 # so changing it takes effect on the next cycle without restarting anything.
 WALLPAPER_DIR="$(cat "$HOME/.config/hypr/wallpaper-dir.conf" 2>/dev/null)"
@@ -22,19 +65,41 @@ mapfile -t WALLPAPERS < <(find "$WALLPAPER_DIR" -maxdepth 1 -type f \( -name '*.
 COUNT=${#WALLPAPERS[@]}
 [ "$COUNT" -eq 0 ] && exit 0
 
+# The sequence is a FUNCTION of (seed, step), not a roll — see
+# wallpaper-seed.py. Same randomness to look at, but reproducible, so another
+# device can compute the identical sequence from two numbers.
+SEEDER="$HOME/.config/hypr/wallpaper-seed.py"
+
+# Optional, private, gitignored: wallpaper-cycle.local.sh. Mirror the sequence
+# somewhere else from there (another device, a server) -- this script itself
+# never touches the network. Called as:
+#   pre        before the hourly step is computed; may adopt a newer seed
+#   reseeded   after a new sequence started; detached, must not block
+HOOK="$HOME/.config/hypr/wallpaper-cycle.local.sh"
+
+# A mirror holds a copy of the seed. Only a RESEED invalidates it — the hourly
+# step is derived from the clock, so ordinary rotation needs no message. Noting
+# the seed here lets the end of the script tell whether one happened.
+SEED_BEFORE=$(cat "$HOME/.config/hypr/wallpaper-seed" 2>/dev/null || echo 0)
+
 if [ "$MODE" = "random" ]; then
-    INDEX=$((RANDOM % COUNT))
+    # Let the hook adopt a newer sequence first (one started elsewhere while
+    # this machine was asleep). Only on the hourly path: nobody is waiting on
+    # it, so a slow hook costs a delay here and nothing on Super+W.
+    [ -x "$HOOK" ] && "$HOOK" pre >/dev/null 2>&1 9>&-
+    # Where the current sequence says we should be right now. Survives a
+    # reboot mid-hour: the step comes from the clock, not from a counter.
+    INDEX=$(python3 "$SEEDER" index "$COUNT" "$(python3 "$SEEDER" step)")
 elif [ "$MODE" = "shuffle" ]; then
-    # Random but never the wallpaper already showing (Super+W / phone):
-    # re-roll until it differs from the current index. Always terminates —
-    # with COUNT > 1 at least one index is not CURRENT, and a stale/missing
-    # CURRENT (< 0 or >= COUNT) can never match a valid INDEX.
+    # Super+W (or a remote shuffle): a deliberate "give me something else". That starts
+    # a NEW sequence rather than stepping the old one, which is what makes it
+    # feel random instead of like skipping ahead in a pattern.
     CURRENT=$(cat "$STATE_FILE" 2>/dev/null || echo "-1")
     if [ "$COUNT" -le 1 ]; then
         INDEX=0
     else
         while :; do
-            INDEX=$((RANDOM % COUNT))
+            INDEX=$(python3 "$SEEDER" reseed "$COUNT")
             [ "$INDEX" -ne "$CURRENT" ] && break
         done
     fi
@@ -48,9 +113,41 @@ elif [ -f "$MODE" ]; then
         if [ "${WALLPAPERS[$i]}" = "$MODE" ]; then INDEX=$i; break; fi
     done
     [ "$INDEX" -lt 0 ] && exit 0
+    # A manual pick starts a new sequence AT that wallpaper: reseed searches
+    # for a seed whose step 0 is this index, so the protocol stays two numbers
+    # instead of carrying a "first one is actually this" exception forever.
+    python3 "$SEEDER" reseed "$COUNT" "$INDEX" >/dev/null
 else
     CURRENT=$(cat "$STATE_FILE" 2>/dev/null || echo "-1")
     INDEX=$(( (CURRENT + 1) % COUNT ))
+fi
+
+# INVARIANT: THE DESKTOP NEVER DISPLAYS AN INDEX THE SEQUENCE DOES NOT PRODUCE.
+#
+# This is the whole basis of a mirror staying in step. A mirror knows only a
+# seed, and derives what to show from it — so any change made HERE that the
+# sequence does not account for is a change the mirror cannot see, and the two
+# drift apart silently while both look correct.
+#
+# `next` was exactly that: Super+W and three buttons in the bar and Settings
+# all call it, and it just did (current + 1) without touching the seed. Two
+# presses put the desktop two wallpapers ahead of a mirror with no way to know.
+#
+# Rather than fix `next` alone, every branch is checked against the sequence
+# here. A branch that lands somewhere else adopts that landing as the start of
+# a new sequence, which is the same mechanism a manual pick already used. The
+# hook below then fires on its own, because the seed changed.
+SEQ_INDEX=$(python3 "$SEEDER" index "$COUNT" "$(python3 "$SEEDER" step)" 2>/dev/null)
+if [ -n "$SEQ_INDEX" ] && [ "$INDEX" != "$SEQ_INDEX" ]; then
+    python3 "$SEEDER" reseed "$COUNT" "$INDEX" >/dev/null 2>&1
+fi
+
+# A new sequence means a mirror's copy of the seed is now wrong. Detached so the
+# wallpaper never waits on the hook, and 9>&- so the hook doesn't hold this
+# script's lock (it used to, blocking Super+W for as long as it ran).
+SEED_AFTER=$(cat "$HOME/.config/hypr/wallpaper-seed" 2>/dev/null || echo 0)
+if [ "$SEED_AFTER" != "$SEED_BEFORE" ] && [ -x "$HOOK" ]; then
+    setsid "$HOOK" reseeded >/dev/null 2>&1 9>&- &
 fi
 
 PREV_PATH=$(cat "$CURRENT_PATH_FILE" 2>/dev/null || echo "")

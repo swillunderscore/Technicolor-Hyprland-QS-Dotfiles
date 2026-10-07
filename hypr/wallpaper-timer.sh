@@ -32,15 +32,35 @@ fullscreen_present() {
     [ "${n:-0}" -gt 0 ]
 }
 
-elapsed=0
+# FIRES AT THE STEP BOUNDARY, not on an elapsed counter.
+#
+# This used to count up 15 seconds at a time and fire when the count reached
+# the interval. That drifts: the count restarts whenever this script does, and
+# it has no relationship to the sequence, whose step comes from the clock. So
+# the desktop changed wallpaper at some arbitrary offset from the boundary the
+# other device was using — both correct about WHICH wallpaper, an arbitrary number of
+# minutes apart about WHEN.
+#
+# Now both sides compute the same instant, `epoch + (step+1) * period`, and
+# sleep until it. The tick still bounds the sleep so a config change or an
+# unpause is noticed within 15 seconds.
+SEEDER="$HOME/.config/hypr/wallpaper-seed.py"
 while true; do
-    sleep "$TICK"
     read_conf
+    now=$(date +%s)
+    boundary=$(python3 "$SEEDER" boundary 2>/dev/null)
+    case "$boundary" in ''|*[!0-9]*) boundary=$((now + TICK)) ;; esac
+    wait=$((boundary - now))
+    [ "$wait" -gt "$TICK" ] && wait=$TICK
+    [ "$wait" -lt 1 ] && wait=1
+    sleep "$wait"
+
     [ "$PAUSED" = "1" ] && continue                 # frozen while paused
-    elapsed=$((elapsed + TICK))
-    [ "$elapsed" -lt "$((INTERVAL_MIN * 60))" ] && continue
-    # interval elapsed — hold off if a fullscreen app is up (fires once it closes)
+    now=$(date +%s)
+    [ "$now" -lt "$boundary" ] && continue          # woke for the tick, not the change
+    # Boundary reached — hold off if a fullscreen app is up. Nothing is lost by
+    # waiting: the step comes from the clock, so when it does fire it lands on
+    # whichever wallpaper is current rather than replaying a backlog.
     if [ "$PAUSE_ON_FULLSCREEN" = "1" ] && fullscreen_present; then continue; fi
     "$HOME/.config/hypr/wallpaper-cycle.sh" random
-    elapsed=0
 done

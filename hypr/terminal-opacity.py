@@ -768,7 +768,14 @@ def main() -> int:
             return 0
         v = max(0.0, min(1.0, float(args[1])))
         st = read_state()
-        apply_and_publish(entry, v, st.get("AUTO", "0") == "1")
+        # The slider IS the see-through amount, Adapt on or off: adapting lives
+        # in the glass shader now (see `auto`). This verb kept running the
+        # retired wallpaper-brightness lift through apply_and_publish, so with
+        # Adapt on and the slider at 0% kitty sat at 35% black — and so did the
+        # bar's pills, which copy OPACITY.
+        start, support, _ = entry[1]()
+        ramp_to(entry, start, v, support, 0)
+        publish(v, v, st.get("AUTO", "0") == "1", None)
         return 0
 
     if args[0] == "auto":
@@ -879,7 +886,7 @@ def main() -> int:
         auto = st.get("AUTO", "0") == "1"
         print(f"floor={floor:.2f}\nauto={1 if auto else 0}\n"
               f"luma={-1 if luma is None else luma:.3f}\n"
-              f"applied={effective_opacity(floor, auto, luma):.2f}")
+              f"applied={floor:.2f}")   # no lift any more: see `set`
         return 0
 
     print(f"unknown command: {args[0]}", file=sys.stderr)

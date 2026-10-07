@@ -14,8 +14,10 @@ size. Hyprland 0.55 has no native equivalent.
     no jump. The conf is sourced by hyprland.conf so it also works from the
     first launch after a reboot.
 
-Per-app (by class). First time an app is seen it uses its default; once you
-tile/float/move/size it, that's remembered.
+Per-app (by class), per KIND of window within the app (by title family — see
+family()). First time an app is seen it uses its default; once you
+tile/float/move/size it, that's remembered. Dialogs never inherit it (see
+matcher()).
 """
 import fcntl
 import json
@@ -34,16 +36,90 @@ MIN_SIZE = 50  # ignore tiny/transient surfaces
 # lowercase "steam"); recording it let a 700x330 popup poison the geometry and
 # force real Steam windows tiny in the corner. Never record/reposition it.
 EXCLUDE = {"com.dec05eba.gpu_screen_recorder", "gsr-ui", "hyprland-run", "wofi",
-           "Steam", "aquamarine"}
+           "Steam", "aquamarine",
+           # gamescope games (ELDEN RING): fullscreen is owned by gamescope, same as
+           # the steam_app_ skip below. A recorded float+size+move (captured the one
+           # time the window got knocked out of fullscreen) made it spawn "right
+           # size, wrong corner" and gamescope ran composited at ~33 fps. 2026-09-01.
+           "gamescope"}
 
 # Some XWayland apps (e.g. Godot) give their popups/tooltips the SAME class as
 # the main window, so a class-only geometry rule force-sizes the popup to the
 # main window's saved geometry. They differ by initial_title: the real window
-# has a stable one, popups open with an empty title. For such classes, append an
-# extra matcher so geometry rules hit ONLY the real window. class -> extra match.
-MATCH_REFINE = {"Godot": "match:initial_title ^(Godot)$"}
+# has a stable one, popups open with an empty title. For such classes this
+# initial_title regex REPLACES the learned title family: rules hit only the real
+# window, and only the real window is ever recorded. class -> title regex.
+MATCH_REFINE = {"Godot": "^(Godot)$"}
+
+# What apps put between the document and their own name in a window title:
+# "Week2 — Dolphin" (Qt/KDE), "New Tab - Brave" (Chromium/Electron), "a – b",
+# "a | b". Spaced on both sides, so "arch-update" is not split.
+SEPS = (" — ", " – ", " - ", " | ")
+_SEP_SPLIT = re.compile("|".join(re.escape(s) for s in SEPS))
 
 _max_mons = 0  # most monitors ever seen; used to pause recording when one is off
+
+
+def _rx(s):
+    """re.escape, plus the two characters the conf round trip can't carry: the
+    fragment loader in hyprland.lua splits a rule on ',' and strips everything
+    from '#' to the end of the line. \\x2c / \\x23 mean the same to RE2."""
+    return "".join("\\x2c" if ch == "," else "\\x23" if ch == "#" else re.escape(ch)
+                   for ch in s)
+
+
+def family(title):
+    """initial_title regex for every window of the same kind as one titled
+    `title`: the exact title, or the same app name with any document in front
+    ("<anything> - Brave") or behind ("DaVinci Resolve - <anything>").
+
+    Rules used to require the EXACT initial title of the last window adjusted.
+    Apps put the document in that title — folder, page, file, startup tab — so
+    the next window rarely had the same one: Brave was tiled as "Untitled -
+    Brave", its next window opened as "New Tab - Brave", matched nothing and
+    floated. A title with nothing to split on still matches itself exactly."""
+    if not title:
+        return "^$"
+    parts = _SEP_SPLIT.split(title)
+    first, last = parts[0], parts[-1]
+    sep = "(?:" + "|".join(_rx(s) for s in SEPS) + ")"
+    alts = [_rx(title)]
+    if last:   # "(<anything> - )Brave"
+        alts.append("(?:.*" + sep + ")?" + _rx(last))
+    if first:  # "DaVinci Resolve( - <anything>)"
+        alts.append(_rx(first) + "(?:" + sep + ".*)?")
+    return "^(?:" + "|".join(alts) + ")$"
+
+
+def title_pat(cls, rec):
+    """The initial_title regex a record's rules carry; None = any title."""
+    return MATCH_REFINE.get(cls) or rec.get("pat")
+
+
+def find_rec(cls, title):
+    """The record a window with this initial title belongs to. The LAST match,
+    because that's the one Hyprland applies (later rules win)."""
+    hit = None
+    for rec in geo.get(cls, []):
+        pat = title_pat(cls, rec)
+        if pat is None or re.fullmatch(pat, title):
+            hit = rec
+    return hit
+
+
+def _migrate(v):
+    """One saved record from an older state file -> the current record shape."""
+    if isinstance(v, list) and len(v) == 5:  # oldest: floating-only [mon,x,y,w,h]
+        return {"floating": True, "mon": v[0], "x": v[1], "y": v[2], "w": v[3], "h": v[4]}
+    if isinstance(v, dict):
+        rec = dict(v)
+        # One record per class keyed to the exact title it was learned from
+        # ("it") -> that title's family. No "it" = saved before titles were
+        # recorded at all = whole class, as it always matched.
+        if "pat" not in rec and "it" in rec:
+            rec["pat"] = family(rec["it"])
+        return rec
+    return None
 
 
 def load():
@@ -54,15 +130,22 @@ def load():
         return {}
     out = {}
     for cls, v in raw.items():
-        if isinstance(v, list) and len(v) == 5:  # legacy floating-only format
-            out[cls] = {"floating": True, "mon": v[0], "x": v[1],
-                        "y": v[2], "w": v[3], "h": v[4]}
-        elif isinstance(v, dict):
-            out[cls] = v
+        if isinstance(v, list) and v and all(isinstance(e, dict) for e in v):
+            recs = [r for r in (_migrate(e) for e in v) if r]
+        else:
+            recs = [r for r in [_migrate(v)] if r]
+        if recs:
+            out[cls] = recs
     return out
 
 
-geo = load()  # class -> {"floating": bool, "mon","x","y","w","h" (when known)}
+# class -> [record, ...], one record per kind of window (title family) the user
+# has adjusted. Record: {"pat": initial_title regex or absent, "floating": bool,
+# "maximized": bool, "mon", "x", "y", "w", "h" (when known), "it": the initial
+# title it was last learned from}. Separate records so moving a popup or a
+# picture-in-picture window can't overwrite the main window's state — with ONE
+# record per class, dragging any same-class window replaced it wholesale.
+geo = load()
 
 
 def hyprctl_json(what):
@@ -74,28 +157,34 @@ def hyprctl_json(what):
         return None
 
 
-def matcher(cls, v=None):
-    """Class matcher for window rules, plus popup-excluding refinement.
+def matcher(cls, rec):
+    """Rule matcher for one record: class + not-a-dialog + its title family.
 
-    Many apps (Steam, Godot, ...) give popups, toasts, and transient dialogs
-    the SAME class as their main window, so a class-only rule force-sizes a
-    "Launching game..." popup to the store page's saved geometry — and the
-    reverse. The canonical window's initial_title is recorded with its
-    geometry and required here, so rules only ever hit the window they were
-    learned from. Self-healing: if an app's real window changes its
-    initial_title, the rule stops matching until the user adjusts the window
-    once, which re-records both. MATCH_REFINE stays as a manual override.
+    Many apps (Steam, Godot, KDE apps, ...) give popups, toasts, and dialogs the
+    SAME class as their main window, so a class-only rule force-sizes a
+    "Launching game..." popup to the store page's saved geometry, or tiles a
+    Save dialog.
+
+    `float false` is Hyprland's OWN dialog test: by the time rules are read it
+    has already floated anything with a parent window, a fixed size, or an X11
+    dialog/transient/modal type — before `floatall` or any rule here lands. So
+    on these rules it reads "not a dialog", and dialogs keep Hyprland's own
+    placement. Verified: one `tile on` rule with it tiled a GTK main window and
+    left its child dialog floating.
+
+    The title family keeps apart same-class windows that AREN'T dialogs to
+    Hyprland: "Picture in picture" vs "<page> - Brave", "Launching..." vs
+    "Steam".
     """
-    m = "match:class ^(" + re.escape(cls) + ")$"
-    if cls in MATCH_REFINE:
-        m += ", " + MATCH_REFINE[cls]
-    elif v and v.get("it"):
-        m += ", match:initial_title ^(" + re.escape(v["it"]) + ")$"
+    m = "match:class ^(" + _rx(cls) + ")$, match:float false"
+    pat = title_pat(cls, rec)
+    if pat:
+        m += ", match:initial_title " + pat
     return m
 
 
 def rules_for(cls, v):
-    """Window-rule bodies (without the leading 'windowrule = ') for this app."""
+    """Window-rule bodies (without the leading 'windowrule = ') for one record."""
     m = matcher(cls, v)
     if not v.get("floating"):
         out = ["tile on, " + m]
@@ -130,8 +219,9 @@ def write_conf():
                "# per-app window state (tiled/floating + floating geometry),",
                "# regenerated whenever a window changes. Do not edit by hand.", ""]
         for cls in sorted(geo):
-            for r in rules_for(cls, geo[cls]):
-                out.append("windowrule = " + r)
+            for rec in geo[cls]:
+                for r in rules_for(cls, rec):
+                    out.append("windowrule = " + r)
         tmp = CONF + ".tmp"
         with open(tmp, "w") as f:
             f.write("\n".join(out) + "\n")
@@ -181,15 +271,20 @@ def _body_to_lua(body):
     return f'hl.window_rule({{ match = {{ {", ".join(match_fields)} }}, {action} }})'
 
 
-def apply_live(cls, v):
+def apply_live(cls):
     """Apply the current rules live so a reopen THIS session uses the latest state.
     Under the Lua config `hyprctl keyword` is REJECTED, AND the raw-string
     hl.window_rule form silently no-ops for size/move/tile — so emit the STRUCTURED
     hl.window_rule table via `hyprctl eval`. No unset needed: rules accumulate and
-    the LATEST matching one wins (verified)."""
+    the LATEST matching one wins (verified).
+
+    ALL of the class's records, in file order, not just the one that changed:
+    where two families both match a title, the later record must win live
+    exactly as it does in window-geometry.conf (and as find_rec assumes)."""
     # One batched eval, not one subprocess per rule: five sequential hyprctl
     # round-trips added most of a second to the drag->spawn race.
-    stmts = "; ".join(_body_to_lua(r) for r in rules_for(cls, v))
+    stmts = "; ".join(_body_to_lua(r) for rec in geo.get(cls, [])
+                      for r in rules_for(cls, rec))
     subprocess.run(["hyprctl", "eval", stmts + " return 1"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -204,12 +299,31 @@ def poll_loop():
     prev_addrs = set()
     prev_shape = {}
     prev_fs = {}
+    # Windows our rules demonstrably skipped, so never learned from: a window
+    # whose record says TILED that still came up floating is one Hyprland
+    # classed as a dialog (see matcher). Recording it — a Save dialog dragged
+    # aside — would turn the app's next main window floating at dialog size.
+    # Only checkable for tiled records: floating is everyone's default here.
+    skipped = set()
+    known = set()      # every address seen so far: the check runs at FIRST sight only
+    first_poll = True  # windows already open at startup weren't seen mapping
     while True:
         time.sleep(POLL)
         mons = hyprctl_json("monitors")
         cls_list = hyprctl_json("clients")
         if mons is None or cls_list is None:
             continue
+        # First-sight check (see `skipped`) — ahead of the missing-monitor pause
+        # below, so a window is judged as it mapped, not whenever recording resumes.
+        for c in cls_list:
+            addr = c.get("address")
+            if addr and addr not in known and not first_poll:
+                rec = find_rec(c.get("class") or "", c.get("initialTitle") or "")
+                if rec is not None and not rec.get("floating") and c.get("floating"):
+                    skipped.add(addr)
+        known = {c.get("address") for c in cls_list}
+        skipped &= known
+        first_poll = False
         # Pause recording while a monitor is missing (e.g. powered off overnight):
         # windows pile onto the remaining monitor, and we must NOT overwrite the
         # real saved geometry with that squished layout. Resume once all are back.
@@ -255,8 +369,11 @@ def poll_loop():
         for c in cls_list:
             cls = c.get("class") or ""
             addr = c.get("address") or ""
+            title = c.get("initialTitle") or ""
             if not cls or cls in EXCLUDE or not addr:
                 continue
+            if cls in MATCH_REFINE and not re.fullmatch(MATCH_REFINE[cls], title):
+                continue  # the refined class's popups: never recorded
             if cls.startswith("steam_app_"):
                 # Steam/Proton games: monitor + fullscreen are owned by local.conf.
                 # Tracking them here fought that — a recorded `float + size 2560x1440
@@ -274,7 +391,7 @@ def poll_loop():
             cur_fs[addr] = c.get("fullscreen") or 0
             per_class.setdefault(cls, []).append((addr, c))
 
-        changed = False
+        changed = set()
         for cls, lst in per_class.items():
             # The window the user actively moved/resized is the one whose shape
             # changed since the last poll. Recording THAT one — not just the biggest
@@ -283,78 +400,106 @@ def poll_loop():
             # class changed, keep what we already remember; only fall back to
             # "largest" to SEED a class we've never recorded before.
             edited = [(a, c) for (a, c) in lst
-                      if a in prev_shape and prev_shape[a] != cur_shape[a]]
+                      if a in prev_shape and prev_shape[a] != cur_shape[a]
+                      and a not in skipped]
             if edited:
-                c = next((c for a, c in edited if a == focused_addr), None) \
-                    or max((c for _, c in edited), key=area)
+                # One pick per RECORD, not per class: a popup and the main window
+                # changing in the same poll are two separate facts to remember.
+                groups = {}
+                for a, c in edited:
+                    t = c.get("initialTitle") or ""
+                    rec = find_rec(cls, t)
+                    groups.setdefault(id(rec) if rec is not None else family(t),
+                                      []).append((a, c))
+                picks = [next((c for a, c in g if a == focused_addr), None)
+                         or max((c for _, c in g), key=area) for g in groups.values()]
             elif cls not in geo:
                 stable = [c for (a, c) in lst if a in prev_addrs]
                 if not stable:
                     continue
-                c = max(stable, key=area)
+                picks = [max(stable, key=area)]
             else:
                 continue
-
-            fs = c.get("fullscreen") or 0   # 0=none 1=maximize(SUPER+V) 2=fullscreen
-            if fs == 2:
-                # Real fullscreen (games / video) is transient — never record it.
-                continue
-            if fs == 1:
-                # Maximized: at/size are the maximized bounds, not the real floating
-                # geometry — keep the prior geometry, just flag maximized.
-                #
-                # TRANSITIONS ONLY. A window that merely SITS maximized while its
-                # shape drifts (workspace slides, monitor changes, another window
-                # of the class being adjusted) must not keep re-asserting the
-                # flag: with one kitty parked maximized and another being dragged
-                # around unmaximized, the parked one won every poll and every new
-                # kitty spawned maximized no matter what the user did. Only the
-                # deliberate act — a window that BECAME maximized since the last
-                # poll — gets to set the flag; unmaximizing records through the
-                # floating/tiled branches below as before.
-                if prev_fs.get(c.get("address")) == 1:
-                    continue
-                val = dict(geo.get(cls, {}))
-                val.setdefault("floating", True)
-                val["maximized"] = True
-                val["it"] = c.get("initialTitle") or ""
-            elif c.get("floating"):
-                at, sz, mid = c.get("at"), c.get("size"), c.get("monitor")
-                if not at or not sz or sz[0] < MIN_SIZE or sz[1] < MIN_SIZE:
-                    continue
-                if mid not in moff:
-                    continue
-                mon, mx, my, mw, mh = moff[mid]
-                rx, ry = at[0] - mx, at[1] - my
-                # Sanity: don't remember a window that's mostly off its monitor or
-                # bigger than it. That's exactly how an old headless/hotplug layout
-                # poisoned the geometry (e.g. the 742x2079 kitty at y=-876).
-                if rx < -100 or ry < -100 or rx > mw or ry > mh \
-                        or sz[0] > mw + 200 or sz[1] > mh + 200:
-                    continue
-                val = {"floating": True, "maximized": False, "mon": mon,
-                       "x": rx, "y": ry, "w": sz[0], "h": sz[1],
-                       "it": c.get("initialTitle") or ""}
-            else:
-                # Tiled: flip the flag, remember which monitor it's on (so it can be
-                # pinned there via rules_for), keep any prior floating geometry.
-                val = dict(geo.get(cls, {}))
-                val["floating"] = False
-                val["maximized"] = False
-                val["it"] = c.get("initialTitle") or ""
-                mid = c.get("monitor")
-                if mid in moff:
-                    val["mon"] = moff[mid][0]
-            if geo.get(cls) != val:
-                geo[cls] = val
-                apply_live(cls, val)
-                changed = True
+            for c in picks:
+                if record(cls, c, prev_fs, moff):
+                    changed.add(cls)
+        for cls in changed:
+            apply_live(cls)
         if changed:
             write_state()
             write_conf()
         prev_addrs = cur_addrs
         prev_shape = cur_shape
         prev_fs = cur_fs
+
+
+def record(cls, c, prev_fs, moff):
+    """Fold one window's current state into the record for its kind of window
+    (creating that record if it's a new kind). True if anything changed."""
+    title = c.get("initialTitle") or ""
+    rec = find_rec(cls, title)
+    base = dict(rec) if rec is not None else {"pat": family(title)}
+
+    fs = c.get("fullscreen") or 0   # 0=none 1=maximize(SUPER+V) 2=fullscreen
+    if fs == 2:
+        # Real fullscreen (games / video) is transient — never record it.
+        return False
+    if fs == 1:
+        # Maximized: at/size are the maximized bounds, not the real floating
+        # geometry — keep the prior geometry, just flag maximized.
+        #
+        # TRANSITIONS ONLY. A window that merely SITS maximized while its
+        # shape drifts (workspace slides, monitor changes, another window
+        # of the class being adjusted) must not keep re-asserting the
+        # flag: with one kitty parked maximized and another being dragged
+        # around unmaximized, the parked one won every poll and every new
+        # kitty spawned maximized no matter what the user did. Only the
+        # deliberate act — a window that BECAME maximized since the last
+        # poll — gets to set the flag; unmaximizing records through the
+        # floating/tiled branches below as before.
+        if prev_fs.get(c.get("address")) == 1:
+            return False
+        val = base
+        val.setdefault("floating", True)
+        val["maximized"] = True
+        val["it"] = title
+    elif c.get("floating"):
+        at, sz, mid = c.get("at"), c.get("size"), c.get("monitor")
+        if not at or not sz or sz[0] < MIN_SIZE or sz[1] < MIN_SIZE:
+            return False
+        if mid not in moff:
+            return False
+        mon, mx, my, mw, mh = moff[mid]
+        rx, ry = at[0] - mx, at[1] - my
+        # Sanity: don't remember a window that's mostly off its monitor or
+        # bigger than it. That's exactly how an old headless/hotplug layout
+        # poisoned the geometry (e.g. the 742x2079 kitty at y=-876).
+        if rx < -100 or ry < -100 or rx > mw or ry > mh \
+                or sz[0] > mw + 200 or sz[1] > mh + 200:
+            return False
+        val = {"floating": True, "maximized": False, "mon": mon,
+               "x": rx, "y": ry, "w": sz[0], "h": sz[1], "it": title}
+        if "pat" in base:   # absent = a class-wide record from before titles were kept
+            val["pat"] = base["pat"]
+    else:
+        # Tiled: flip the flag, remember which monitor it's on (so it can be
+        # pinned there via rules_for), keep any prior floating geometry.
+        val = base
+        val["floating"] = False
+        val["maximized"] = False
+        val["it"] = title
+        mid = c.get("monitor")
+        if mid in moff:
+            val["mon"] = moff[mid][0]
+
+    recs = geo.setdefault(cls, [])
+    if rec is None:
+        recs.append(val)
+        return True
+    if val == rec:
+        return False
+    recs[next(i for i, r in enumerate(recs) if r is rec)] = val
+    return True
 
 
 if __name__ == "__main__":
@@ -368,4 +513,11 @@ if __name__ == "__main__":
         fcntl.flock(_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         raise SystemExit(0)
+    # Rewrite both files once in the current shape, so a state file from an older
+    # version doesn't keep its old rules until some window happens to change.
+    # Only when something loaded: load() returns {} on a read error, and writing
+    # that back would erase every saved window.
+    if geo:
+        write_state()
+        write_conf()
     poll_loop()
