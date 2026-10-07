@@ -6,6 +6,9 @@
 # Args:
 #   $1 = "left" | "right"
 #   $2 = "--move" (optional) — move active window instead of navigating
+#        "--warp" (optional) — navigate, then put the mouse on the focused
+#        window (the Super+[ / ] binds). NOT passed by workspace-goto.sh: a
+#        dot click runs this in a loop and must not drag the mouse off the bar.
 
 direction="$1"
 move_flag="${2:-}"
@@ -20,6 +23,26 @@ state=$(hyprctl monitors -j)
 ws_state=$(hyprctl workspaces -j)
 
 focused_mon_id=$(echo "$state" | jq '.[] | select(.focused == true) | .id')
+
+# Offscreen monitors: powered off (monitor-power.sh) and not the one a
+# Moonlight client is streaming (stream-screens.sh). Nobody can see them, so
+# never hand focus to one -- slide instead -- and if focus is already on one,
+# end the slide on a monitor someone can see. If nothing is visible at all
+# (everything off, no stream), nobody is looking: behave as usual.
+run_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+stream_out=$(cat "$run_dir/tc-stream-output" 2>/dev/null)
+mapfile -t off_names < <(sed '/^$/d' "$run_dir/tc-monitors-off" 2>/dev/null)
+offscreen_ids=()
+while IFS=: read -r id name; do
+    [ "$name" = "$stream_out" ] && continue
+    for n in "${off_names[@]}"; do [ "$n" = "$name" ] && offscreen_ids+=("$id"); done
+done < <(echo "$state" | jq -r '.[] | "\(.id):\(.name)"')
+offscreen() { local i; for i in "${offscreen_ids[@]}"; do [ "$i" = "$1" ] && return 0; done; return 1; }
+visible_id=""
+while IFS=: read -r id name; do
+    offscreen "$id" || { visible_id=$id; break; }
+done < <(echo "$state" | jq -r 'sort_by(.x) | .[] | "\(.id):\(.name)"')
+[ -z "$visible_id" ] && offscreen_ids=()
 
 # Sort monitors by x position, build parallel arrays slot_id[i] and slot_ws[i]
 mapfile -t sorted < <(echo "$state" | jq -r 'sort_by(.x) | .[] | "\(.id):\(.activeWorkspace.id)"')
@@ -41,6 +64,19 @@ for i in $(seq 0 $((mon_count - 1))); do
     slot_summary+="slot$i=mon${slot_id[$i]}/ws${slot_ws[$i]} "
 done
 log "=== $direction $move_flag | N=$mon_count focused=slot$focused_slot(mon$focused_mon_id) | $slot_summary==="
+
+# Mouse follows focus (--warp): middle of the focused window, unless the
+# mouse is already on it. Empty workspace = no focused window = mouse stays.
+warp_to_focus() {
+    [ "$move_flag" = "--warp" ] || return 0
+    local addr x y w h cx cy
+    read -r addr x y w h < <(hyprctl activewindow -j \
+        | jq -r 'select(.address != null) | "\(.address) \(.at[0]) \(.at[1]) \(.size[0]) \(.size[1])"')
+    [ -n "$addr" ] || return 0
+    IFS=', ' read -r cx cy <<< "$(hyprctl cursorpos)"
+    [ "$cx" -ge "$x" ] && [ "$cx" -lt $((x + w)) ] && [ "$cy" -ge "$y" ] && [ "$cy" -lt $((y + h)) ] && return 0
+    hyprctl dispatch "hl.dsp.cursor.move({x=$((x + w / 2)), y=$((y + h / 2))})" >/dev/null
+}
 
 # ─── MOVE WINDOW ──────────────────────────────────────
 if [ "$move_flag" = "--move" ]; then
@@ -80,11 +116,12 @@ done
 
 if [ "$direction" = "right" ]; then
     # Not at the rightmost monitor — just shift focus (no realign needed)
-    if [ "$focused_slot" -lt $((mon_count - 1)) ] && [ "$consistent" = true ]; then
+    if [ "$focused_slot" -lt $((mon_count - 1)) ] && [ "$consistent" = true ] \
+       && ! offscreen "${slot_id[$((focused_slot + 1))]}"; then
         next_id=${slot_id[$((focused_slot + 1))]}
         log "Focus slot$focused_slot -> slot$((focused_slot + 1)) (mon$next_id)"
         hyprctl dispatch "hl.dsp.focus({monitor=\"$next_id\"})"
-        busy; exit 0
+        busy; warp_to_focus; exit 0
     fi
 
     if [ "$consistent" = true ]; then
@@ -96,11 +133,12 @@ if [ "$direction" = "right" ]; then
     fi
 
 elif [ "$direction" = "left" ]; then
-    if [ "$focused_slot" -gt 0 ] && [ "$consistent" = true ]; then
+    if [ "$focused_slot" -gt 0 ] && [ "$consistent" = true ] \
+       && ! offscreen "${slot_id[$((focused_slot - 1))]}"; then
         prev_id=${slot_id[$((focused_slot - 1))]}
         log "Focus slot$focused_slot -> slot$((focused_slot - 1)) (mon$prev_id)"
         hyprctl dispatch "hl.dsp.focus({monitor=\"$prev_id\"})"
-        busy; exit 0
+        busy; warp_to_focus; exit 0
     fi
 
     if [ "$consistent" = true ]; then
@@ -179,8 +217,11 @@ for i in "${order[@]}"; do
     target_mon=${slot_id[$i]}
     batch+="dispatch hl.dsp.focus({monitor=\"$target_mon\"}) ; dispatch hl.dsp.focus({workspace=\"$target_ws\", on_current_monitor=true}) ; "
 done
-batch+="dispatch hl.dsp.focus({monitor=\"$focused_mon_id\"})"
+end_mon=$focused_mon_id
+offscreen "$focused_mon_id" && end_mon=$visible_id
+batch+="dispatch hl.dsp.focus({monitor=\"$end_mon\"})"
 
 log "Slide $direction ($mode, base=$new_base, new_slot=$new_slot): $batch"
 hyprctl --batch "$batch"
 busy
+warp_to_focus

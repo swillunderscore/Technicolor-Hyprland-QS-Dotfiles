@@ -340,6 +340,15 @@ hl.window_rule({ name = "hyprland-run-move",  match = { class = "^(hyprland-run)
 -- left monitor). `activatefocus` suppresses the focus-on-activate specifically.
 hl.window_rule({ name = "tg-noactivate",
                  match = { class = "^(org\\.telegram\\.desktop)$" }, suppress_event = "activate activatefocus" })
+-- Steam's notification toasts (X11 windows titled "notificationtoasts_<n>_desktop")
+-- are new windows, and every new window takes keyboard focus on map — its monitor
+-- too. A toast popping up on the other monitor yanked focus over there, and when it
+-- closed focus fell to a window on ITS workspace, so it stayed there. Reproduced
+-- with a stand-in window: focus Brave on the right, map one on the left -> focus
+-- left, then kitty after it closed. With no_initial_focus it never had focus, so
+-- neither half happens; clicking the toast still works.
+hl.window_rule({ name = "steam-toast-nofocus",
+                 match = { class = "^([Ss]team)$", title = "^notificationtoasts_.*$" }, no_initial_focus = true })
 
 -- chromakey glass (Hypr-DarkWindow). Shaders are registered AND the shade window
 -- rules are set together, but ONLY when the plugin is loaded. At the initial
@@ -424,6 +433,9 @@ local kbManifest = {}
 local cursorKeys = {
     W = true, A = true, S = true, D = true, SPACE = true, RETURN = true,
     BACKSLASH = true, SEMICOLON = true, BRACKETRIGHT = true, APOSTROPHE = true,
+    -- Q is a second "up" (some remote-desktop clients swallow Win+Alt+W).
+    -- Without this, Right Alt + Super + Q opened a terminal.
+    Q = true,
 }
 
 local function bind(id, cat, label, combo, dispatcher, opts, meta)
@@ -440,11 +452,25 @@ local function bind(id, cat, label, combo, dispatcher, opts, meta)
     -- LEFT Alt is the real Alt and is untouched here.
     --
     -- Mirrored for EVERY bind, not just the SUPER ones -- media keys, ALT+Tab
-    -- and bare Escape broke the same way. The only exclusion is a chord whose
-    -- key the cursor itself owns and that carries no other modifier: mirroring
-    -- those would land on mask 128/136 and fight the no_op suppression binds
-    -- that stop WASD typing. Nothing today hits that case; the guard is for
-    -- whatever gets added later.
+    -- and bare Escape broke the same way.
+    --
+    -- The ONE exclusion is any chord whose key the cursor itself owns, with or
+    -- without other modifiers. While Right Alt is down those keys ARE the
+    -- pointer -- W is "up", not the first half of a shortcut -- so mirroring
+    -- them hands the same keystroke two jobs and the dispatcher wins.
+    --
+    -- This used to exclude them only when the chord was otherwise PLAIN, which
+    -- missed every modified one and broke Right Alt + SUPER + drag outright:
+    -- SUPER+SPACE (toggle tiling) and SUPER+bracketright (next workspace) both
+    -- mirrored onto mask 192, so steering a Super-drag with WASD toggled tiling
+    -- or changed workspace and the interactive move died mid-drag. SUPER+W fired
+    -- Next wallpaper and SUPER+D started dictation for good measure. A and S have
+    -- no SUPER bind, which is why left/down felt fine and up/right "stopped
+    -- grabbing" -- the giveaway that this was bind collision, not drag handling.
+    --
+    -- The cost is real and intended: Right Alt + SUPER + D no longer starts
+    -- dictation. You cannot have one keystroke be both a cursor direction and a
+    -- shortcut, and the trigger being held says which one you meant.
     --
     -- MOD5 only, deliberately not MOD5+ALT. Left Alt is modY, and that variant
     -- makes SUPER+D (start dictation) and SUPER+ALT+D (cancel it) collide on
@@ -456,8 +482,7 @@ local function bind(id, cat, label, combo, dispatcher, opts, meta)
     -- Hotkeys should show one row per shortcut, not two.
     local up  = eff:upper()
     local key = up:match("([^+]+)$"):gsub("^%s+", ""):gsub("%s+$", "")
-    local plain = not (up:find("SUPER") or up:find("CTRL") or up:find("SHIFT"))
-    if not (cursorKeys[key] and plain) then
+    if not cursorKeys[key] then
         hl.bind("MOD5 + " .. eff, dispatcher, opts)
     end
     -- Editable = a plain keyboard chord. Mouse/scroll chords, locked media
@@ -509,16 +534,20 @@ bind("screenshot-full", "Screenshots", "Screenshot full screen",
      mainMod .. " + PRINT", exec([[grim - | satty --filename - --fullscreen --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
 
 -- Move focus
-bind("focus-left",  "Focus & layout", "Focus window left",  mainMod .. " + left",  hl.dsp.focus({ direction = "l" }))
-bind("focus-right", "Focus & layout", "Focus window right", mainMod .. " + right", hl.dsp.focus({ direction = "r" }))
-bind("focus-up",    "Focus & layout", "Focus window up",    mainMod .. " + up",    hl.dsp.focus({ direction = "u" }))
-bind("focus-down",  "Focus & layout", "Focus window down",  mainMod .. " + down",  hl.dsp.focus({ direction = "d" }))
+-- ...and the mouse jumps to the newly focused window (focus-dir.sh)
+local focusDir = H .. "/.config/hypr/focus-dir.sh"
+bind("focus-left",  "Focus & layout", "Focus window left",  mainMod .. " + left",  exec(focusDir .. " l"))
+bind("focus-right", "Focus & layout", "Focus window right", mainMod .. " + right", exec(focusDir .. " r"))
+bind("focus-up",    "Focus & layout", "Focus window up",    mainMod .. " + up",    exec(focusDir .. " u"))
+bind("focus-down",  "Focus & layout", "Focus window down",  mainMod .. " + down",  exec(focusDir .. " d"))
 
--- Move window
-bind("move-left",  "Focus & layout", "Move window left",  mainMod .. " + SHIFT + left",  hl.dsp.window.move({ direction = "l" }))
-bind("move-right", "Focus & layout", "Move window right", mainMod .. " + SHIFT + right", hl.dsp.window.move({ direction = "r" }))
-bind("move-up",    "Focus & layout", "Move window up",    mainMod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "u" }))
-bind("move-down",  "Focus & layout", "Move window down",  mainMod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "d" }))
+-- Move window -- the one UNDER THE MOUSE (same raycast as Super+Esc/V/Space),
+-- and the mouse rides along so the next arrow moves the same window.
+local winAction = H .. "/.config/hypr/window-action.sh"
+bind("move-left",  "Focus & layout", "Move window left",  mainMod .. " + SHIFT + left",  exec(winAction .. " move l"))
+bind("move-right", "Focus & layout", "Move window right", mainMod .. " + SHIFT + right", exec(winAction .. " move r"))
+bind("move-up",    "Focus & layout", "Move window up",    mainMod .. " + SHIFT + up",    exec(winAction .. " move u"))
+bind("move-down",  "Focus & layout", "Move window down",  mainMod .. " + SHIFT + down",  exec(winAction .. " move d"))
 
 -- alt-tab pie (quickshell global). NOT rebindable: the release half below must
 -- sit on the same key, and only the press half goes through bind().
@@ -542,15 +571,26 @@ bind("minimize-under-cursor", "Windows", "Minimize window under cursor",
 
 -- Workspace navigation
 bind("workspace-prev", "Workspaces", "Previous workspace",
-     mainMod .. " + bracketleft",        exec(H .. "/.config/hypr/workspace-move.sh left"))
+     mainMod .. " + bracketleft",        exec(H .. "/.config/hypr/workspace-move.sh left --warp"))
 bind("workspace-next", "Workspaces", "Next workspace",
-     mainMod .. " + bracketright",       exec(H .. "/.config/hypr/workspace-move.sh right"))
+     mainMod .. " + bracketright",       exec(H .. "/.config/hypr/workspace-move.sh right --warp"))
 bind("workspace-send-prev", "Workspaces", "Send window to previous",
      mainMod .. " + SHIFT + bracketleft",  exec(H .. "/.config/hypr/workspace-move.sh left --move"))
 bind("workspace-send-next", "Workspaces", "Send window to next",
      mainMod .. " + SHIFT + bracketright", exec(H .. "/.config/hypr/workspace-move.sh right --move"))
 
 -- Mouse binds
+-- `drag = true`, NOT `mouse = true`. HL.BindOptions (see
+-- /usr/share/hypr/stubs/hl.meta.lua) has no `mouse` field — the options table is
+-- accepted verbatim and an unknown key is silently DROPPED, so `mouse = true`
+-- registered these as ordinary press binds. `hyprctl binds` reported
+-- `"mouse": false` on every bind on the machine, which is the tell.
+--
+-- A press bind fires ONCE and never tracks the pointer, so Super+LMB started the
+-- interactive move (the grab cursor appears, the window is picked up) and then
+-- nothing followed the pointer. Exactly the "it grabs but won't drag" symptom.
+-- The upstream example config at /usr/share/hypr/hyprland.lua still writes
+-- `{ mouse = true }` here, so this is easy to copy in and impossible to notice.
 bind("drag-move",   "Focus & layout", "Drag to move window",
      mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
 bind("drag-resize", "Focus & layout", "Drag to resize window",
@@ -621,6 +661,8 @@ hl.on("hyprland.start", function()
     hl.exec_cmd(H .. "/.config/hypr/workspace-watcher.sh")
     hl.exec_cmd(H .. "/.config/hypr/minimize-watcher.sh")
     hl.exec_cmd(H .. "/.config/hypr/notif-focus-watcher.sh")
+    hl.exec_cmd(H .. "/.config/hypr/stream-screens.sh")
+    hl.exec_cmd(H .. "/.config/hypr/monitor-power.sh watch")
     hl.exec_cmd(H .. "/.config/hypr/window-geometry.py")
     hl.exec_cmd(H .. "/.config/hypr/tg-badge-listener.py")
     hl.exec_cmd(H .. "/.config/hypr/gen-wofi-font.sh")

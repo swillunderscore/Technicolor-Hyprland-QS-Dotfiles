@@ -104,10 +104,16 @@ PanelWindow {
     // transparency moves, whichever terminal you're on. 0.65 is the old fixed
     // value, used until that file exists.
     property real pillOpacity: 0.65
+    // Settings → System → "Tint: terminals only" (hyprwater's
+    // adaptive_tint_terminals_only). On, only terminals get tinted: the pills
+    // stop copying the terminal's darkness and go clear glass, the same way the
+    // plugin drops every tint from the bar's glass.
+    property bool tintTerminalsOnly: false
+    property real pillTint: bar.tintTerminalsOnly ? 0 : bar.pillOpacity
     // The published value jumps in one step; the pills shouldn't. Matches the
     // ~1.2s ramp terminal-opacity.py runs on the terminal itself, so the bar and
     // the terminal move together through a wallpaper change.
-    Behavior on pillOpacity { NumberAnimation { duration: 1200; easing.type: Easing.InOutQuad } }
+    Behavior on pillTint { NumberAnimation { duration: 1200; easing.type: Easing.InOutQuad } }
     // The pills' own fill is only a black TINT — their body comes from the glass
     // behind them. But that glass is masked to where this layer has content, as a
     // hard alpha cutoff, so a pill filled at exactly 0 takes the glass down with
@@ -115,7 +121,18 @@ PanelWindow {
     // 0.012 is well above the mask threshold (0.002) and is 1% black, i.e. not
     // visible as tint. Full transparency then reads as a clear glass pill rather
     // than nothing at all.
-    readonly property color pillFill: Qt.rgba(0, 0, 0, Math.max(bar.pillOpacity, 0.012))
+    readonly property color pillFill: Qt.rgba(0, 0, 0, Math.max(bar.pillTint, 0.012))
+    FileView {
+        id: tintScopeFile
+        path: bar.homeDir + "/.config/hypr/hyprwater-tuning.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var m = this.text().match(/^\s*plugin:hyprwater:adaptive_tint_terminals_only\s*=\s*([0-9.]+)/m)
+            bar.tintTerminalsOnly = m ? parseFloat(m[1]) >= 0.5 : false
+        }
+        onLoadFailed: bar.tintTerminalsOnly = false
+    }
     FileView {
         id: pillOpacityFile
         path: bar.homeDir + "/.config/hypr/terminal-opacity.conf"
@@ -624,6 +641,79 @@ PanelWindow {
         bar.launcherOpen = false;
         bar.lastMenuCloseTime = Date.now();
         if (launcherPanel) launcherPanel.searchText = "";
+    }
+
+    // The launcher's keep-alive zone in global (Hyprland) coords: the panel
+    // body (flush on the pill top, so body ∪ pill is one continuous region)
+    // plus the hamburger pill column down to the screen edge. Used by the close
+    // watchdog AND by the open dwell, so "where the menu is about to be" counts
+    // as on it from the first frame.
+    function inLauncherZone(cx, cy) {
+        var sx = bar.screen.x, sy = bar.screen.y, sh = bar.screen.height
+        var pad = 8
+        var bx = sx + bar.hm
+        var byTop = sy + sh - bar.implicitHeight + bar.vm - launcherPanel.panelH
+        var byBot = sy + sh - bar.implicitHeight + bar.vm
+        var inBody = cx >= bx - pad && cx <= bx + launcherPanel.panelW + pad
+                  && cy >= byTop - pad && cy <= byBot
+        var inPill = cx >= bx - pad && cx <= bx + launcherPanel.hamW + pad
+                  && cy >= byBot && cy <= sy + sh
+        return inBody || inPill
+    }
+
+    // The monitor a one-screen Moonlight client is looking at ("" = nobody, or
+    // the TV, whose stream is a separate virtual output). Written by
+    // ~/.config/hypr/stream-screens.sh from sunshine.log.
+    property string streamOutput: ""
+    // Displays that are powered off (button, or the power toggle in the
+    // launcher's brightness rows). Written by ~/.config/hypr/monitor-power.sh.
+    property var monitorsOff: []
+    FileView {
+        id: monitorsOffFile
+        path: bar.runtimeDir + "/tc-monitors-off"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: bar.monitorsOff = this.text().split("\n").filter(function (l) { return l.trim() !== "" })
+        onLoadFailed: bar.monitorsOff = []
+    }
+    // Nobody can see this monitor: it's off and it isn't the one being
+    // streamed (Hyprland keeps drawing an off display, so a stream of it
+    // still shows it). Its workspace reads as offscreen -> a diamond dot.
+    function isOffscreen(name) {
+        return bar.monitorsOff.indexOf(name) >= 0 && name !== bar.streamOutput
+    }
+    // Dot range = first..last workspace in USE: has windows, or is showing on
+    // a monitor someone can see. Empty workspaces inside it keep their hollow
+    // diamond (a gap between filled ones); empty ones past either end get no
+    // dot -- so an off monitor's empty workspace just disappears.
+    readonly property var wsRange: {
+        var lo = 0, hi = 0
+        var wsList = Hyprland.workspaces.values
+        for (var i = 0; i < wsList.length; i++) {
+            var w = wsList[i]
+            if (w.id > 0 && w.toplevels.values.length > 0) {
+                if (lo === 0 || w.id < lo) lo = w.id
+                if (w.id > hi) hi = w.id
+            }
+        }
+        var mons = Hyprland.monitors.values
+        for (var j = 0; j < mons.length; j++) {
+            var mws = mons[j].activeWorkspace
+            if (mws && mws.id > 0 && !bar.isOffscreen(mons[j].name)) {
+                if (lo === 0 || mws.id < lo) lo = mws.id
+                if (mws.id > hi) hi = mws.id
+            }
+        }
+        if (hi === 0) return [1, bar.workspaceCeiling]   // nothing in use: old behaviour
+        return [lo, hi]
+    }
+    FileView {
+        id: streamOutputFile
+        path: bar.runtimeDir + "/tc-stream-output"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: bar.streamOutput = this.text().trim()
+        onLoadFailed: bar.streamOutput = ""
     }
 
     // Persistent per-app notification counts. Maintained outside Quickshell by
@@ -1967,6 +2057,7 @@ PanelWindow {
                 Behavior on scale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
             }
             MouseArea {
+                id: hamburgerMouse
                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor;
                 hoverEnabled: true
                 // Hover-open like the monitor popups, with a short dwell so
@@ -1977,9 +2068,12 @@ PanelWindow {
                     if (!bar.launcherOpen && Date.now() - bar.lastMenuCloseTime > 400)
                         launcherOpenDwell.restart()
                 }
+                // Leaving does NOT cancel the dwell: touching the pill and
+                // heading straight up into the menu is the normal motion, and
+                // it used to leave before the dwell ended, so nothing opened.
+                // The dwell decides where the cursor ended up instead.
                 // While open, closing is handled by the launcher window's
                 // cursor-position watchdog (immune to Qt hover wipes).
-                onExited: launcherOpenDwell.stop()
                 // No onClicked: the launcher is hover-driven now, so a click
                 // (out of old muscle memory) shouldn't toggle/close it. The click
                 // is still swallowed here so it doesn't fall through to anything.
@@ -1988,7 +2082,27 @@ PanelWindow {
             Timer {
                 id: launcherOpenDwell
                 interval: 140
-                onTriggered: bar.launcherOpen = true
+                // Still on the pill: open. Off it: Qt can't see where the
+                // cursor went (it's over some other client now), so ask
+                // Hyprland, and open only if it's inside the area the menu is
+                // about to cover. Skimming sideways along the bar lands outside
+                // that area, so it still doesn't pop the menu.
+                onTriggered: {
+                    if (hamburgerMouse.containsMouse) bar.launcherOpen = true
+                    else if (!launcherDwellCursor.running) launcherDwellCursor.running = true
+                }
+            }
+            Process {
+                id: launcherDwellCursor
+                command: ["hyprctl", "cursorpos"]
+                stdout: StdioCollector { onStreamFinished: {
+                    if (bar.launcherOpen) return
+                    var p = this.text.trim().split(",")
+                    if (p.length < 2) return
+                    var cx = parseInt(p[0]), cy = parseInt(p[1])
+                    if (isNaN(cx) || isNaN(cy)) return
+                    if (bar.inLauncherZone(cx, cy)) bar.launcherOpen = true
+                } }
             }
         }
 
@@ -2304,11 +2418,11 @@ PanelWindow {
         RowLayout {
             id: dotsRow; anchors.centerIn: parent; spacing: 0
             Repeater {
-                model: bar.workspaceCeiling
+                model: bar.wsRange[1] - bar.wsRange[0] + 1
                 delegate: Item {
                     id: dotDelegate
                     required property int index
-                    readonly property int wsId: index + 1
+                    readonly property int wsId: index + bar.wsRange[0]
                     readonly property var wsObj: {
                         var all = Hyprland.workspaces.values
                         for (var i = 0; i < all.length; i++) {
@@ -2317,7 +2431,9 @@ PanelWindow {
                         return null
                     }
                     readonly property bool isFocused: wsObj ? wsObj.focused : false
-                    readonly property bool isActive: wsObj ? wsObj.active : false
+                    // Shown on a monitor someone can actually see right now.
+                    readonly property bool isActive: wsObj ? wsObj.active
+                        && !(wsObj.monitor && bar.isOffscreen(wsObj.monitor.name)) : false
                     readonly property bool hasWindows: wsObj ? wsObj.toplevels.values.length > 0 : false
                     readonly property string dotState: {
                         if (isFocused) return "focused"
@@ -3585,19 +3701,7 @@ PanelWindow {
                 if (p.length < 2) return
                 var cx = parseInt(p[0]), cy = parseInt(p[1])
                 if (isNaN(cx) || isNaN(cy)) return
-                var sx = bar.screen.x, sy = bar.screen.y, sh = bar.screen.height
-                var pad = 8
-                // panel body (flush on the pill top, so body ∪ pill is one
-                // continuous keep-alive region)
-                var bx = sx + bar.hm
-                var byTop = sy + sh - bar.implicitHeight + bar.vm - launcherPanel.panelH
-                var byBot = sy + sh - bar.implicitHeight + bar.vm
-                var inBody = cx >= bx - pad && cx <= bx + launcherPanel.panelW + pad
-                          && cy >= byTop - pad && cy <= byBot
-                // hamburger pill column down to the screen edge
-                var inPill = cx >= bx - pad && cx <= bx + launcherPanel.hamW + pad
-                          && cy >= byBot && cy <= sy + sh
-                if (!inBody && !inPill) bar.closeLauncher()
+                if (!bar.inLauncherZone(cx, cy)) bar.closeLauncher()
             } }
         }
 
@@ -3786,28 +3890,112 @@ PanelWindow {
                             id: brDelegate
                             property int liveBrightness: modelData.brightness
                             property int monBus: modelData.bus
-                            width: parent.width; height: isPrimary ? 32 : 24
+                            // Grab margin past each end of the track, so 0% and
+                            // 100% don't need pixel aim.
+                            readonly property int grab: isPrimary ? 12 : 8
+                            readonly property int padX: isPrimary ? 14 : 10
+                            readonly property bool isOff: bar.monitorsOff.indexOf(modelData.name) >= 0
+                            // Between the click and monitor-power.sh updating the
+                            // off list (~1-3 s: DDC is slow, waking the MSI takes a
+                            // signal blink). Cleared by the state flipping, or the
+                            // timer if the display couldn't be reached.
+                            property bool pending: false
+                            onIsOffChanged: pending = false
+                            Timer { running: brDelegate.pending; interval: 8000; onTriggered: brDelegate.pending = false }
+                            width: parent.width; height: isPrimary ? 44 : 32
                             radius: height / 2; color: launcherShape.rowBg
-                            Row {
-                                anchors.centerIn: parent; spacing: isPrimary ? 8 : 5
-                                Text { text: String.fromCodePoint(0xF00DE); color: launcherShape.fg; font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: modelData.name; color: launcherShape.fg; font.pixelSize: isPrimary ? 10 : 8; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
-                                Rectangle {
-                                    width: isPrimary ? 180 : 130; height: isPrimary ? 6 : 4; radius: 3
-                                    color: launcherShape.trackCol; anchors.verticalCenter: parent.verticalCenter
-                                    Rectangle { width: parent.width * brDelegate.liveBrightness / 100; height: parent.height; radius: 3; color: launcherShape.fg; Behavior on width { NumberAnimation { duration: 80 } } }
-                                    MouseArea {
-                                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                        onPressed: function(mouse) { brDelegate.liveBrightness = Math.max(0, Math.min(100, Math.round(mouse.x / parent.width * 100))) }
-                                        onPositionChanged: function(mouse) { if (pressed) { brDelegate.liveBrightness = Math.max(0, Math.min(100, Math.round(mouse.x / parent.width * 100))) } }
-                                        // Also persist per-connector: some monitors forget
-                                        // their DDC brightness when the DP link dies with a
-                                        // crashed compositor, so the bar re-asserts the saved
-                                        // value at startup (see ddcDetectProc).
-                                        onReleased: { Quickshell.execDetached(["sh", "-c", "ddcutil setvcp 10 " + brDelegate.liveBrightness + " --bus " + brDelegate.monBus + "; printf %s " + brDelegate.liveBrightness + " > \"$HOME/.config/hypr/.ddc-brightness-" + modelData.name + "\""]); if (bar.ddcMonitors[index]) bar.ddcMonitors[index].brightness = brDelegate.liveBrightness }
-                                    }
+                            // Power toggle: the icon + name. Turns the display itself
+                            // off/on over DDC (~/.config/hypr/monitor-power.sh), so it
+                            // works from a Moonlight stream too.
+                            Rectangle {
+                                x: brIcon.x - (isPrimary ? 8 : 5); anchors.verticalCenter: parent.verticalCenter
+                                width: brName.x + brName.width - brIcon.x + (isPrimary ? 16 : 10)
+                                height: parent.height - (isPrimary ? 10 : 8); radius: height / 2
+                                color: brPowerMouse.containsMouse ? launcherShape.rowHover : "transparent"
+                                Behavior on color { ColorAnimation { duration: 80 } }
+                            }
+                            Text {
+                                id: brIcon
+                                x: brDelegate.padX; anchors.verticalCenter: parent.verticalCenter
+                                // power glyph when off or hovered, so the toggle is findable
+                                text: String.fromCodePoint(brDelegate.isOff || brPowerMouse.containsMouse ? 0xF011 : 0xF00DE)
+                                color: launcherShape.fg
+                                opacity: brDelegate.pending ? 0.4 : 1.0
+                                font.pixelSize: isPrimary ? 18 : 13; font.family: bar.fontFamily
+                            }
+                            Text {
+                                id: brName
+                                anchors.left: brIcon.right; anchors.leftMargin: isPrimary ? 8 : 5
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.name + (brDelegate.isOff ? "  off" : ""); color: launcherShape.fg
+                                font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily
+                            }
+                            MouseArea {
+                                id: brPowerMouse
+                                x: brIcon.x - (isPrimary ? 8 : 5); width: brName.x + brName.width - brIcon.x + (isPrimary ? 16 : 10)
+                                height: parent.height
+                                cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                // onPressed, same reason as the wallpaper button: the
+                                // launcher can re-layer between press and release.
+                                onPressed: {
+                                    if (brDelegate.pending) return
+                                    brDelegate.pending = true
+                                    Quickshell.execDetached(["sh", "-c", "cd \"$HOME\"; \"$HOME/.config/hypr/monitor-power.sh\" toggle " + modelData.name])
                                 }
-                                Text { text: brDelegate.liveBrightness + "%"; color: launcherShape.fg; font.pixelSize: isPrimary ? 10 : 8; font.family: bar.fontFamily; anchors.verticalCenter: parent.verticalCenter }
+                            }
+                            // Fixed width: a centered row used to re-center as the
+                            // number went 9% -> 10% -> 100%, sliding the track
+                            // sideways under the cursor mid-drag.
+                            Text {
+                                id: brPct
+                                opacity: brDelegate.isOff ? 0.35 : 1.0
+                                anchors.right: parent.right; anchors.rightMargin: brDelegate.padX
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: isPrimary ? 38 : 28; horizontalAlignment: Text.AlignRight
+                                text: brDelegate.liveBrightness + "%"; color: launcherShape.fg
+                                font.pixelSize: isPrimary ? 11 : 9; font.family: bar.fontFamily
+                            }
+                            Rectangle {
+                                id: brTrack
+                                opacity: brDelegate.isOff ? 0.35 : 1.0
+                                anchors.left: brName.right; anchors.leftMargin: isPrimary ? 16 : 10
+                                anchors.right: brPct.left; anchors.rightMargin: isPrimary ? 16 : 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                height: isPrimary ? 10 : 7; radius: height / 2
+                                color: launcherShape.trackCol
+                                Rectangle {
+                                    width: parent.width * brDelegate.liveBrightness / 100; height: parent.height
+                                    radius: parent.radius; color: launcherShape.fg
+                                    Behavior on width { NumberAnimation { duration: 80 } }
+                                }
+                                Rectangle {
+                                    width: isPrimary ? 20 : 14; height: width; radius: width / 2
+                                    x: parent.width * brDelegate.liveBrightness / 100 - width / 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: launcherShape.fg
+                                    border.color: launcherShape.rowBg; border.width: 2
+                                    Behavior on x { NumberAnimation { duration: 80 } }
+                                }
+                            }
+                            // Hit area = the row's full height over the track's span
+                            // (plus the grab margins). It used to be the 6px track
+                            // itself, which is what made these hard to press.
+                            MouseArea {
+                                x: brTrack.x - brDelegate.grab; width: brTrack.width + 2 * brDelegate.grab
+                                height: parent.height
+                                enabled: !brDelegate.isOff
+                                cursorShape: Qt.PointingHandCursor
+                                function setAt(mx) {
+                                    brDelegate.liveBrightness = Math.max(0, Math.min(100,
+                                        Math.round((mx - brDelegate.grab) / brTrack.width * 100)))
+                                }
+                                onPressed: function(mouse) { setAt(mouse.x) }
+                                onPositionChanged: function(mouse) { if (pressed) setAt(mouse.x) }
+                                // Also persist per-connector: some monitors forget
+                                // their DDC brightness when the DP link dies with a
+                                // crashed compositor, so the bar re-asserts the saved
+                                // value at startup (see ddcDetectProc).
+                                onReleased: { Quickshell.execDetached(["sh", "-c", "ddcutil setvcp 10 " + brDelegate.liveBrightness + " --bus " + brDelegate.monBus + "; printf %s " + brDelegate.liveBrightness + " > \"$HOME/.config/hypr/.ddc-brightness-" + modelData.name + "\""]); if (bar.ddcMonitors[index]) bar.ddcMonitors[index].brightness = brDelegate.liveBrightness }
                             }
                         }
                     }
@@ -3992,7 +4180,10 @@ PanelWindow {
 
                 Flickable {
                     id: appFlick
-                    width: parent.width; height: parent.height - (isPrimary ? 172 : 130)
+                    // Whatever is left below the search box, sliders and buttons
+                    // (was a hardcoded reservation that assumed two monitors'
+                    // worth of slider rows at their old height).
+                    width: parent.width; height: parent.height - y
                     clip: true; contentHeight: appGrid.height
                     flickableDirection: Flickable.VerticalFlick; boundsBehavior: Flickable.StopAtBounds
                     pressDelay: 120
@@ -5374,8 +5565,12 @@ PanelWindow {
                     var b = parseInt(p[0]); var v = parseInt(p[1])
                     if (!isNaN(b) && !isNaN(v)) map[b] = v
                 }
-                var mons = bar.ddcMonitors.filter(function (m) { return map[m.bus] !== undefined })
-                for (var j = 0; j < mons.length; j++) mons[j].brightness = map[mons[j].bus]
+                // An off display (power button) doesn't answer, but its row must
+                // stay, or there'd be nothing to click to turn it back on.
+                var mons = bar.ddcMonitors.filter(function (m) {
+                    return map[m.bus] !== undefined || bar.monitorsOff.indexOf(m.name) >= 0 })
+                for (var j = 0; j < mons.length; j++)
+                    if (map[mons[j].bus] !== undefined) mons[j].brightness = map[mons[j].bus]
                 bar.ddcMonitors = mons
             }
         }

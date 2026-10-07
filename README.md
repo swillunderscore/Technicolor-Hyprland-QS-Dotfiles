@@ -67,7 +67,7 @@ also install `swww`), and `satty`.
 - `mako` — notification daemon; the bar's tray is a frontend for it
 - `xdg-desktop-portal-hyprland` — screen-share and file-picker support for apps
 - `pipewire` + `wireplumber` — audio, and the volume controls
-- `ddcutil` — external-monitor brightness over the cable (the brightness sliders)
+- `ddcutil` — external-monitor brightness over the cable (the brightness sliders), and turning displays off/on from the launcher (click a slider's monitor name)
 - `nethogs` — per-app network usage (the network widget)
 - `jq` — JSON parsing in the scripts
 - `gawk` — number crunching in the system-monitor script
