@@ -3661,10 +3661,31 @@ PanelWindow {
                             apps.push({ name: parts[0], icon: icon, exec: execParts.join("|"), wmclass: wmclass, desktopId: desktopId })
                         }
                     }
-                    launcherPanel.allApps = apps
+                    // Only swap the model when the list really changed: a
+                    // reassignment resets the list view (scroll, hover).
+                    if (JSON.stringify(apps) !== JSON.stringify(launcherPanel.allApps))
+                        launcherPanel.allApps = apps
                     launcherPanel.appsLoaded = true
                 }
             }
+        }
+
+        // The find(1) sweep above is a snapshot, so anything installed while
+        // the bar is running never showed up here. Quickshell's own
+        // desktop-entry index watches the application dirs and emits
+        // applicationsChanged once per install/uninstall (checked: one
+        // .desktop added -> one signal, removed -> one signal), so sweep
+        // again then. Debounced so a package dropping several entries costs
+        // one sweep, and deferred while a sweep is running: that one may
+        // already be past the new file.
+        Timer {
+            id: appsRescan
+            interval: 500
+            onTriggered: if (appListProc.running) restart(); else appListProc.running = true
+        }
+        Connections {
+            target: DesktopEntries
+            function onApplicationsChanged() { appsRescan.restart() }
         }
 
         readonly property var filteredApps: {
