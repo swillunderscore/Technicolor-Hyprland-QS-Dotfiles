@@ -283,18 +283,24 @@ def main() -> int:
         subprocess.Popen(args.at_start, shell=True)
 
     # Cache-warm strategy for NEW. awww has no decode-only command, so any warm
-    # is a real (briefly-displayed) apply — fire it at the wrong moment and it
-    # flashes NEW mid-reveal ("wrong frame near the end").
+    # is a real apply that DISPLAYS NEW when its decode finishes.
     #   - If NEW is already cached (heavy gifs are pre-pinned, or it was shown
-    #     recently), the caller's final apply is already warm — fire NO warm, so
-    #     nothing displays until the clean handoff at the end.
-    #   - If NEW is uncached, fire the warm late enough that its ~0.3s cold
-    #     decode lands at the END of the reveal, not partway through. The decode
-    #     overlaps the last few static frames (no flash) and is warm by handoff.
+    #     recently), the final apply is already warm — fire NO warm.
+    #   - If NEW is uncached, warm at the START of the reveal, as a crawling fade
+    #     (simple, step 1/255 at 1 fps): when the decode lands mid-reveal, NEW
+    #     appears at 1/255 opacity — invisible — and the next static frame
+    #     replaces it. The decode then has the whole ~1.5s reveal to finish.
+    #     The decode is client-side, so it never delays the static frames
+    #     (measured 2026-10-09: every static apply stayed ~65ms while it ran).
+    # This used to be a plain `-t none` warm fired 6 frames before the end, so
+    # the flash would be hidden by the trailing frames. But a cold decode of a
+    # typical 40-frame wallpaper takes ~0.7s on both monitors, not the ~0.3s it
+    # was tuned for: the reveal ended first and the last static frame sat
+    # FROZEN for 0.4-1.1s before NEW started animating.
     new_key = args.new.replace("/", "_")
     new_cached = bool(glob.glob(
         os.path.expanduser(f"~/.cache/awww/*/{new_key}__*_crop_Argb")))
-    WARM_AT = None if new_cached else (NFRAMES - 6)
+    WARM_AT = None if new_cached else 0
     warmed = False
     warm_proc = None
 
@@ -339,7 +345,8 @@ def main() -> int:
             warm_proc = subprocess.Popen(
                 ["awww", "img", args.new,
                  "--fill-color", "000000", "--resize", "crop",
-                 "--filter", "Nearest", "-t", "none", "--transition-fps", "255"],
+                 "--filter", "Nearest", "-t", "simple",
+                 "--transition-step", "1", "--transition-fps", "1"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
 
