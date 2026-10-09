@@ -122,6 +122,23 @@ def _migrate(v):
     return None
 
 
+def offscreen_monitors():
+    """Names of monitors that are off and not being streamed (see
+    monitor-power.sh, stream-screens.sh, offscreen-guard.sh)."""
+    run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    try:
+        with open(os.path.join(run, "tc-monitors-off")) as f:
+            off = {l.strip() for l in f if l.strip()}
+    except OSError:
+        return set()
+    try:
+        with open(os.path.join(run, "tc-stream-output")) as f:
+            off.discard(f.read().strip())
+    except OSError:
+        pass
+    return off
+
+
 def load():
     try:
         with open(STATE) as f:
@@ -334,6 +351,11 @@ def poll_loop():
         phys = [m for m in mons if not str(m.get("name", "")).startswith("HEADLESS")]
         _max_mons = max(_max_mons, len(phys))
         if len(phys) < _max_mons:
+            continue
+        # Same for a monitor that's still connected but OFFSCREEN (powered off
+        # and not being streamed): offscreen-guard.sh moves windows off it, and
+        # a remote one-screen session must not rewrite where apps open at home.
+        if offscreen_monitors():
             continue
         # id -> (name, x, y, logical_w, logical_h)
         moff = {}
