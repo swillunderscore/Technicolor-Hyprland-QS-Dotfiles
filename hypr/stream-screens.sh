@@ -13,6 +13,10 @@
 # focus -- UNLESS it is the one being streamed: Hyprland keeps drawing it, so
 # the remote viewer can see it.
 #
+# When a stream ends it also runs stream-release-keys.py: Sunshine sometimes
+# leaves a key the remote side was holding stuck down on its virtual keyboard,
+# and while it's held that key is dead on every keyboard.
+#
 # A stream of a virtual headless output (e.g. one created for a TV with
 # `hyprctl output create headless`) logs as "Selected monitor []" (headless
 # outputs have no description), so it never names a real monitor.
@@ -21,6 +25,8 @@
 #   Info: Sunshine version: ...                          fresh start, reset
 #   Info: New streaming session started [active sessions: N]
 #   Info: CLIENT DISCONNECTED
+#   Info: <address>: Ping Timeout     stream lost; no CLIENT DISCONNECTED follows
+#   Error: Initial Ping Timeout       session never got going (video/audio)
 #   Info: [wlgrab] Selected monitor [<description> (DP-1)] for streaming
 # "Selected monitor" also appears while Sunshine probes encoders at startup;
 # it only matters while a session is up.
@@ -28,6 +34,7 @@
 LOG="${TC_STREAM_LOG:-$HOME/.config/sunshine/sunshine.log}"   # env overrides: tests
 RUN="${TC_STREAM_RUN:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
 STATE="$RUN/tc-stream-output"
+RELEASE="${TC_STREAM_RELEASE:-$(dirname "$(readlink -f "$0")")/stream-release-keys.py}"
 
 exec 8>"$RUN/tc-stream-output.lock"
 flock -n 8 || exit 0          # one watcher per session
@@ -49,6 +56,16 @@ publish() {
     fi
     [ "$out" = "$(cat "$STATE" 2>/dev/null)" ] && return
     printf '%s\n' "$out" > "$STATE"
+}
+
+# Sunshine's own key reset runs as the session winds down, so give it a moment,
+# then clear whatever is still held. Only for a line that is happening NOW --
+# the startup replay of old sessions must not touch a stream that's up.
+release_soon() {
+    local t
+    t=$(date -d "${1:1:19}" +%s 2>/dev/null) || return
+    [ $((EPOCHSECONDS - t)) -le 15 ] || return
+    ( sleep 2; exec "$RELEASE" ) 3<&- 8>&- &
 }
 
 # -n +1 replays the current log first (a stream may already be up when this
@@ -79,9 +96,14 @@ while :; do
             n=${line##*active sessions: }; n=${n%%]*}
             [[ "$n" =~ ^[0-9]+$ ]] && sessions=$n
             selected=""; dirty=1 ;;
-        *"CLIENT DISCONNECTED"*)
+        *"CLIENT DISCONNECTED"*|*": Ping Timeout"*)
             [ "$sessions" -gt 0 ] && sessions=$((sessions - 1))
+            release_soon "$line"
             dirty=1 ;;
+        *"Initial Ping Timeout"*)
+            # can be logged by both the video and audio thread, so not counted;
+            # the next session start re-syncs the count anyway
+            release_soon "$line" ;;
         *"[wlgrab] Selected monitor ["*)
             sel=${line#*Selected monitor [}; sel=${sel%] for streaming*}
             if [[ "$sel" =~ \(([^()]+)\)$ ]]; then selected=${BASH_REMATCH[1]}; else selected=""; fi

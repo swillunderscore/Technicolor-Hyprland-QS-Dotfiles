@@ -1,7 +1,13 @@
 #!/bin/bash
 # Main script lock to prevent shortcut stacking
 exec 9>/tmp/wallpaper.lock
-if ! flock -n 9; then
+if [ "${1:-}" = "anchor" ]; then
+    # An anchor is never dropped: a pause that lost the race with a wallpaper
+    # change would leave a mirror on a sequence the desktop isn't showing. It
+    # waits for the change to finish instead, and fails loudly (exit 1) so the
+    # caller retries.
+    flock -w 30 9 || exit 1
+elif ! flock -n 9; then
     exit 0
 fi
 
@@ -81,6 +87,33 @@ HOOK="$HOME/.config/hypr/wallpaper-cycle.local.sh"
 # step is derived from the clock, so ordinary rotation needs no message. Noting
 # the seed here lets the end of the script tell whether one happened.
 SEED_BEFORE=$(cat "$HOME/.config/hypr/wallpaper-seed" 2>/dev/null || echo 0)
+
+# ANCHOR: start a new sequence whose step 0 is the wallpaper ON SCREEN, without
+# re-applying it. wallpaper-timer.sh runs this on every pause and unpause:
+# while paused the step is frozen at 0 (wallpaper-seed.py step_now), so pausing
+# must make step 0 the held wallpaper, and unpausing must restart the clock
+# from it — otherwise a mirror jumps to wherever the old sequence had got to.
+if [ "$MODE" = "anchor" ]; then
+    CUR=$(cat "$CURRENT_PATH_FILE" 2>/dev/null)
+    INDEX=-1
+    for i in "${!WALLPAPERS[@]}"; do
+        if [ "${WALLPAPERS[$i]}" = "$CUR" ]; then INDEX=$i; break; fi
+    done
+    # The KDE branch records only the index.
+    if [ "$INDEX" -lt 0 ]; then
+        INDEX=$(cat "$STATE_FILE" 2>/dev/null)
+        case "$INDEX" in ''|*[!0-9]*) INDEX=-1 ;; esac
+        [ "$INDEX" -ge "$COUNT" ] && INDEX=-1
+    fi
+    # Nothing known on screen (before the first apply): keep the sequence.
+    # The hook still runs, so a mirror hears the pause either way.
+    if [ "$INDEX" -ge 0 ]; then
+        python3 "$SEEDER" reseed "$COUNT" "$INDEX" >/dev/null
+        echo "$INDEX" > "$STATE_FILE"
+    fi
+    [ -x "$HOOK" ] && setsid "$HOOK" reseeded >/dev/null 2>&1 9>&- &
+    exit 0
+fi
 
 if [ "$MODE" = "random" ]; then
     # Let the hook adopt a newer sequence first (one started elsewhere while

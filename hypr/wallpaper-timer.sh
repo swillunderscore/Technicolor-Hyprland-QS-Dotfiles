@@ -45,8 +45,55 @@ fullscreen_present() {
 # sleep until it. The tick still bounds the sleep so a config change or an
 # unpause is noticed within 15 seconds.
 SEEDER="$HOME/.config/hypr/wallpaper-seed.py"
+
+# PAUSE IS PART OF THE SEQUENCE, not just this loop skipping its turn. A mirror
+# derives its picture from the clock, so if this machine merely stopped
+# changing, the mirror would carry on without it. Each pause/unpause instead
+# anchors the sequence at the wallpaper on screen (see wallpaper-cycle.sh
+# anchor and wallpaper-seed.py step_now), and the anchor's hook tells the
+# mirror.
+#
+# That push can fail — mirror unreachable — and nothing else would retry it: the
+# hourly push runs from the cycle, and the cycle doesn't run while paused. So
+# until the mirror hook acknowledges this paused value (it writes ACK once the
+# mirror has stored it), retry here, backing off to 5 minutes. No hook = no mirror
+# = nothing to retry.
+HOOK="$HOME/.config/hypr/wallpaper-cycle.local.sh"
+ACK="/tmp/wallpaper-mirror-paused"
+PREV_PAUSED=""
+PENDING=0
+next_try=0
+backoff=$TICK
+# A change held back by a fullscreen app is OWED, not skipped. It used to wait
+# for the NEXT boundary, so after a game the desktop sat an hour behind a
+# mirror that had changed on time. Now it fires on the first tick with no
+# fullscreen app, and lands on the clock's current step — the mirror's.
+OWED=0
 while true; do
     read_conf
+    # First pass only records the state: at login the cycle's own hourly push
+    # already carries it.
+    if [ -n "$PREV_PAUSED" ] && [ "$PAUSED" != "$PREV_PAUSED" ]; then
+        # Leaves PREV_PAUSED unchanged on failure, so the next tick retries.
+        if "$HOME/.config/hypr/wallpaper-cycle.sh" anchor; then
+            PREV_PAUSED="$PAUSED"
+            PENDING=1; backoff=$TICK; next_try=$(( $(date +%s) + TICK ))
+        fi
+    else
+        PREV_PAUSED="$PAUSED"
+    fi
+    if [ "$PENDING" = "1" ]; then
+        if [ ! -x "$HOOK" ] || [ "$(cat "$ACK" 2>/dev/null)" = "$PAUSED" ]; then
+            PENDING=0
+        elif [ "$(date +%s)" -ge "$next_try" ]; then
+            # Detached and non-stacking, so an unreachable mirror never delays a
+            # wallpaper change here.
+            ( flock -n 8 || exit 0; timeout 15 "$HOOK" state >/dev/null 2>&1 ) \
+                8>/tmp/wallpaper-mirror-push.lock 9>&- &
+            next_try=$(( $(date +%s) + backoff ))
+            backoff=$(( backoff * 2 )); [ "$backoff" -gt 300 ] && backoff=300
+        fi
+    fi
     now=$(date +%s)
     boundary=$(python3 "$SEEDER" boundary 2>/dev/null)
     case "$boundary" in ''|*[!0-9]*) boundary=$((now + TICK)) ;; esac
@@ -55,12 +102,17 @@ while true; do
     [ "$wait" -lt 1 ] && wait=1
     sleep "$wait"
 
-    [ "$PAUSED" = "1" ] && continue                 # frozen while paused
+    # Frozen while paused. Nothing is owed either: pausing anchored the
+    # sequence at the wallpaper on screen, so that one IS current.
+    [ "$PAUSED" = "1" ] && { OWED=0; continue; }
     now=$(date +%s)
-    [ "$now" -lt "$boundary" ] && continue          # woke for the tick, not the change
-    # Boundary reached — hold off if a fullscreen app is up. Nothing is lost by
-    # waiting: the step comes from the clock, so when it does fire it lands on
-    # whichever wallpaper is current rather than replaying a backlog.
-    if [ "$PAUSE_ON_FULLSCREEN" = "1" ] && fullscreen_present; then continue; fi
+    # woke for the tick, not the change (unless one is owed)
+    [ "$now" -lt "$boundary" ] && [ "$OWED" = "0" ] && continue
+    # Boundary reached (or owed) — hold off while a fullscreen app is up.
+    # Nothing is lost by waiting: the step comes from the clock, so when it does
+    # fire it lands on whichever wallpaper is current rather than replaying a
+    # backlog.
+    if [ "$PAUSE_ON_FULLSCREEN" = "1" ] && fullscreen_present; then OWED=1; continue; fi
+    OWED=0
     "$HOME/.config/hypr/wallpaper-cycle.sh" random
 done

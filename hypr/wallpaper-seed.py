@@ -3,7 +3,9 @@
 The wallpaper sequence, as a pure function of (seed, step).
 
     wallpaper-seed.py index  <count> <step>   -> index for that step
-    wallpaper-seed.py step                    -> which step "now" is
+    wallpaper-seed.py step                    -> which step "now" is (0 while
+                                                 paused)
+    wallpaper-seed.py paused                  -> 1 if the auto-cycle is paused
     wallpaper-seed.py reseed [count] [want]   -> new sequence; optionally one
                                                  whose step 0 IS `want`
 
@@ -56,6 +58,23 @@ def period() -> int:
     except Exception:
         pass
     return 3600
+
+
+def paused() -> bool:
+    """Whether the auto-cycle is paused (PAUSED=1 in the timer's config).
+
+    While paused the step is FROZEN AT 0 — see step_now. Read from the same
+    config the timer obeys, so there is one switch, not two.
+    """
+    try:
+        with open(TIMER_CONF) as f:
+            for line in f:
+                k, _, v = line.partition("=")
+                if k.strip() == "PAUSED":
+                    return v.strip() == "1"
+    except Exception:
+        pass
+    return False
 
 
 def _h(seed: int, step: int, salt: int) -> int:
@@ -150,6 +169,23 @@ def step_at(now: int, epoch_: int, p: int) -> int:
     return max(0, now // p - epoch_ // p)
 
 
+def step_now() -> int:
+    """The step the desktop should be on right now.
+
+    PAUSED FREEZES THE STEP AT 0. Pausing is not "stop the timer and hope":
+    a mirror derives its picture from the clock, so a desktop that merely
+    stopped changing would watch the mirror carry on without it. Instead,
+    pausing re-anchors the sequence so step 0 is the wallpaper on screen
+    (wallpaper-cycle.sh anchor), and while paused every reader — this machine
+    and a mirror alike — uses step 0. A manual pick or shuffle while paused
+    reseeds, which is step 0 by construction, so it still lands everywhere.
+    Unpausing anchors again, so the clock resumes from the held wallpaper.
+    """
+    if paused():
+        return 0
+    return step_at(int(time.time()), epoch(), period())
+
+
 def boundary_at(now: int, p: int) -> int:
     """The instant the current step ends. A mirror computes this identically."""
     return (now // p + 1) * p
@@ -189,8 +225,11 @@ if __name__ == "__main__":
         # a mirror independently computes, so both flip at the same instant.
         print(boundary_at(int(time.time()), period()))
         raise SystemExit(0)
+    if cmd == "paused":
+        print(1 if paused() else 0)
+        raise SystemExit(0)
     if cmd == "step":
-        print(step_at(int(time.time()), epoch(), period()))
+        print(step_now())
     elif cmd == "reseed":
         cnt = int(sys.argv[2]) if len(sys.argv) > 2 else None
         want = int(sys.argv[3]) if len(sys.argv) > 3 else None

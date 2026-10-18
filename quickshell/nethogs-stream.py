@@ -18,9 +18,84 @@
 # WireGuard/Tailscale never reached the graph: measured 0.07 of 10.55 MB
 # attributed during a Brave download, vs 9.46 MB with -C.
 
-import os, select, signal, subprocess, sys
+import os, select, signal, subprocess, sys, time
 
 NETHOGS = "/usr/bin/nethogs"
+
+# Memory cap. nethogs' memory only ever grows while it runs (3.9 GB after 5.7
+# days, seen 2026-10-14). Every CHECK_EVERY_S we read its resident memory and,
+# past the limit, restart it in place. The bar loses about one refresh; nothing
+# else notices. Each restart is logged to LOG so it never happens silently.
+RSS_LIMIT_KB = int(os.environ.get("NETHOGS_RSS_LIMIT_MB", "1024")) * 1024
+CHECK_EVERY_S = float(os.environ.get("NETHOGS_CHECK_S", "30"))
+LOG = os.environ.get("NETHOGS_STREAM_LOG", os.path.expanduser("~/.cache/nethogs-stream.log"))
+
+
+def log(msg):
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except OSError:
+        pass
+
+
+def spawn():
+    return subprocess.Popen(
+        ["sudo", "-n", NETHOGS, "-t", "-d", "1", "-v", "2", "-C"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        bufsize=1,
+    )
+
+
+def nethogs_rss_kb(root_pid):
+    """Resident memory (kB) of the nethogs process(es) under our sudo.
+    /proc/<pid>/status is world-readable, so this works on the root process."""
+    children: dict[int, list[int]] = {}
+    comms: dict[int, str] = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                stat = f.read()
+        except OSError:
+            continue
+        # comm can contain spaces/parens: it sits between the first "(" and the LAST ")".
+        comm = stat[stat.find("(") + 1:stat.rfind(")")]
+        ppid = int(stat[stat.rfind(")") + 2:].split()[1])
+        children.setdefault(ppid, []).append(int(d))
+        comms[int(d)] = comm
+    total, todo = 0, list(children.get(root_pid, []))
+    while todo:
+        pid = todo.pop()
+        todo.extend(children.get(pid, []))
+        if comms.get(pid) == "nethogs":
+            try:
+                with open(f"/proc/{pid}/status") as f:
+                    for line in f:
+                        if line.startswith("VmRSS:"):
+                            total += int(line.split()[1])
+            except OSError:
+                pass
+    return total
+
+
+def stop(p):
+    """End one nethogs run. sudo relays SIGTERM; if that doesn't land, closing
+    the pipe makes nethogs die of SIGPIPE on its next write (<= 1 s)."""
+    try:
+        p.terminate()
+        p.wait(timeout=3)
+        return
+    except Exception:
+        pass
+    try:
+        p.stdout.close()
+        p.wait(timeout=5)
+    except Exception:
+        log(f"WARNING: old nethogs (sudo pid {p.pid}) did not exit - check for a leftover nethogs process")
 
 
 def _shutdown(*_):
@@ -34,13 +109,8 @@ def _shutdown(*_):
 signal.signal(signal.SIGTERM, _shutdown)
 signal.signal(signal.SIGINT, _shutdown)
 
-proc = subprocess.Popen(
-    ["sudo", "-n", NETHOGS, "-t", "-d", "1", "-v", "2", "-C"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.DEVNULL,
-    text=True,
-    bufsize=1,
-)
+proc = spawn()
+last_check = time.monotonic()
 
 # Last known cumulative counters, kept PERSISTENTLY (not just for the previous
 # snapshot): nethogs drops a process from its listing while it has no traffic,
@@ -133,6 +203,21 @@ IDLE_FLUSH_S = 0.12
 flushed = False
 
 while True:
+    now = time.monotonic()
+    if now - last_check >= CHECK_EVERY_S:
+        last_check = now
+        rss = nethogs_rss_kb(proc.pid)
+        if rss > RSS_LIMIT_KB:
+            log(f"restart: nethogs at {rss // 1024} MB > {RSS_LIMIT_KB // 1024} MB cap")
+            stop(proc)
+            proc = spawn()
+            # The fresh nethogs starts its cumulative -v 2 counters at zero, so the
+            # old baselines would diff every pid to 0 until it out-grew its old
+            # total. Start over exactly like a first launch.
+            prev, curr = {}, {}
+            seen_refresh = primed = flushed = False
+            continue
+
     ready, _, _ = select.select([proc.stdout], [], [], IDLE_FLUSH_S)
     if not ready:
         # Output went quiet: the snapshot is complete, send it now.
