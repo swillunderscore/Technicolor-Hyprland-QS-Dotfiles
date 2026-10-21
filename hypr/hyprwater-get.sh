@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Print the live value of each slider-exposed hyprwater option as KEY=VALUE,
-# for the Settings → Glass tab to initialise its sliders. Reads the running
+# for the Settings → Glass and Water pages to initialise its sliders. Reads the running
 # value via hyprctl (which already reflects hyprland.conf + hyprwater-tuning.conf).
 set -u
 

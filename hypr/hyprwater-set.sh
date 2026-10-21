@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set a hyprwater option live AND persist it (Settings → Glass tab).
+# Set a hyprwater option live AND persist it (Settings → Glass and Water).
 #   hyprwater-set.sh <key> <value>
 # Live: hyprctl keyword. Persist: an override line in hyprwater-tuning.conf,
 # which hyprland.conf sources AFTER the defaults, so it survives reloads/restarts.

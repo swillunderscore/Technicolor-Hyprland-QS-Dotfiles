@@ -1,4 +1,4 @@
-# Written by Settings → Glass (the sliders + write-in). hyprland.conf sources
+# Written by Settings → Glass and Water (the sliders + write-in). hyprland.conf sources
 # this AFTER the plugin defaults, so any line here overrides them. Empty = defaults.
 # Examples:
 # plugin:hyprwater:refraction_strength = 1.5

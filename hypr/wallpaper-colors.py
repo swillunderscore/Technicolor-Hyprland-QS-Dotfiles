@@ -241,7 +241,7 @@ def main():
 
     # Terminal transparency, if it's set to follow the wallpaper: a brighter
     # wallpaper needs a more opaque terminal for white text to stay readable.
-    # No-op unless Settings → System → Adapt to wallpaper is on.
+    # No-op unless Settings → Glass → Adapt to what's behind is on.
     #
     # FIRST, and detached. It ramps the opacity over ~1.2s to ride the wallpaper
     # fade, so it has to start WITH the fade. Run from the end of this script it

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read and write the background transparency of whichever terminal you use.
 
-Technicolor Settings > System > Terminal transparency talks to this. Every
+Technicolor Settings > Glass > Terminal transparency talks to this. Every
 terminal spells transparency differently and reloads differently, so each one
 gets an adapter below: where its config lives, what the key is called, and how
 to make an already-open window pick the change up.

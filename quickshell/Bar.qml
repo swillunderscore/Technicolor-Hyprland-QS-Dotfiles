@@ -32,7 +32,7 @@ PanelWindow {
         ? (contrastBias / 0.5) * 0.17912
         : 0.17912 + ((contrastBias - 0.5) / 0.5) * (1.06 - 0.17912)
 
-    // Bar icon options (Settings → Apps), fed from shell.qml's hypr/bar.conf.
+    // Bar icon options (Settings → Bar & Apps), fed from shell.qml's hypr/bar.conf.
     // launcherTint: recolor pinned launcher icons along the wallpaper gradient
     // (off = their own colors). dimMinimized: minimized-window icons sit at 65%
     // until hovered (off = full opacity, hover scales like the launchers).
@@ -74,7 +74,7 @@ PanelWindow {
     // isn't present on this machine, so the shared config hides apps a given
     // system doesn't have (here, everything's installed -> all of them show).
     // Baked-in DEFAULTS: first-run seed + permanent fallback. The LIVE list is
-    // ~/.config/quickshell/launcher-apps.json, edited in Settings > Apps. When
+    // ~/.config/quickshell/launcher-apps.json, edited in Settings > Bar & Apps. When
     // that file is empty/missing we fall back to these, so the bar never breaks.
     readonly property var defaultPins: [
         { icon: "brave-desktop",                    cmd: "brave",                                   nerdGlyph: "", imgPath: "" },
@@ -104,14 +104,14 @@ PanelWindow {
         onTriggered: { if (pinAvailProc.running) pinRefilter.restart(); else pinAvailProc.running = true }
     }
 
-    // Live pin config — edited by Settings > Apps, watched so edits apply with no restart.
+    // Live pin config — edited by Settings > Bar & Apps, watched so edits apply with no restart.
     // ── Section pill transparency ── follows the terminal, so the bar's pills and
     // your terminal are see-through by the same amount. terminal-opacity.py
-    // publishes the resolved value here whenever Settings → System → Terminal
+    // publishes the resolved value here whenever Settings → Glass → Terminal
     // transparency moves, whichever terminal you're on. 0.65 is the old fixed
     // value, used until that file exists.
     property real pillOpacity: 0.65
-    // Settings → System → "Tint: terminals only" (hyprwater's
+    // Settings → Glass → "Tint: terminals only" (hyprwater's
     // adaptive_tint_terminals_only). On, only terminals get tinted: the pills
     // stop copying the terminal's darkness and go clear glass, the same way the
     // plugin drops every tint from the bar's glass.

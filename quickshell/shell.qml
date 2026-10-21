@@ -92,7 +92,7 @@ ShellRoot {
         onLoadFailed: root.uiFont = root.fontFallback
     }
 
-    // Bar icon options (Settings → Apps): KEY=0|1 lines in hypr/bar.conf, absent
+    // Bar icon options (Settings → Bar & Apps): KEY=0|1 lines in hypr/bar.conf, absent
     // keys and a missing file = defaults. Settings sets these directly too, for
     // instant feedback. An empty read is the moment Settings' write truncates
     // the file, so it's skipped rather than flashing the defaults.
@@ -193,7 +193,7 @@ ShellRoot {
 
     // Settings window state — a stable singleton on the shell root, NOT on a bar
     // instance (those go stale across config reloads, which left the window unable
-    // to open). 0=Apps, 1=Wallpaper, 2=System.
+    // to open). settingsTab indexes Settings.qml's `pages` (0 = Bar & Apps … 7 = System).
     property bool settingsOpen: false
     property int settingsTab: 0
     // Reliable open: reset to false first, so a window the compositor closed

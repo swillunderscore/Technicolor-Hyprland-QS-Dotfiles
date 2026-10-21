@@ -178,23 +178,23 @@ SWAP automatically.
 </details>
 
 <details>
-<summary><b>Settings app</b> — the tabs and what each one does</summary>
+<summary><b>Settings app</b> — the pages and what each one does</summary>
 
 A real app window (`quickshell/Settings.qml`), listed as **Technicolor Settings**. Opens from
 the gear on the launcher popup or `qs ipc call settings open`.
 
-| Tab | What's in it |
+| Page | What's in it |
 |---|---|
-| **Apps** | Pinned launcher apps — reorder, swap icons, add/remove. |
+| **Bar & Apps** | Tint the pinned launcher icons with the wallpaper gradient (or show their own colors), dim minimized-window icons, and the pinned launcher apps — reorder, swap icons, add/remove. |
 | **Wallpaper** | Cover-flow picker (scroll or drag to spin, click the middle one). Shuffle, transition style, auto-cycle timer, pause-while-fullscreen so a game never eats a transition. |
-| **Colors** | Four sliders that retint every themed app at once: text contrast threshold, saturation ceiling, brightness ceiling, hue. The ceilings rein in over-saturated wallpapers without touching muted ones. |
-| **Glass** | Refraction, fresnel, specular, blur, lens distortion, chromatic aberration, brightness/contrast/saturation/vibrancy. Write-in box for anything past a slider's range. |
-| **Water** | Speed, scale, depth, viscosity, activity, warping. |
-| **Effects** | The GPU governor and its thresholds. |
+| **Colors** | Four sliders that retint every themed app at once: text contrast threshold, saturation ceiling, brightness ceiling, hue. The ceilings rein in over-saturated wallpapers without touching muted ones. Per-app fine-tuning on top. |
+| **Glass** | The look (refraction, lens distortion, edges, chromatic aberration, fresnel, specular), blur, color (brightness/contrast/saturation/vibrancy), and readability: terminal transparency, the adaptive tint, and tinting terminals only. Write-in box for anything past a slider's range. |
+| **Water** | Moving water on/off; waves (size, speed, activity, viscosity), light (brightness, depth, water color, murk), currents, and how the mouse and dragged windows disturb it. |
+| **Performance** | The GPU governor and its thresholds, plus a manual effects step. |
 | **Hotkeys** | Every keybind, searchable and editable. Read live from `hyprctl binds`, so it matches your real config. Click the keys to rebind; conflicts are caught and named. |
-| **System** | UI font, default file manager, default terminal, terminal transparency, a `local.conf` editor, the update checker, and Spotify library tools. |
+| **System** | UI font, default file manager and terminal, the update checker, Spotify library tools, and a `local.conf` editor. |
 
-**Terminal transparency** (System tab) follows whichever terminal you've set as
+**Terminal transparency** (Glass page) follows whichever terminal you've set as
 the default and drives *that* terminal's own background alpha, so the text stays
 fully solid — a compositor opacity rule would fade the glyphs with it. kitty,
 Alacritty, foot, Ghostty, WezTerm and GNOME Terminal change as you drag; Konsole
@@ -202,7 +202,7 @@ and Xfce Terminal are saved to config and come up transparent in new windows.
 Anything else says so instead of pretending. Adapters live in
 `hypr/terminal-opacity.py` — one entry per terminal, easy to extend.
 
-**Spotify library tools** (System tab): *Scan for AI music* checks your likes against the
+**Spotify library tools** (System page): *Scan for AI music* checks your likes against the
 community [soul-over-ai](https://github.com/xoundbyte/soul-over-ai) list by artist ID. *Back up
 to CSV* exports your library. Both read-only, through your open Spotify via Spicetify — no
 developer app, no extra login.
@@ -245,7 +245,7 @@ The governor watches GPU load and steps effects down in tiers — water, then la
 window glass, then animations — and back up when load drops. Hysteresis keeps it from
 oscillating.
 
-Configurable in **Settings → Effects**, including an optional low-battery tier for laptops.
+Configurable in **Settings → Performance**, including an optional low-battery tier for laptops.
 </details>
 
 <details>
