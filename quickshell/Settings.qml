@@ -15,8 +15,35 @@ FloatingWindow {
 
     visible: shell ? shell.settingsOpen : false
     title: "Technicolor Settings"
-    implicitWidth: 780
-    implicitHeight: 660
+    // Open at the size Hyprland is about to give the window: window-geometry.py
+    // keeps a learned `size W H` rule for it. A first buffer of any other size
+    // sat small in the window's top-left corner until Qt answered the resize,
+    // which took ~0.75 s while the lists below were reloading.
+    property int ruleWidth: 780
+    property int ruleHeight: 660
+    implicitWidth: ruleWidth
+    implicitHeight: ruleHeight
+    FileView {
+        path: win.homeDir + "/.config/hypr/window-geometry.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var lines = this.text().split("\n"), w = 780, h = 660
+            for (var i = 0; i < lines.length; i++) {
+                var l = lines[i]
+                if (l.indexOf("org\\.quickshell") < 0 || l.indexOf("Technicolor\\ Settings") < 0) continue
+                var m = l.match(/^windowrule = size (\d+) (\d+),/)
+                if (m) { w = parseInt(m[1]); h = parseInt(m[2]) }
+            }
+            win.ruleWidth = w; win.ruleHeight = h
+        }
+    }
+
+    // Reassigning a list model rebuilds every delegate (313 fonts, each in its
+    // own face); the lists reload on every open, so only swap in real changes.
+    function setIfChanged(prop, val) {
+        if (JSON.stringify(win[prop]) !== JSON.stringify(val)) win[prop] = val
+    }
     // Transparent so hyprwater renders live liquid glass in the gaps between the
     // solid rounded blocks — same model as the themed app windows (e.g. Dolphin).
     color: "transparent"
@@ -73,7 +100,7 @@ FloatingWindow {
                     var p = lines[i].split("|")
                     if (p.length >= 4 && p[0]) out.push({ name: p[0], icon: p[1], exec: p[2], desktopId: p[3] })
                 }
-                win.installedApps = out
+                win.setIfChanged("installedApps", out)
             }
         }
     }
@@ -139,7 +166,7 @@ FloatingWindow {
             onStreamFinished: {
                 var out = []; var lines = this.text.split("\n")
                 for (var i = 0; i < lines.length; i++) { var p = lines[i].split("|"); if (p.length >= 2 && p[0]) out.push({ id: p[0], name: p[1] }) }
-                win.fileManagers = out
+                win.setIfChanged("fileManagers", out)
             }
         }
     }
@@ -174,7 +201,7 @@ FloatingWindow {
             onStreamFinished: {
                 var out = []; var lines = this.text.split("\n")
                 for (var i = 0; i < lines.length; i++) { var p = lines[i].split("|"); if (p.length >= 2 && p[0]) out.push({ name: p[0], cmd: p[1] }) }
-                win.terminals = out
+                win.setIfChanged("terminals", out)
             }
         }
     }
@@ -695,7 +722,7 @@ FloatingWindow {
                        dispatcher: b.dispatcher, arg: arg,
                        overridden: win.findOverride(mods, rawKey, b.dispatcher, arg) >= 0 })
         }
-        win.keybinds = out
+        win.setIfChanged("keybinds", out)
     }
 
     // capture state
@@ -862,7 +889,7 @@ FloatingWindow {
                 var a = []
                 var lines = this.text.split("\n")
                 for (var i = 0; i < lines.length; i++) { var s = lines[i].trim(); if (s !== "") a.push(s) }
-                win.installedFonts = a
+                win.setIfChanged("installedFonts", a)
             }
         }
     }
@@ -884,6 +911,22 @@ FloatingWindow {
             "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/font.conf'; " +
             "\"$HOME/.config/hypr/gen-wofi-font.sh\""]
         fontSetProc.running = true
+    }
+
+    // ── Bar icon options (Apps tab) ── hypr/bar.conf, read by shell.qml. The
+    // shell properties are set first so every bar changes on the click; the
+    // file then makes it stick across restarts.
+    Process { id: barConfProc }
+    function setBarOption(key, on) {
+        if (!win.shell) return
+        if (key === "LAUNCHER_TINT") win.shell.launcherTint = on
+        if (key === "DIM_MINIMIZED") win.shell.dimMinimized = on
+        var text = "# Written by Settings > Apps. 1 = on, 0 = off.\n" +
+                   "LAUNCHER_TINT=" + (win.shell.launcherTint ? 1 : 0) + "\n" +
+                   "DIM_MINIMIZED=" + (win.shell.dimMinimized ? 1 : 0) + "\n"
+        barConfProc.command = ["bash", "-c",
+            "printf %s '" + Qt.btoa(text) + "' | base64 -d > '" + win.homeDir + "/.config/hypr/bar.conf'"]
+        barConfProc.running = true
     }
 
     // ── Update (System tab) ── pull latest from GitHub + copy configs (tuning
@@ -1432,6 +1475,42 @@ FloatingWindow {
                     visible: win.shell && win.shell.settingsTab === 0
                     Column {
                         anchors.fill: parent; spacing: 10
+                        Rectangle {
+                            width: parent.width; height: Math.max(50, tintCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                            Column {
+                                id: tintCol
+                                anchors.left: parent.left; anchors.leftMargin: 12
+                                anchors.right: tintTg.left; anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                Text { text: "Tint launcher icons"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                       text: "Recolor the pinned app icons along the wallpaper gradient. Off shows each app's own icon colors." }
+                            }
+                            TcToggle {
+                                id: tintTg
+                                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                on: win.shell ? win.shell.launcherTint : true
+                                onToggled: (v) => win.setBarOption("LAUNCHER_TINT", v)
+                            }
+                        }
+                        Rectangle {
+                            width: parent.width; height: Math.max(50, dimCol.implicitHeight + 18); radius: 9; color: win.rowBg
+                            Column {
+                                id: dimCol
+                                anchors.left: parent.left; anchors.leftMargin: 12
+                                anchors.right: dimTg.left; anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                Text { text: "Dim minimized icons"; color: win.fg; font.pixelSize: 13; font.bold: true; font.family: win.ff }
+                                Text { width: parent.width; wrapMode: Text.WordWrap; color: win.fg; opacity: 0.6; font.pixelSize: 11; font.family: win.ff
+                                       text: "Show minimized windows' icons half see-through until you hover them." }
+                            }
+                            TcToggle {
+                                id: dimTg
+                                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                on: win.shell ? win.shell.dimMinimized : false
+                                onToggled: (v) => win.setBarOption("DIM_MINIMIZED", v)
+                            }
+                        }
                         Item {
                             width: parent.width; height: 30
                             Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "Pinned apps"; color: win.fg; font.pixelSize: 14; font.bold: true; font.family: win.ff }
@@ -1444,7 +1523,7 @@ FloatingWindow {
                             }
                         }
                         SmoothList {
-                            width: parent.width; height: parent.height - 40
+                            width: parent.width; height: parent.height - y
                             clip: true; contentHeight: pinCol.height
                             Column {
                                 id: pinCol; width: parent.width; spacing: 6

@@ -32,6 +32,13 @@ PanelWindow {
         ? (contrastBias / 0.5) * 0.17912
         : 0.17912 + ((contrastBias - 0.5) / 0.5) * (1.06 - 0.17912)
 
+    // Bar icon options (Settings → Apps), fed from shell.qml's hypr/bar.conf.
+    // launcherTint: recolor pinned launcher icons along the wallpaper gradient
+    // (off = their own colors). dimMinimized: minimized-window icons sit at 65%
+    // until hovered (off = full opacity, hover scales like the launchers).
+    property bool launcherTint: true
+    property bool dimMinimized: false
+
     // Fed from shell.qml's nethogs streamer. Used to annotate net history
     // buckets with the top sender/receiver app for that 1-second window.
     property string sharedNetTopUpComm: "-"
@@ -2239,14 +2246,17 @@ PanelWindow {
                             }
                             // layer feeds the tint shader; without smooth + a hi-res
                             // texture it samples nearest-neighbor → blocky icon (worst
-                            // when hover-scaled / on the low-DPI monitor).
-                            visible: false; smooth: true
+                            // when hover-scaled / on the low-DPI monitor). Tint off:
+                            // the Image shows itself instead. The layer stays on either
+                            // way — switching it off and back at runtime leaves the
+                            // ShaderEffect with no texture (icons vanished, both bars).
+                            visible: !bar.launcherTint && modelData.nerdGlyph === ""; smooth: true
                             layer.enabled: true; layer.smooth: true
                             layer.textureSize: Qt.size(width * 2, height * 2)
                         }
                         ShaderEffect {
                             anchors.centerIn: parent; width: launcherIcon.width; height: launcherIcon.height
-                            visible: modelData.nerdGlyph === "" && launcherIcon.status === Image.Ready
+                            visible: bar.launcherTint && modelData.nerdGlyph === "" && launcherIcon.status === Image.Ready
                             property var source: launcherIcon
                             property real tintR: launcherItem.iconTint.r
                             property real tintG: launcherItem.iconTint.g
@@ -2255,14 +2265,14 @@ PanelWindow {
                         }
                         Text {
                             anchors.centerIn: parent; visible: modelData.nerdGlyph !== ""
-                            text: modelData.nerdGlyph; color: launcherItem.iconTint
+                            text: modelData.nerdGlyph; color: bar.launcherTint ? launcherItem.iconTint : bar.colText
                             font.pixelSize: isPrimary ? 20 : 15; font.family: bar.fontFamily
                         }
                         Text {
                             anchors.centerIn: parent
                             visible: modelData.nerdGlyph === "" && launcherIcon.status !== Image.Ready
                             text: modelData.icon !== "" ? modelData.icon[0].toUpperCase() : "?"
-                            color: launcherItem.iconTint
+                            color: bar.launcherTint ? launcherItem.iconTint : bar.colText
                             font.pixelSize: isPrimary ? 14 : 11; font.family: bar.fontFamily; font.bold: true
                         }
                         MouseArea {
@@ -5634,6 +5644,10 @@ PanelWindow {
                         readonly property var winData: bar.minimizedWindows[index]
                         Layout.preferredWidth: isPrimary ? 30 : 22
                         Layout.preferredHeight: isPrimary ? 30 : 22
+                        // Undimmed icons have no opacity change to show hover; scale
+                        // instead, the same cue the pinned launchers use.
+                        scale: !bar.dimMinimized && minMouse.containsMouse ? 1.2 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 100 } }
 
                         Image {
                             id: minIcon; anchors.centerIn: parent
@@ -5642,7 +5656,7 @@ PanelWindow {
                             mipmap: true; smooth: true
                             fillMode: Image.PreserveAspectFit
                             visible: status === Image.Ready
-                            opacity: minMouse.containsMouse ? 1.0 : 0.65
+                            opacity: !bar.dimMinimized || minMouse.containsMouse ? 1.0 : 0.65
                             source: {
                                 void bar.iconCacheReady; void bar.steamIconVersion
                                 if (!minDelegate.winData) return ""
@@ -5655,7 +5669,7 @@ PanelWindow {
                             text: minDelegate.winData && minDelegate.winData.appId ? minDelegate.winData.appId[0].toUpperCase() : "?"
                             color: bar.colText
                             font.pixelSize: isPrimary ? 12 : 9; font.family: bar.fontFamily; font.bold: true
-                            opacity: minMouse.containsMouse ? 1.0 : 0.65
+                            opacity: !bar.dimMinimized || minMouse.containsMouse ? 1.0 : 0.65
                             Behavior on opacity { NumberAnimation { duration: 120 } }
                         }
                         MouseArea {

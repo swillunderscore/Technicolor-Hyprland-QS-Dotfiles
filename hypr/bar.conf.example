@@ -1,0 +1,6 @@
+# Bar icon options (Settings > Apps). 1 = on, 0 = off. Absent = these defaults.
+# LAUNCHER_TINT  recolor the pinned launcher icons along the wallpaper gradient
+#                (0 = each app's own icon colors)
+# DIM_MINIMIZED  minimized-window icons sit half see-through until hovered
+LAUNCHER_TINT=1
+DIM_MINIMIZED=0

@@ -92,6 +92,28 @@ ShellRoot {
         onLoadFailed: root.uiFont = root.fontFallback
     }
 
+    // Bar icon options (Settings → Apps): KEY=0|1 lines in hypr/bar.conf, absent
+    // keys and a missing file = defaults. Settings sets these directly too, for
+    // instant feedback. An empty read is the moment Settings' write truncates
+    // the file, so it's skipped rather than flashing the defaults.
+    property bool launcherTint: true
+    property bool dimMinimized: false
+    function parseBarConf(text) {
+        if (text.trim() === "") return
+        var t = text.match(/^\s*LAUNCHER_TINT\s*=\s*([01])/m)
+        var d = text.match(/^\s*DIM_MINIMIZED\s*=\s*([01])/m)
+        root.launcherTint = t ? t[1] === "1" : true
+        root.dimMinimized = d ? d[1] === "1" : false
+    }
+    FileView {
+        id: barConfFile
+        path: root.homeDir + "/.config/hypr/bar.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: root.parseBarConf(this.text())
+        onLoadFailed: { root.launcherTint = true; root.dimMinimized = false }
+    }
+
     readonly property int workspaceCeiling: {
         var ceil = 2;
         var wsList = Hyprland.workspaces.values;
@@ -200,6 +222,8 @@ ShellRoot {
             gradientEnd: root.gradientEnd
             contrastBias: root.contrastBias
             fontFamily: root.uiFont
+            launcherTint: root.launcherTint
+            dimMinimized: root.dimMinimized
             sharedNetTopUpComm: root.netTopUpComm
             sharedNetTopDownComm: root.netTopDownComm
             sharedNetProcRates: root.netProcRates
