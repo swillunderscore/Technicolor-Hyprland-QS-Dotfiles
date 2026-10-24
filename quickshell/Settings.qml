@@ -243,6 +243,8 @@ FloatingWindow {
     function setTerminal(cmd) {
         if (!cmd) return
         win.currentTerminal = cmd
+        // White glass only knows how to turn kitty's text dark.
+        if (!win.whiteGlassTerminalOk && win.glassValue({ key: "adaptive_white", def: 0 }) >= 0.5) win.setWhiteGlass(false)
         var b64 = Qt.btoa("$terminal = " + cmd + "\n")
         termSetProc.command = ["bash", "-c",
             "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/terminal.conf'; " +
@@ -324,6 +326,9 @@ FloatingWindow {
     Process { id: termAutoProc }
     function setTermAuto(on) {
         win.termAuto = on
+        // White glass rides the adaptive tint: without it kitty's black text
+        // would sit on dark glass. Off together.
+        if (!on && win.glassValue({ key: "adaptive_white", def: 0 }) >= 0.5) win.setWhiteGlass(false)
         termAutoProc.command = ["bash", "-c",
             "\"$HOME/.config/hypr/terminal-opacity.py\" auto " + (on ? "1" : "0")
             + " --term '" + win.currentTerminal + "'"]
@@ -1468,6 +1473,17 @@ FloatingWindow {
         for (var i = parts.length - 2; i >= 0; i--) inner = parts[i] + "={" + inner + "}"
         glassLiveProc.command = ["hyprctl", "eval", "hl.config({plugin={hyprwater={" + inner + "}}}) return 1"]
         glassLiveProc.running = true
+    }
+    // ── White glass (Glass page) ── hyprwater adaptive_white lifts terminal glass
+    // toward white; terminal-colors.py turns kitty's text black to match. kitty
+    // only: the one terminal whose colors change live.
+    readonly property bool whiteGlassTerminalOk: win.currentTerminal.trim().split(/\s+/)[0] === "kitty"
+    Process { id: whiteGlassProc; onExited: win.loadGlass() }
+    function setWhiteGlass(on) {
+        whiteGlassProc.command = ["bash", "-c",
+            "\"$HOME/.config/hypr/hyprwater-set.sh\" adaptive_white " + (on ? 1 : 0) + "; "
+            + "\"$HOME/.config/hypr/terminal-colors.py\" " + (on ? "light" : "default")]
+        whiteGlassProc.running = true
     }
     Process { id: glassSetProc }
     function glassSet(key, val) {

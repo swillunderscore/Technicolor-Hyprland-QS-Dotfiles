@@ -32,13 +32,23 @@ tc_abi_key() {
     } | md5sum | cut -c1-16
 }
 
+# The plugin's own sources, too. Settings → Update brings new source without a
+# Hyprland change; keyed on the ABI alone, the old .so would keep loading and
+# any new plugin setting would not exist (a config error the first time it's
+# set). Paths are relative so the key doesn't depend on where the dir lives.
+tc_src_key() {
+    ( cd "$1" 2>/dev/null && find . -maxdepth 2 -type f \( -name '*.cpp' -o -name '*.hpp' \
+        -o -name '*.c' -o -name '*.h' -o -name 'Makefile' -o -name '*.glsl' -o -name '*.frag' \
+        -o -name '*.vert' \) -print0 | LC_ALL=C sort -z | xargs -0 md5sum ) | md5sum | cut -c1-16
+}
+
 # tc_plugin_guard <plugin-dir> <so-path> <stamp-path> <pretty-name>
 # Ensures <so-path> is built against the running Hyprland. Returns 0 when the
 # .so is safe to load, non-zero when it must NOT be loaded.
 tc_plugin_guard() {
     local dir="$1" so="$2" stamp="$3" name="$4"
     local want have
-    want="$(tc_abi_key)"
+    want="$(tc_abi_key)$(tc_src_key "$dir")"
     have="$(cat "$stamp" 2>/dev/null || echo none)"
 
     if [ -f "$so" ] && [ "$have" = "$want" ] && [ -n "$want" ]; then

@@ -109,6 +109,18 @@ SmoothList {
             on: page.s.glassValue({ key: "adaptive_tint_terminals_only", def: 0 }) >= 0.5
             onToggled: (v) => { page.s.glassSet("adaptive_tint_terminals_only", v ? 1 : 0); page.s.loadGlass() }
         }
+        // White glass: hyprwater adaptive_white + kitty's text black
+        // (hypr/terminal-colors.py). Separate from light/dark mode.
+        ToggleRow {
+            visible: page.s.termAuto && page.s.whiteGlassTerminalOk
+            title: "White glass"
+            desc: "Terminal glass lifts toward white instead of darkening, and the text turns black (with colors that stay readable on white). Separate from light/dark mode."
+            on: page.s.glassValue({ key: "adaptive_white", def: 0 }) >= 0.5
+            onToggled: (v) => page.s.setWhiteGlass(v)
+        }
+        Text { width: parent.width; wrapMode: Text.WordWrap; color: ST.fg; opacity: 0.55; font.pixelSize: 11; font.family: ST.ff
+            visible: page.s.termAuto && !page.s.whiteGlassTerminalOk
+            text: "White glass (black text on white terminal glass) needs kitty as the default terminal (System page): it's the terminal whose text colors can change live." }
 
         // write-in: any key + value (out-of-range, or options without a slider)
         Section {
