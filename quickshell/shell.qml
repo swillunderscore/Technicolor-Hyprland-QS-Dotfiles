@@ -72,10 +72,28 @@ ShellRoot {
     }
     FileView {
         id: tuningFile
-        path: root.homeDir + "/.config/hypr/color-tuning.conf"
+        path: root.tuningPath
         watchChanges: true
         onFileChanged: this.reload()
         onTextChanged: root.parseTuning()
+        onLoadFailed: root.refreshTuningPath()   // that mode's file went away: ask again
+    }
+    // Light/dark mode: CONTRAST_BIAS comes from the current mode's slider set
+    // (hypr/theme-mode.py tuning). Asked again whenever the mode changes, and by
+    // Settings after a save (light's file only exists once it's been edited).
+    property string tuningPath: root.homeDir + "/.config/hypr/color-tuning.conf"
+    function refreshTuningPath() { if (!tuningPathProc.running) tuningPathProc.running = true }
+    Process {
+        id: tuningPathProc
+        command: ["python3", root.homeDir + "/.config/hypr/theme-mode.py", "tuning"]
+        stdout: StdioCollector { onStreamFinished: { var p = this.text.trim(); if (p !== "") root.tuningPath = p } }
+    }
+    FileView {
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/technicolor-mode"
+        watchChanges: true
+        onFileChanged: { this.reload(); root.refreshTuningPath() }
+        onLoaded: root.refreshTuningPath()
+        onLoadFailed: root.refreshTuningPath()
     }
 
     // UI font (Settings → System → Font). Bar + Settings window read this live;
@@ -96,14 +114,19 @@ ShellRoot {
     // keys and a missing file = defaults. Settings sets these directly too, for
     // instant feedback. An empty read is the moment Settings' write truncates
     // the file, so it's skipped rather than flashing the defaults.
+    // TRAY_HIDDEN is a comma list of tray item ids (StatusNotifierItem Id) the
+    // bar leaves out; the apps keep running.
     property bool launcherTint: true
     property bool dimMinimized: false
+    property var trayHidden: []
     function parseBarConf(text) {
         if (text.trim() === "") return
         var t = text.match(/^\s*LAUNCHER_TINT\s*=\s*([01])/m)
         var d = text.match(/^\s*DIM_MINIMIZED\s*=\s*([01])/m)
+        var h = text.match(/^\s*TRAY_HIDDEN\s*=(.*)$/m)
         root.launcherTint = t ? t[1] === "1" : true
         root.dimMinimized = d ? d[1] === "1" : false
+        root.trayHidden = h ? h[1].split(",").map(function (x) { return x.trim() }).filter(function (x) { return x !== "" }) : []
     }
     FileView {
         id: barConfFile
@@ -111,7 +134,7 @@ ShellRoot {
         watchChanges: true
         onFileChanged: this.reload()
         onLoaded: root.parseBarConf(this.text())
-        onLoadFailed: { root.launcherTint = true; root.dimMinimized = false }
+        onLoadFailed: { root.launcherTint = true; root.dimMinimized = false; root.trayHidden = [] }
     }
 
     readonly property int workspaceCeiling: {
@@ -224,6 +247,7 @@ ShellRoot {
             fontFamily: root.uiFont
             launcherTint: root.launcherTint
             dimMinimized: root.dimMinimized
+            trayHidden: root.trayHidden
             sharedNetTopUpComm: root.netTopUpComm
             sharedNetTopDownComm: root.netTopDownComm
             sharedNetProcRates: root.netProcRates

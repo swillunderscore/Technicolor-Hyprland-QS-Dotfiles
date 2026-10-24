@@ -13,8 +13,6 @@
 # Run once, and again after adding/removing wallpapers.
 set -u
 
-ANIM_DIR="$(cat "$HOME/.config/hypr/wallpaper-dir.conf" 2>/dev/null)"
-[ -z "$ANIM_DIR" ] && ANIM_DIR="$HOME/Wallpapers/animated"
 KEEP_LIST="$HOME/.cache/hypr-heavy-wallpapers.txt"
 HEAVY_FRAMES=60
 FLAGS=(--fill-color 000000 --resize crop --filter Nearest -t none --transition-fps 255)
@@ -22,11 +20,11 @@ CUR="$(cat /tmp/wallpaper-current-path 2>/dev/null || true)"
 
 echo "scanning for heavy gifs (>$HEAVY_FRAMES frames)..."
 : > "$KEEP_LIST"
-shopt -s nullglob nocaseglob
-for f in "$ANIM_DIR"/*.webp "$ANIM_DIR"/*.gif; do
+while IFS= read -r f; do
+    case "${f,,}" in *.webp|*.gif) ;; *) continue ;; esac
     n="$(identify "$f" 2>/dev/null | wc -l)"
     [ "$n" -gt "$HEAVY_FRAMES" ] && printf '%s\n' "$f" >> "$KEEP_LIST"
-done
+done < <("$HOME/.config/hypr/wallpaper-list.sh" all)
 
 count="$(wc -l < "$KEEP_LIST")"
 echo "found $count heavy wallpapers; caching them (each is briefly displayed)..."

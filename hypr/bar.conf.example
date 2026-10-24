@@ -2,5 +2,8 @@
 # LAUNCHER_TINT  recolor the pinned launcher icons along the wallpaper gradient
 #                (0 = each app's own icon colors)
 # DIM_MINIMIZED  minimized-window icons sit half see-through until hovered
+# TRAY_HIDDEN    tray icons the bar leaves out, by tray id, comma separated
+#                (e.g. KeePassXC); the apps keep running. Empty = show all.
 LAUNCHER_TINT=1
 DIM_MINIMIZED=0
+TRAY_HIDDEN=

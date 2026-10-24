@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build (and cache) a static thumbnail for every wallpaper in the configured
-# folder, then print "<source><TAB><thumb>" lines for the Settings cover-flow.
+# Build (and cache) a static thumbnail for every wallpaper of the current
+# light/dark mode in the configured folder, then print "<source><TAB><thumb>" lines for the Settings cover-flow.
 #
 # Thumbs are 16:9 PNGs keyed on the source path; we regenerate only when the
 # source is newer than its thumb, so this is instant after the first run. First
@@ -13,10 +13,9 @@ THUMB_DIR="$HOME/.cache/hypr-wallpaper-thumbs"
 W=480; H=270
 mkdir -p "$THUMB_DIR"
 
-# Same file set + sort order as wallpaper-cycle.sh, so indices line up.
-mapfile -t FILES < <(find "$WALLPAPER_DIR" -maxdepth 1 -type f \
-    \( -name '*.gif' -o -name '*.webp' -o -name '*.webm' -o -name '*.mp4' \
-       -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) -size +0c | sort)
+# The current mode's list from the same lister as wallpaper-cycle.sh, so
+# indices line up.
+mapfile -t FILES < <("$HOME/.config/hypr/wallpaper-list.sh")
 
 for f in "${FILES[@]}"; do
     key="$(printf '%s' "$f" | md5sum | cut -d' ' -f1)"

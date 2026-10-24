@@ -40,9 +40,20 @@ def lerp(a, b, t): return tuple(a[i] + (b[i]-a[i])*t for i in range(3))
 # Match the bar's contrastText() exactly: luminance 0..1, threshold from the
 # CONTRAST_BIAS slider (0.5 -> 0.55, the original default).
 def lum01(rgb): return (0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]) / 255.0
+def tuning_path():
+    # The current light/dark mode's slider set (hypr/theme-mode.py).
+    p = os.environ.get('TECHNICOLOR_TUNING')
+    if p: return p
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('theme_mode', os.path.expanduser('~/.config/hypr/theme-mode.py'))
+        tm = importlib.util.module_from_spec(spec); spec.loader.exec_module(tm)
+        return tm.tuning_path()
+    except Exception:
+        return os.path.expanduser('~/.config/hypr/color-tuning.conf')
 def bias():
     try:
-        for ln in open(os.path.expanduser('~/.config/hypr/color-tuning.conf')):
+        for ln in open(tuning_path()):
             ln = ln.strip()
             if ln.startswith('#') or '=' not in ln: continue
             k, v = ln.split('=', 1)

@@ -165,6 +165,21 @@ SmoothList {
             }
         }
 
+        // ── light/dark: which mode the centered wallpaper shows in ──
+        Row {
+            width: parent.width; spacing: 10
+            visible: page.s.wallpaperList.length > 0
+            Text { id: showsLbl; anchors.verticalCenter: parent.verticalCenter
+                text: "Shows in"; color: ST.fg; font.pixelSize: 12; font.bold: true; font.family: ST.ff }
+            Chips {
+                readonly property var cur: page.s.wallpaperList[coverflow.currentIndex]
+                width: parent.width - showsLbl.width - 10
+                model: [{ id: "light", name: "Light mode" }, { id: "dark", name: "Dark mode" }, { id: "both", name: "Both" }]
+                selected: cur ? page.s.wallpaperModeOf(cur.src) : ""
+                onPicked: (id) => { if (cur && id !== selected) page.s.moveWallpaperMode(cur.src, id) }
+            }
+        }
+
         // ── shuffle + open folder (cycle/random merged: rotation is random) ──
         Row {
             width: parent.width; height: 40; spacing: 8
@@ -180,7 +195,7 @@ SmoothList {
             }
         }
         Text { width: parent.width; wrapMode: Text.WordWrap; color: ST.fg; opacity: 0.6; font.pixelSize: 11; font.family: ST.ff
-            text: "Scroll to browse · click a cover to center it · click the centered one to set it." }
+            text: "Scroll to browse · click a cover to center it · click the centered one to set it. The covers are the current light/dark mode's wallpapers: the folder's light/ or dark/ subfolder, plus the ones loose in the folder, which show in both." }
 
         // ── switch transition ──
         Section {

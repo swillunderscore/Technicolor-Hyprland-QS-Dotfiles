@@ -66,8 +66,9 @@ def load_tuning():
     per-app wiring. Defaults: sat 1.0 = as-extracted, bright 1.0 = unchanged,
     hue 0 = unchanged (degrees, -180..180)."""
     t = {'SATURATION': 1.0, 'BRIGHTNESS': 1.0, 'HUE': 0.0}
+    path = os.environ.get('TECHNICOLOR_TUNING') or os.path.expanduser('~/.config/hypr/color-tuning.conf')
     try:
-        for line in open(os.path.expanduser('~/.config/hypr/color-tuning.conf')):
+        for line in open(path):
             line = line.strip()
             if line.startswith('#') or '=' not in line:
                 continue
@@ -232,12 +233,29 @@ def pick_gradient_pair(palette):
     return start['rgb'], best['rgb']
 
 
+def use_mode_tuning():
+    """Light/dark mode: use the current mode's slider set (hypr/theme-mode.py),
+    and hand it to every generator started below through the environment."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'theme_mode', os.path.expanduser('~/.config/hypr/theme-mode.py'))
+        tm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tm)
+        mode = os.environ.get('TECHNICOLOR_MODE') or tm.mode_now()
+        os.environ['TECHNICOLOR_MODE'] = mode
+        os.environ['TECHNICOLOR_TUNING'] = tm.tuning_path(mode)
+    except Exception:
+        pass   # no theme-mode.py: the one color-tuning.conf, as before
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: wallpaper-colors.py <image_path>", file=sys.stderr)
         sys.exit(1)
 
     img_path = sys.argv[1]
+    use_mode_tuning()
 
     # Terminal transparency, if it's set to follow the wallpaper: a brighter
     # wallpaper needs a more opaque terminal for white text to stay readable.
@@ -264,6 +282,14 @@ def main():
 
         focused, occupied, visible = pick_three_colors(palette)
         grad_start, grad_end = pick_gradient_pair(palette)
+
+        # The same five BEFORE the sliders, for Settings → Colors' preview:
+        # colors.env has the current mode's ceilings baked in, so previewing the
+        # other mode's (brighter) set from it could never come out brighter.
+        with open(os.path.expanduser('~/.config/quickshell/colors-raw.env'), 'w') as f:
+            f.write(f'FOCUSED={to_hex(focused)}\nVISIBLE={to_hex(visible)}\n'
+                    f'OCCUPIED={to_hex(occupied)}\nGRADIENT_START={to_hex(grad_start)}\n'
+                    f'GRADIENT_END={to_hex(grad_end)}\n')
 
         # User saturation/brightness CEILINGS + hue (Settings → Colors), applied
         # at the source so it flows to every app through colors.env. At defaults

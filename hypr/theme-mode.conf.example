@@ -1,0 +1,15 @@
+# Light/dark mode (Settings → Colors → Appearance). theme-mode.py reads this;
+# Settings writes it. Absent keys = these defaults.
+# MODE      dark   = always dark (the default: Technicolor's look before this existed;
+#                    with no theme-mode.conf at all the system setting isn't touched)
+#           auto   = Android's "sunset to sunrise" schedule (same math as the phone)
+#           custom = dark from DARK_AT to LIGHT_AT, every day
+#           light  = always light
+# CITY, LAT, LON  where "sunset" is. Empty = your time zone's own city.
+# LIGHT_AT, DARK_AT  24-hour HH:MM, used by custom (and by auto if no location is known)
+MODE=dark
+CITY=
+LAT=
+LON=
+LIGHT_AT=06:00
+DARK_AT=22:00

@@ -252,6 +252,9 @@ hl.env("QT_STYLE_OVERRIDE", "Breeze")
 -- cursor theme/size owned by Hyprland (not KDE kcminputrc / nwg-look)
 hl.env("XCURSOR_THEME", "Bibata-Modern-Ice")
 hl.env("XCURSOR_SIZE", "24")
+-- Settings → System default terminal (terminal.conf, read above) for every app, not
+-- just Super+Q: scripts that open "the default terminal" read $TERMINAL.
+hl.env("TERMINAL", terminal)
 
 -- ── Monitors ────────────────────────────────────────────────────────────────
 -- Machine-specific `monitor =` lines belong in local.conf (gitignored, read by
@@ -656,6 +659,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("awww-daemon")
     hl.exec_cmd("sleep 1 && " .. H .. "/.config/hypr/wallpaper-cycle.sh random")
     hl.exec_cmd(H .. "/.config/hypr/wallpaper-timer.sh")
+    hl.exec_cmd(H .. "/.config/hypr/theme-mode.py daemon")
     hl.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.5")
     hl.exec_cmd(H .. "/.config/hypr/carousel-init.sh")
     hl.exec_cmd(H .. "/.config/hypr/workspace-watcher.sh")

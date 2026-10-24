@@ -5,6 +5,8 @@ hypr/local.lua
 hypr/monitors.conf
 hypr/colors.conf
 hypr/color-tuning.conf
+hypr/color-tuning-light.conf
+hypr/theme-mode.conf
 hypr/hyprwater-tuning.conf
 hypr/wallpaper-dir.conf
 hypr/window-geometry.conf
@@ -15,6 +17,7 @@ hypr/terminal.conf
 hypr/wofi/font.css
 quickshell/colors.env
 quickshell/colors-bar.env
+quickshell/colors-raw.env
 quickshell/launcher-apps.json
 hypr/.technicolor-version
 hypr/.ddc-brightness-*

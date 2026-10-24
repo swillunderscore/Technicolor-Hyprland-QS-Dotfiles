@@ -193,7 +193,24 @@ def rel_lum(c):
 # ── user tuning (Settings → Colors). Shared by every generator that imports
 # this module (Spotify, Telegram, KDE, GTK, Brave all use ink_rgb), so a single
 # slider moves the light/dark text crossover everywhere at once.
-TUNING_PATH = os.path.expanduser("~/.config/hypr/color-tuning.conf")
+def _mode_tuning_path():
+    """The current light/dark mode's color-tuning file (hypr/theme-mode.py).
+    wallpaper-colors.py hands it down in TECHNICOLOR_TUNING; run by hand, ask."""
+    p = os.environ.get("TECHNICOLOR_TUNING")
+    if p:
+        return p
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "theme_mode", os.path.expanduser("~/.config/hypr/theme-mode.py"))
+        tm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tm)
+        return tm.tuning_path()
+    except Exception:
+        return os.path.expanduser("~/.config/hypr/color-tuning.conf")
+
+
+TUNING_PATH = _mode_tuning_path()
 # Optional untracked overlay. Same syntax; keys here win. Exists so surfaces
 # that should not be named in a public dotfiles repo can still be tuned.
 TUNING_LOCAL_PATH = os.path.expanduser("~/.config/hypr/color-tuning.local.conf")

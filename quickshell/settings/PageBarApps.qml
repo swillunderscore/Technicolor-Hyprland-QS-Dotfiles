@@ -1,7 +1,8 @@
 import QtQuick
+import Quickshell.Services.SystemTray
 
-// Settings → Bar & Apps: how the bar draws its app icons, and the pinned
-// launchers (launcher-apps.json, via the bar's pin functions).
+// Settings → Bar & Apps: how the bar draws its app icons, which tray icons it
+// shows, and the pinned launchers (launcher-apps.json, via the bar's pin functions).
 SmoothList {
     id: page
     readonly property var s: ST.win
@@ -22,6 +23,20 @@ SmoothList {
             desc: "Show minimized windows' icons half see-through until you hover them."
             on: page.s && page.s.shell ? page.s.shell.dimMinimized : false
             onToggled: (v) => page.s.setBarOption("DIM_MINIMIZED", v)
+        }
+
+        Section {
+            title: "Tray icons"
+            desc: "Turn one off to keep it out of the bar's tray. The app keeps running. Only apps that are running right now are listed."
+        }
+        Repeater {
+            model: SystemTray.items
+            delegate: ToggleRow {
+                required property var modelData
+                title: modelData.title !== "" ? modelData.title : modelData.id
+                on: page.s && page.s.shell ? page.s.shell.trayHidden.indexOf(modelData.id) < 0 : true
+                onToggled: (v) => page.s.setTrayShown(modelData.id, v)
+            }
         }
 
         Section {

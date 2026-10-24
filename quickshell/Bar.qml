@@ -38,6 +38,13 @@ PanelWindow {
     // until hovered (off = full opacity, hover scales like the launchers).
     property bool launcherTint: true
     property bool dimMinimized: false
+    // Tray item ids (StatusNotifierItem Id) the user hid in Settings → Bar & Apps.
+    property var trayHidden: []
+    readonly property int trayShownCount: {
+        var n = 0, v = SystemTray.items.values
+        for (var i = 0; i < v.length; i++) if (bar.trayHidden.indexOf(v[i].id) < 0) n++
+        return n
+    }
 
     // Fed from shell.qml's nethogs streamer. Used to annotate net history
     // buckets with the top sender/receiver app for that 1-second window.
@@ -5723,7 +5730,7 @@ PanelWindow {
             Layout.preferredHeight: parent.height - bar.vm * 2
             Layout.alignment: Qt.AlignVCenter
             color: bar.pillFill; radius: bar.rad
-            visible: SystemTray.items.values.length > 0
+            visible: bar.trayShownCount > 0
             RowLayout {
                 id: trayRow; anchors.centerIn: parent; spacing: isPrimary ? 6 : 4
                 Repeater {
@@ -5732,6 +5739,7 @@ PanelWindow {
                         id: trayDelegate
                         required property var modelData
                         readonly property var trayItem: modelData
+                        visible: bar.trayHidden.indexOf(trayItem.id) < 0
                         Layout.preferredWidth: isPrimary ? 30 : 22
                         Layout.preferredHeight: isPrimary ? 30 : 22
                         Image { anchors.centerIn: parent; width: isPrimary ? 22 : 16; height: width; source: trayDelegate.trayItem.icon; smooth: true }

@@ -12,6 +12,15 @@ TICK=15   # seconds between checks — keeps pause/interval changes responsive
 exec 9>"/tmp/wallpaper-timer.lock" 2>/dev/null
 flock -n 9 || exit 0
 
+CYCLE="$HOME/.config/hypr/wallpaper-cycle.sh"
+THEME="$HOME/.config/hypr/theme-mode.py"
+
+# A light/dark switch wakes this loop with USR1 (theme-mode.py), so it lands
+# at the switch instead of on the next tick. The pid file is how it's found.
+echo $$ > "${XDG_RUNTIME_DIR:-/tmp}/wallpaper-timer.pid"
+SLEEP_PID=""
+trap '[ -n "$SLEEP_PID" ] && kill "$SLEEP_PID" 2>/dev/null' USR1
+
 read_conf() {
     INTERVAL_MIN=60; PAUSED=0; PAUSE_ON_FULLSCREEN=1
     [ -f "$CONF" ] || return
@@ -30,6 +39,23 @@ fullscreen_present() {
     local n
     n=$(hyprctl clients -j 2>/dev/null | jq '[.[] | select(.fullscreen >= 2)] | length' 2>/dev/null)
     [ "${n:-0}" -gt 0 ]
+}
+
+# Does the wallpaper on screen belong to the current light/dark mode's list?
+fits_mode() {
+    local cur
+    cur=$(cat /tmp/wallpaper-current-path 2>/dev/null)
+    [ -z "$cur" ] && return 0
+    "$HOME/.config/hypr/wallpaper-list.sh" | grep -qxF -- "$cur"
+}
+
+# Colors only, for the wallpaper already on screen — what a light/dark switch
+# does while the wallpaper itself is held.
+recolor() {
+    local cur
+    cur=$(cat /tmp/wallpaper-current-path 2>/dev/null)
+    [ -n "$cur" ] && nice -n 10 python3 "$HOME/.config/hypr/wallpaper-colors.py" "$cur" >/dev/null 2>&1
+    "$HOME/.config/quickshell/notif-theme-mako.sh" >/dev/null 2>&1
 }
 
 # FIRES AT THE STEP BOUNDARY, not on an elapsed counter.
@@ -69,15 +95,29 @@ backoff=$TICK
 # mirror that had changed on time. Now it fires on the first tick with no
 # fullscreen app, and lands on the clock's current step — the mirror's.
 OWED=0
+# LIGHT/DARK MODE (theme-mode.py). On a switch the colors follow at once; the
+# wallpaper moves to the new mode's list unless something holds it (pause,
+# fullscreen) — then it waits exactly like an hourly change would. MODE_NOW is
+# the last mode seen ("" until the first tick); MODE_DUE = a switch the
+# wallpaper hasn't followed yet.
+MODE_NOW=""
+MODE_DUE=0
 while true; do
     read_conf
     # First pass only records the state: at login the cycle's own hourly push
     # already carries it.
     if [ -n "$PREV_PAUSED" ] && [ "$PAUSED" != "$PREV_PAUSED" ]; then
+        # Unpausing onto a wallpaper from the other mode (the switch happened
+        # during the pause): don't anchor a sequence on it, start a new one on
+        # a wallpaper that fits. Shuffle tells the mirror like anchor does.
+        act=anchor
+        [ "$PAUSED" = "0" ] && ! fits_mode && act=shuffle
         # Leaves PREV_PAUSED unchanged on failure, so the next tick retries.
-        if "$HOME/.config/hypr/wallpaper-cycle.sh" anchor; then
+        if "$CYCLE" "$act"; then
             PREV_PAUSED="$PAUSED"
             PENDING=1; backoff=$TICK; next_try=$(( $(date +%s) + TICK ))
+            # A shuffle that lost the lock to another change: retry below.
+            [ "$act" = "shuffle" ] && ! fits_mode && MODE_DUE=1
         fi
     else
         PREV_PAUSED="$PAUSED"
@@ -100,19 +140,35 @@ while true; do
     wait=$((boundary - now))
     [ "$wait" -gt "$TICK" ] && wait=$TICK
     [ "$wait" -lt 1 ] && wait=1
-    sleep "$wait"
+    sleep "$wait" & SLEEP_PID=$!
+    wait "$SLEEP_PID" 2>/dev/null
+    SLEEP_PID=""
+
+    mode=$("$THEME" now 2>/dev/null)
+    if [ -n "$MODE_NOW" ] && [ -n "$mode" ] && [ "$mode" != "$MODE_NOW" ]; then
+        if [ "$PAUSED" = "1" ] || { [ "$PAUSE_ON_FULLSCREEN" = "1" ] && fullscreen_present; }; then
+            recolor
+        fi
+        MODE_DUE=1
+    fi
+    [ -n "$mode" ] && MODE_NOW="$mode"
 
     # Frozen while paused. Nothing is owed either: pausing anchored the
-    # sequence at the wallpaper on screen, so that one IS current.
-    [ "$PAUSED" = "1" ] && { OWED=0; continue; }
+    # sequence at the wallpaper on screen, so that one IS current. (A light/
+    # dark switch during the pause is settled at unpause, above.)
+    [ "$PAUSED" = "1" ] && { OWED=0; MODE_DUE=0; continue; }
     now=$(date +%s)
     # woke for the tick, not the change (unless one is owed)
-    [ "$now" -lt "$boundary" ] && [ "$OWED" = "0" ] && continue
+    [ "$now" -lt "$boundary" ] && [ "$OWED" = "0" ] && [ "$MODE_DUE" = "0" ] && continue
     # Boundary reached (or owed) — hold off while a fullscreen app is up.
     # Nothing is lost by waiting: the step comes from the clock, so when it does
     # fire it lands on whichever wallpaper is current rather than replaying a
     # backlog.
     if [ "$PAUSE_ON_FULLSCREEN" = "1" ] && fullscreen_present; then OWED=1; continue; fi
-    OWED=0
-    "$HOME/.config/hypr/wallpaper-cycle.sh" random
+    OWED=0; MODE_DUE=0
+    # random lands on the sequence's pick in the current mode's list — the same
+    # one a mirror in that mode computes.
+    "$CYCLE" random
+    # Another change held the lock: try the mode switch again next tick.
+    fits_mode || MODE_DUE=1
 done

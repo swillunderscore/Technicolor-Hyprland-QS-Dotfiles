@@ -83,7 +83,7 @@ FloatingWindow {
     // every open (that was ~5 processes, 30 hyprctl calls and a 313-font list).
     function loadPage(i) {
         if (i === 1)      { curWpFile.reload(); win.refreshWallpapers() }
-        else if (i === 2) tuneFile.reload()
+        else if (i === 2) { win.tuneEditPicked = false; win.refreshTunePath(); tuneFile.reload(); win.refreshTheme() }
         else if (i === 3) { win.loadGlass(); win.loadTermOpacity() }
         else if (i === 4) win.loadGlass()
         else if (i === 5) govConfFile.reload()
@@ -947,9 +947,22 @@ FloatingWindow {
         if (!win.shell) return
         if (key === "LAUNCHER_TINT") win.shell.launcherTint = on
         if (key === "DIM_MINIMIZED") win.shell.dimMinimized = on
+        writeBarConf()
+    }
+    // Tray icons: hide/show one tray item by its id (the app keeps running).
+    function setTrayShown(id, shown) {
+        if (!win.shell || id === "") return
+        var h = win.shell.trayHidden.filter(function (x) { return x !== id })
+        if (!shown) h.push(id)
+        win.shell.trayHidden = h
+        writeBarConf()
+    }
+    // Every key goes back in: the file is rewritten whole.
+    function writeBarConf() {
         var text = "# Written by Settings > Bar & Apps. 1 = on, 0 = off.\n" +
                    "LAUNCHER_TINT=" + (win.shell.launcherTint ? 1 : 0) + "\n" +
-                   "DIM_MINIMIZED=" + (win.shell.dimMinimized ? 1 : 0) + "\n"
+                   "DIM_MINIMIZED=" + (win.shell.dimMinimized ? 1 : 0) + "\n" +
+                   "TRAY_HIDDEN=" + win.shell.trayHidden.join(",") + "\n"
         barConfProc.command = ["bash", "-c",
             "printf %s '" + Qt.btoa(text) + "' | base64 -d > '" + win.homeDir + "/.config/hypr/bar.conf'"]
         barConfProc.running = true
@@ -1086,19 +1099,156 @@ FloatingWindow {
         nameFilters: ["*.gif", "*.webp", "*.webm", "*.mp4", "*.png", "*.jpg", "*.jpeg"]
         onCountChanged: wpWatchDebounce.restart()
     }
+    // Its light/ and dark/ subfolders too (light/dark mode, hypr/wallpaper-list.sh).
+    FolderListModel {
+        folder: win.visible ? ("file://" + win.wallpaperDir + "/light") : ""
+        showDirs: false; caseSensitive: false; nameFilters: wpFolderModel.nameFilters
+        onCountChanged: wpWatchDebounce.restart()
+    }
+    FolderListModel {
+        folder: win.visible ? ("file://" + win.wallpaperDir + "/dark") : ""
+        showDirs: false; caseSensitive: false; nameFilters: wpFolderModel.nameFilters
+        onCountChanged: wpWatchDebounce.restart()
+    }
     Timer { id: wpWatchDebounce; interval: 400; onTriggered: win.refreshWallpapers() }
 
-    // ── Colors page state ── single source of truth = ~/.config/hypr/color-tuning.conf
-    // (CONTRAST_BIAS, SATURATION, BRIGHTNESS, HUE). The bar reads CONTRAST_BIAS live
-    // via shell.qml; the other three transform the colors at the source
-    // (wallpaper-colors.py) so they flow to every app via colors.env on regen.
+    // "Shows in" (Wallpaper page): which light/dark mode a wallpaper belongs to
+    // is just where it sits — light/, dark/, or loose in the folder for both.
+    function wallpaperModeOf(src) {
+        var d = win.wallpaperDir.replace(/\/+$/, "")
+        if (src.indexOf(d + "/light/") === 0) return "light"
+        if (src.indexOf(d + "/dark/") === 0) return "dark"
+        return "both"
+    }
+    Process { id: wpMoveProc; onExited: win.refreshWallpapers() }
+    function moveWallpaperMode(src, to) {
+        wpMoveProc.command = [win.homeDir + "/.config/hypr/wallpaper-mode-move.sh", src, to]
+        wpMoveProc.running = true
+    }
+
+    // ── Appearance (Colors page) ── light/dark mode. hypr/theme-mode.py owns the
+    // schedule and hypr/theme-mode.conf; Settings only asks it things. themeStatus
+    // is its `status` JSON: setting, mode, next_mode, next (epoch s), location,
+    // location_source ("city" | "timezone" | "none"), light_at, dark_at.
+    readonly property string themePy: win.homeDir + "/.config/hypr/theme-mode.py"
+    property var themeStatus: ({})
+    property string citySearch: ""
+    property var cityResults: []
+    property var themePending: null
+    Process {
+        id: themeStatusProc
+        command: ["python3", win.themePy, "status"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try { win.themeStatus = JSON.parse(this.text) } catch (e) {}
+                // The Colors page opens on the sliders of the mode on screen.
+                if (!win.tuneEditPicked && win.themeStatus.mode) win.tuneEditMode = win.themeStatus.mode
+            }
+        }
+    }
+    function refreshTheme() { if (!themeStatusProc.running) themeStatusProc.running = true }
+    // `set` prints the new status first, then pushes the mode (and rebuilds the
+    // palette if it changed). A click while one is still running is queued, not lost.
+    Process {
+        id: themeSetProc
+        stdout: SplitParser { splitMarker: "\n"; onRead: function (line) { try { win.themeStatus = JSON.parse(line) } catch (e) {} } }
+        onExited: if (win.themePending) { var p = win.themePending; win.themePending = null; win.setTheme(p) }
+    }
+    function setTheme(pairs) {   // ["MODE=auto", "CITY=…", …]
+        if (themeSetProc.running) { win.themePending = (win.themePending || []).concat(pairs); return }
+        themeSetProc.command = ["python3", win.themePy, "set"].concat(pairs)
+        themeSetProc.running = true
+    }
+    function pickCity(c) {
+        var label = [c.name, c.region, c.country].filter(function (x) { return x !== "" }).join(", ")
+        win.setTheme(["CITY=" + label, "LAT=" + c.lat, "LON=" + c.lon])
+        win.citySearch = ""
+    }
+    Process {
+        id: citySearchProc
+        stdout: StdioCollector { onStreamFinished: { try { win.cityResults = JSON.parse(this.text) } catch (e) { win.cityResults = [] } } }
+    }
+    Timer {
+        id: cityDebounce; interval: 150
+        onTriggered: {
+            if (win.citySearch.trim() === "") { win.cityResults = []; return }
+            if (citySearchProc.running) { cityDebounce.restart(); return }
+            citySearchProc.command = ["python3", win.themePy, "cities", win.citySearch]
+            citySearchProc.running = true
+        }
+    }
+    onCitySearchChanged: cityDebounce.restart()
+    // The status line names the next switch; keep it current while the page is open.
+    Timer { interval: 60000; repeat: true; running: win.visible && win.page === 2; onTriggered: win.refreshTheme() }
+    // "22:00" -> "10:00 PM", and back. parseClock also takes "10pm", "10:30 pm", "7".
+    function fmtClock(hhmm) {
+        var m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || ""); if (!m) return hhmm || ""
+        var h = parseInt(m[1]); return ((h + 11) % 12 + 1) + ":" + m[2] + (h < 12 ? " AM" : " PM")
+    }
+    function parseClock(s) {
+        var m = /^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?\s*$/i.exec(s || ""); if (!m) return ""
+        var h = parseInt(m[1]), mi = m[2] ? parseInt(m[2]) : 0, ap = m[3] ? m[3].toLowerCase() : ""
+        if (mi > 59 || h > 23 || (ap && (h < 1 || h > 12))) return ""
+        if (ap === "p" && h < 12) h += 12
+        if (ap === "a" && h === 12) h = 0
+        return (h < 10 ? "0" : "") + h + ":" + (mi < 10 ? "0" : "") + mi
+    }
+    function themeLine(st) {
+        if (!st || !st.mode) return ""
+        if (!st.next) return st.mode === "dark" ? "Always dark" : "Always light"
+        var t = Qt.formatTime(new Date(st.next * 1000), "h:mm AP")
+        return "Now " + st.mode + " · switches to " + st.next_mode + " at " + t
+    }
+
+    // ── Colors page state ── single source of truth = the color-tuning file of
+    // the mode being edited (CONTRAST_BIAS, SATURATION, BRIGHTNESS, HUE + the
+    // per-surface keys): hypr/color-tuning.conf for dark, color-tuning-light.conf
+    // for light once it's been edited (it reads dark's until then). theme-mode.py
+    // owns both: `tuning MODE` says which file to read, `tune MODE K=V` writes.
+    // The bar reads CONTRAST_BIAS live via shell.qml; the other three transform
+    // the colors at the source (wallpaper-colors.py) so they flow to every app
+    // via colors.env on regen.
+    property string tuneEditMode: "dark"     // which mode's sliders the page edits
+    property bool tuneEditPicked: false      // picked by hand since the page opened
+    readonly property bool tuneEditingLive: win.tuneEditMode === (win.themeStatus.mode || "dark")
+    // theme-mode.py tuning_path's rule, evaluated here so switching the edited
+    // mode can't race an answer for the other one: light reads its own file
+    // once it exists, dark's until then.
+    property bool lightTuneExists: false
+    FileView {
+        id: lightTuneProbe
+        path: win.homeDir + "/.config/hypr/color-tuning-light.conf"
+        onLoaded: win.lightTuneExists = true
+        onLoadFailed: win.lightTuneExists = false
+    }
+    readonly property string tuneReadPath: win.homeDir + "/.config/hypr/"
+        + (win.tuneEditMode === "light" && win.lightTuneExists ? "color-tuning-light.conf" : "color-tuning.conf")
+    function refreshTunePath() { lightTuneProbe.reload() }
+    function pickTuneMode(m) { win.tuneEditPicked = true; win.tuneEditMode = m }
+    // The five palette colors BEFORE any sliders (wallpaper-colors.py), so the
+    // swatches can preview either mode's set — colors.env has the live mode's
+    // ceilings baked in. Order matches the Colors page swatches.
+    property var rawPalette: []
+    FileView {
+        path: win.homeDir + "/.config/quickshell/colors-raw.env"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: {
+            var m = {}, lines = this.text().split("\n")
+            for (var i = 0; i < lines.length; i++) { var p = lines[i].split("="); if (p.length === 2) m[p[0].trim()] = p[1].trim() }
+            var keys = ["GRADIENT_START", "GRADIENT_END", "FOCUSED", "VISIBLE", "OCCUPIED"], out = []
+            for (var j = 0; j < keys.length; j++) { if (!m[keys[j]]) { win.rawPalette = []; return } out.push(m[keys[j]]) }
+            win.rawPalette = out
+        }
+        onLoadFailed: win.rawPalette = []
+    }
     property real tuneContrast: 0.5      // 0 dark .. 0.5 default .. 1 light
     property real tuneSaturation: 1.0    // saturation ceiling: 0 grayscale .. 1 uncapped
     property real tuneBrightness: 1.0    // brightness ceiling: 0 black .. 1 uncapped
     property real tuneHue: 0.0           // -180..180 degrees, 0 = unchanged
     FileView {
         id: tuneFile
-        path: win.homeDir + "/.config/hypr/color-tuning.conf"
+        path: win.tuneReadPath
         watchChanges: true
         onFileChanged: this.reload()
         onLoaded: {
@@ -1118,18 +1268,19 @@ FloatingWindow {
     // command, so wallpaper-colors.py / the generators never read a half-written
     // config. Re-extracts from the current wallpaper, applies the knobs at the
     // source, regenerates every app theme, refreshes mako.
-    Process { id: tuneCommitProc }
+    // theme-mode.py tune keeps every other line of the file (the old writer
+    // rewrote it with just these four and dropped the per-surface keys), and
+    // reruns the pipeline only when the edited set is the one on screen.
+    Process {
+        id: tuneCommitProc
+        onExited: { win.refreshTunePath(); if (win.shell) win.shell.refreshTuningPath() }
+    }
     function commitTuning() {
-        var body = "CONTRAST_BIAS=" + win.tuneContrast.toFixed(3)
-                 + "\nSATURATION=" + win.tuneSaturation.toFixed(3)
-                 + "\nBRIGHTNESS=" + win.tuneBrightness.toFixed(3)
-                 + "\nHUE=" + win.tuneHue.toFixed(1) + "\n"
-        var conf = win.homeDir + "/.config/hypr/color-tuning.conf"
-        tuneCommitProc.command = ["bash", "-c",
-            "printf %s '" + Qt.btoa(body) + "' | base64 -d > '" + conf + "'; " +
-            "wp=\"$(cat /tmp/wallpaper-current-path 2>/dev/null)\"; " +
-            "[ -n \"$wp\" ] && python3 \"$HOME/.config/hypr/wallpaper-colors.py\" \"$wp\"; " +
-            "\"$HOME/.config/quickshell/notif-theme-mako.sh\""]
+        tuneCommitProc.command = ["python3", win.themePy, "tune", win.tuneEditMode,
+            "CONTRAST_BIAS=" + win.tuneContrast.toFixed(3),
+            "SATURATION=" + win.tuneSaturation.toFixed(3),
+            "BRIGHTNESS=" + win.tuneBrightness.toFixed(3),
+            "HUE=" + win.tuneHue.toFixed(1)]
         tuneCommitProc.running = true
     }
     // Live preview helpers. Take the knobs as arguments so the swatch bindings
@@ -1146,7 +1297,7 @@ FloatingWindow {
         return Qt.hsla(hh, Math.min(c.hslSaturation, sat),
                        Math.min(c.hslLightness, bright), 1)
     }
-    function resetContrast()   { win.tuneContrast = 0.5; if (win.shell) win.shell.contrastBias = 0.5; win.commitTuning() }
+    function resetContrast()   { win.tuneContrast = 0.5; if (win.shell && win.tuneEditingLive) win.shell.contrastBias = 0.5; win.commitTuning() }
     function resetSaturation() { win.tuneSaturation = 1.0; win.commitTuning() }
     function resetBrightness() { win.tuneBrightness = 1.0; win.commitTuning() }
     function resetHue()        { win.tuneHue = 0.0; win.commitTuning() }
@@ -1206,29 +1357,24 @@ FloatingWindow {
     // the old banner + any existing *_SAT/_BRIGHT/_HUE surface lines (any prefix,
     // so surfaces retired from surfaceSpecs don't linger), re-emits the current
     // set. Idempotent: committing twice leaves a byte-identical file.
-    Process { id: surfaceCommitProc }
+    // Every surface's three keys, through theme-mode.py tune: a value at its
+    // default is sent empty, which removes the key. Same pipeline rule as above.
+    Process {
+        id: surfaceCommitProc
+        onExited: win.refreshTunePath()
+    }
     function commitSurfaceTune() {
-        var body = "# per-surface tuning (Settings → Colors → Per-surface)\n"
+        var pairs = []
         for (var i = 0; i < win.surfaceSpecs.length; i++) {
             var key = win.surfaceSpecs[i].key
-            var s = win.surfaceTune[key]; if (!s) continue
+            var s = win.surfaceTune[key] || {}
             var KEY = key.toUpperCase()
-            if (Math.abs((s.sat===undefined?1:s.sat) - 1) > 1e-3)    body += KEY + "_SAT=" + s.sat.toFixed(3) + "\n"
-            if (Math.abs((s.bright===undefined?1:s.bright) - 1) > 1e-3) body += KEY + "_BRIGHT=" + s.bright.toFixed(3) + "\n"
-            if (Math.abs((s.hue===undefined?0:s.hue)) > 1e-3)        body += KEY + "_HUE=" + s.hue.toFixed(1) + "\n"
+            var sat = s.sat === undefined ? 1 : s.sat, bright = s.bright === undefined ? 1 : s.bright, hue = s.hue === undefined ? 0 : s.hue
+            pairs.push(KEY + "_SAT=" + (Math.abs(sat - 1) > 1e-3 ? sat.toFixed(3) : ""))
+            pairs.push(KEY + "_BRIGHT=" + (Math.abs(bright - 1) > 1e-3 ? bright.toFixed(3) : ""))
+            pairs.push(KEY + "_HUE=" + (Math.abs(hue) > 1e-3 ? hue.toFixed(1) : ""))
         }
-        var conf = win.homeDir + "/.config/hypr/color-tuning.conf"
-        // grep strips the old banner and surface lines (uppercase PREFIX_SAT/BRIGHT/
-        // HUE, any prefix) but keeps the bare globals CONTRAST_BIAS/SATURATION/
-        // BRIGHTNESS/HUE — no underscore, so the generic pattern can't hit them.
-        surfaceCommitProc.command = ["bash", "-c",
-            "conf='" + conf + "'; " +
-            "tmp=\"$(grep -vE '^# per-surface tuning|^[A-Z]+_(SAT|BRIGHT|HUE)=' \"$conf\" 2>/dev/null)\"; " +
-            "printf '%s\\n' \"$tmp\" > \"$conf\"; " +
-            "printf %s '" + Qt.btoa(body) + "' | base64 -d >> \"$conf\"; " +
-            "wp=\"$(cat /tmp/wallpaper-current-path 2>/dev/null)\"; " +
-            "[ -n \"$wp\" ] && python3 \"$HOME/.config/hypr/wallpaper-colors.py\" \"$wp\"; " +
-            "\"$HOME/.config/quickshell/notif-theme-mako.sh\""]
+        surfaceCommitProc.command = ["python3", win.themePy, "tune", win.tuneEditMode].concat(pairs)
         surfaceCommitProc.running = true
     }
     function resetSurface(key) {
@@ -1238,7 +1384,7 @@ FloatingWindow {
     }
     FileView {
         id: surfaceTuneFile
-        path: win.homeDir + "/.config/hypr/color-tuning.conf"
+        path: win.tuneReadPath
         watchChanges: true
         onFileChanged: this.reload()
         onLoaded: win.parseSurfaceTune(this.text())

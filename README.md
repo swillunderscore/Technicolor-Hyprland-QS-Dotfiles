@@ -185,9 +185,9 @@ the gear on the launcher popup or `qs ipc call settings open`.
 
 | Page | What's in it |
 |---|---|
-| **Bar & Apps** | Tint the pinned launcher icons with the wallpaper gradient (or show their own colors), dim minimized-window icons, and the pinned launcher apps — reorder, swap icons, add/remove. |
-| **Wallpaper** | Cover-flow picker (scroll or drag to spin, click the middle one). Shuffle, transition style, auto-cycle timer, pause-while-fullscreen so a game never eats a transition. |
-| **Colors** | Four sliders that retint every themed app at once: text contrast threshold, saturation ceiling, brightness ceiling, hue. The ceilings rein in over-saturated wallpapers without touching muted ones. Per-app fine-tuning on top. |
+| **Bar & Apps** | Tint the pinned launcher icons with the wallpaper gradient (or show their own colors), dim minimized-window icons, hide individual tray icons (the app keeps running), and the pinned launcher apps — reorder, swap icons, add/remove. |
+| **Wallpaper** | Cover-flow picker (scroll or drag to spin, click the middle one). Shuffle, transition style, auto-cycle timer, pause-while-fullscreen so a game never eats a transition. "Shows in" sets whether a wallpaper is for light mode, dark mode or both. |
+| **Colors** | Light/dark mode (see below). Four sliders that retint every themed app at once: text contrast threshold, saturation ceiling, brightness ceiling, hue. The ceilings rein in over-saturated wallpapers without touching muted ones. Per-app fine-tuning on top. Light and dark mode each keep their own set. |
 | **Glass** | The look (refraction, lens distortion, edges, chromatic aberration, fresnel, specular), blur, color (brightness/contrast/saturation/vibrancy), and readability: terminal transparency, the adaptive tint, and tinting terminals only. Write-in box for anything past a slider's range. |
 | **Water** | Moving water on/off; waves (size, speed, activity, viscosity), light (brightness, depth, water color, murk), currents, and how the mouse and dragged windows disturb it. |
 | **Performance** | The GPU governor and its thresholds, plus a manual effects step. |
@@ -207,6 +207,32 @@ community [soul-over-ai](https://github.com/xoundbyte/soul-over-ai) list by arti
 to CSV* exports your library. Both read-only, through your open Spotify via Spicetify — no
 developer app, no extra login.
 
+</details>
+
+<details>
+<summary><b>Light/dark mode</b> — switches at sunset and sunrise</summary>
+
+**Settings → Colors → Appearance**: Auto (sunset to sunrise), Custom times, Light, or Dark.
+The default is Dark, and until you pick something the system's own light/dark setting is left
+alone.
+
+Auto uses the same sunrise/sunset math as Android's "sunset to sunrise" dark theme (a port of
+what AOSP runs), so with the same location your desktop and your phone's schedule switch at the
+same moment. Location is a city you search for in Settings — offline, from a bundled city list —
+and defaults to your time zone's city.
+
+A switch sets the system color scheme (GTK 4, Qt 6, browsers and Electron apps follow it), flips
+icon themes to their light/dark sibling where one is installed (`Papirus-Dark` ↔
+`Papirus-Light`), retints every themed app with that mode's slider set, and changes the wallpaper
+to one from that mode — unless auto-cycle is paused or a fullscreen app is up, in which case the
+wallpaper waits like any other change would.
+
+**Wallpapers:** put light-mode ones in a `light/` folder and dark-mode ones in a `dark/` folder
+inside your wallpaper folder. Anything left directly in the folder shows in both modes. The
+"Shows in" buttons on the Wallpaper page move them for you.
+
+Pieces: `hypr/theme-mode.py` (schedule, system signal, daemon), `hypr/wallpaper-list.sh` (the
+one wallpaper list everything shares), `hypr/theme-mode.conf.example`.
 </details>
 
 <details>
@@ -367,6 +393,10 @@ is using my name to endorse whatever you make out of it.
 
 The two vendored plugins keep their own licenses:
 [Hypr-DarkWindow](https://github.com/micha4w/Hypr-DarkWindow) (MIT) and `hyprwater` (BSD-3).
+
+The city list for light/dark mode (`hypr/theme-mode-cities.tsv`) is trimmed from
+[GeoNames](https://www.geonames.org) `cities15000`, licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 > **`hyprwater` is a fork of [hyprglass](https://github.com/Hyprnux/hyprglass)** by Jeremy
 > Trufier, used under the BSD 3-Clause License (`hypr/hyprwater/LICENSE`). It has diverged

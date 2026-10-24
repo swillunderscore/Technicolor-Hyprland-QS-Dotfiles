@@ -67,7 +67,9 @@ MODE="${1:-random}"
 
 mkdir -p "$CACHE_DIR"
 
-mapfile -t WALLPAPERS < <(find "$WALLPAPER_DIR" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.webp' -o -name '*.webm' -o -name '*.mp4' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) -size +0c | sort)
+# The current light/dark mode's wallpapers, in the order everything shares
+# (wallpaper-list.sh: loose files = both modes, light/ and dark/ = one).
+mapfile -t WALLPAPERS < <("$HOME/.config/hypr/wallpaper-list.sh")
 COUNT=${#WALLPAPERS[@]}
 [ "$COUNT" -eq 0 ] && exit 0
 
@@ -99,8 +101,10 @@ if [ "$MODE" = "anchor" ]; then
     for i in "${!WALLPAPERS[@]}"; do
         if [ "${WALLPAPERS[$i]}" = "$CUR" ]; then INDEX=$i; break; fi
     done
-    # The KDE branch records only the index.
-    if [ "$INDEX" -lt 0 ]; then
+    # The KDE branch records only the index. A wallpaper that IS known but
+    # isn't in this mode's list (the light/dark switch happened while it was
+    # held) has no index here: keep the sequence rather than anchor a wrong one.
+    if [ "$INDEX" -lt 0 ] && [ -z "$CUR" ]; then
         INDEX=$(cat "$STATE_FILE" 2>/dev/null)
         case "$INDEX" in ''|*[!0-9]*) INDEX=-1 ;; esac
         [ "$INDEX" -ge "$COUNT" ] && INDEX=-1
@@ -207,7 +211,7 @@ if [[ "$XDG_CURRENT_DESKTOP" == *"KDE"* ]]; then
     fi
 
     # 2. Check if a sync/upscale is needed.
-    SRC_COUNT=$(find "$WALLPAPER_DIR" -maxdepth 1 -type f | wc -l)
+    SRC_COUNT=$("$HOME/.config/hypr/wallpaper-list.sh" all | wc -l)
     CACHE_COUNT=$(find "$CACHE_DIR" -maxdepth 1 -type f | wc -l)
 
     if [ "$SRC_COUNT" -ne "$CACHE_COUNT" ]; then
@@ -218,11 +222,12 @@ if [[ "$XDG_CURRENT_DESKTOP" == *"KDE"* ]]; then
             exec 8>/tmp/wallpaper-sync.lock
             if ! flock -n 8; then exit 0; fi
 
-            # Cleanup deleted files from cache
+            # Cleanup deleted files from cache (the cache is flat, keyed by name)
+            ALL_NAMES=$("$HOME/.config/hypr/wallpaper-list.sh" all | sed 's|.*/||')
             for CACHED_FILE in "$CACHE_DIR"/*; do
                 [ -e "$CACHED_FILE" ] || continue
                 B_NAME=$(basename "$CACHED_FILE")
-                if [ ! -f "$WALLPAPER_DIR/$B_NAME" ]; then
+                if ! grep -qxF -- "$B_NAME" <<<"$ALL_NAMES"; then
                     rm -f "$CACHED_FILE"
                 fi
             done
@@ -230,7 +235,7 @@ if [[ "$XDG_CURRENT_DESKTOP" == *"KDE"* ]]; then
             FIRST_CACHED=""
 
             # Upscale missing files
-            for FILE in "$WALLPAPER_DIR"/*; do
+            while IFS= read -r FILE; do
                 [ -e "$FILE" ] || continue
                 B_NAME=$(basename "$FILE")
                 C_FILE="$CACHE_DIR/$B_NAME"
@@ -274,7 +279,7 @@ if [[ "$XDG_CURRENT_DESKTOP" == *"KDE"* ]]; then
                                     if [ "$CACHED_COUNT" -eq 0 ]; then continue; fi
 
                                     # Check if full batch is done; if so, switch to random and exit loop
-                                    SRC_NOW=$(find "$WALLPAPER_DIR" -maxdepth 1 -type f | wc -l)
+                                    SRC_NOW=$("$HOME/.config/hypr/wallpaper-list.sh" all | wc -l)
                                     if [ "$CACHED_COUNT" -ge "$SRC_NOW" ]; then
                                         RAND_IDX=$(( RANDOM % CACHED_COUNT ))
                                         plasma-apply-wallpaperimage "${CACHED_NOW[$RAND_IDX]}"
@@ -310,7 +315,7 @@ if [[ "$XDG_CURRENT_DESKTOP" == *"KDE"* ]]; then
                         fi
                     fi
                 fi
-            done
+            done < <("$HOME/.config/hypr/wallpaper-list.sh" all)
         ) & disown
     fi
 
