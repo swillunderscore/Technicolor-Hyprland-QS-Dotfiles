@@ -63,6 +63,33 @@ FloatingWindow {
     property bool addOpen: false
 
     function close() { win.addOpen = false; if (shell) shell.settingsOpen = false }
+    // Closed like any other window (Super+C / Super+Escape, or a close button):
+    // without this settingsOpen stayed true and the next gear click did nothing.
+    onClosed: win.close()
+
+    // ── Window buttons (System page) ── one switch for Discord, GTK apps and
+    // this window's own close/minimize/maximize; hypr/window-buttons.py owns it.
+    property bool windowButtons: false
+    FileView {
+        path: win.homeDir + "/.config/hypr/window-buttons.conf"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: win.windowButtons = /^WINDOW_BUTTONS=1\s*$/m.test(this.text())
+        onLoadFailed: win.windowButtons = false
+    }
+    Process { id: windowButtonsProc }
+    function setWindowButtons(on) {
+        win.windowButtons = on
+        windowButtonsProc.command = ["python3", win.homeDir + "/.config/hypr/window-buttons.py", "set", on ? "1" : "0"]
+        windowButtonsProc.running = true
+    }
+    // Minimize and maximize go through the same scripts as the hotkeys; both act
+    // on the window under the cursor, which is this one while a button is clicked.
+    Process { id: winActionProc }
+    function windowAction(cmd) {
+        winActionProc.command = ["bash", "-c", "\"$HOME/.config/hypr/\"" + cmd]
+        winActionProc.running = true
+    }
 
     // ── pages ── the sidebar, in order. `page` is shell.settingsTab, which the
     // IPC (`qs ipc call settings tab N`) also sets, so N follows this list.
@@ -84,7 +111,7 @@ FloatingWindow {
     function loadPage(i) {
         if (i === 1)      { curWpFile.reload(); win.refreshWallpapers() }
         else if (i === 2) { win.tuneEditPicked = false; win.refreshTunePath(); tuneFile.reload(); win.refreshTheme() }
-        else if (i === 3) { win.loadGlass(); win.loadTermOpacity() }
+        else if (i === 3) { win.loadGlass(); win.loadTermOpacity(); win.refreshTheme() }
         else if (i === 4) win.loadGlass()
         else if (i === 5) govConfFile.reload()
         else if (i === 6) win.loadHotkeys()
@@ -243,12 +270,13 @@ FloatingWindow {
     function setTerminal(cmd) {
         if (!cmd) return
         win.currentTerminal = cmd
-        // White glass only knows how to turn kitty's text dark.
-        if (!win.whiteGlassTerminalOk && win.glassValue({ key: "adaptive_white", def: 0 }) >= 0.5) win.setWhiteGlass(false)
         var b64 = Qt.btoa("$terminal = " + cmd + "\n")
+        // White glass only knows how to turn kitty's text dark: theme-mode.py
+        // glass re-checks it against the new terminal.
         termSetProc.command = ["bash", "-c",
             "printf %s '" + b64 + "' | base64 -d > '" + win.homeDir + "/.config/hypr/terminal.conf'; " +
             "hyprctl reload >/dev/null 2>&1; " +
+            "python3 \"$HOME/.config/hypr/theme-mode.py\" glass; " +
             "kwriteconfig6 --file kdeglobals --group General --key TerminalApplication '" + cmd + "' 2>/dev/null"]
         termSetProc.running = true
     }
@@ -327,11 +355,11 @@ FloatingWindow {
     function setTermAuto(on) {
         win.termAuto = on
         // White glass rides the adaptive tint: without it kitty's black text
-        // would sit on dark glass. Off together.
-        if (!on && win.glassValue({ key: "adaptive_white", def: 0 }) >= 0.5) win.setWhiteGlass(false)
+        // would sit on dark glass, so theme-mode.py glass re-checks it after.
         termAutoProc.command = ["bash", "-c",
             "\"$HOME/.config/hypr/terminal-opacity.py\" auto " + (on ? "1" : "0")
-            + " --term '" + win.currentTerminal + "'"]
+            + " --term '" + win.currentTerminal + "'; "
+            + "python3 \"$HOME/.config/hypr/theme-mode.py\" glass"]
         termAutoProc.running = true
         termStateRefresh.restart()
     }
@@ -583,6 +611,7 @@ FloatingWindow {
                 if (a.indexOf(rules[i][0]) >= 0) return { cat: rules[i][1], label: rules[i][2] }
             if (a.indexOf("brightnessctl") >= 0) return { cat:"Media", label: a.indexOf("5%+") >= 0 ? "Brightness up" : "Brightness down" }
             if (a.indexOf("grim") >= 0) return { cat:"Screenshots", label: a.indexOf("slurp") >= 0 ? "Screenshot a region" : "Screenshot full screen" }
+            if (a.indexOf("spectacle") >= 0) return { cat:"Screenshots", label: a.indexOf("--region") >= 0 ? "Screenshot a region" : "Screenshot full screen" }
             var parts = a.split(" "), prog = parts[0].split("/").pop(), rest = parts.slice(1).join(" ").trim()
             if (prog === win.currentTerminal || ["kitty","alacritty","konsole","foot","wezterm"].indexOf(prog) >= 0) return { cat:"Apps", label:"Open terminal" }
             if (a.indexOf("wofi") >= 0 || a.indexOf("--show drun") >= 0 || a.indexOf("rofi") >= 0) return { cat:"Apps", label:"App launcher" }
@@ -1008,25 +1037,6 @@ FloatingWindow {
     }
     function runCheck() { win.checking = true; win.newCommits = []; win.commitCount = ""; checkProc.command = ["bash", "-c", "\"$HOME/.config/hypr/technicolor-check.sh\""]; checkProc.running = true }
 
-    // ── Liked-songs tools (System page) ── scan for AI music + CSV backup, run
-    // through the live Spicetify session (spotify-liked.py). Read-only.
-    property string likedStatus: ""
-    property bool likedBusy: false
-    readonly property bool likedScanRunning: likedScanProc.running
-    readonly property bool likedExportRunning: likedExportProc.running
-    Process {
-        id: likedScanProc
-        onRunningChanged: if (running) { win.likedBusy = true; win.likedStatus = "Scanning your Liked Songs…" }
-        stdout: StdioCollector { onStreamFinished: { win.likedBusy = false; win.likedStatus = this.text.trim() || "(no output — is Spotify open with the theme applied?)" } }
-    }
-    Process {
-        id: likedExportProc
-        onRunningChanged: if (running) { win.likedBusy = true; win.likedStatus = "Backing up your Liked Songs…" }
-        stdout: StdioCollector { onStreamFinished: { win.likedBusy = false; win.likedStatus = this.text.trim() || "(no output — is Spotify open with the theme applied?)" } }
-    }
-    function scanLiked()   { if (win.likedBusy) return; likedScanProc.command   = ["bash", "-c", "\"$HOME/.config/hypr/scan-ai-music.sh\" 2>&1"]; likedScanProc.running = true }
-    function exportLiked() { if (win.likedBusy) return; likedExportProc.command = ["bash", "-c", "\"$HOME/.config/hypr/export-liked-songs.sh\" 2>&1"]; likedExportProc.running = true }
-
     // ── wallpapers folder (Wallpaper page) — single source of truth in
     // ~/.config/hypr/wallpaper-dir.conf; every wallpaper script reads it. ──
     property string wallpaperDir: win.homeDir + "/Wallpapers/animated"
@@ -1184,7 +1194,7 @@ FloatingWindow {
     }
     onCitySearchChanged: cityDebounce.restart()
     // The status line names the next switch; keep it current while the page is open.
-    Timer { interval: 60000; repeat: true; running: win.visible && win.page === 2; onTriggered: win.refreshTheme() }
+    Timer { interval: 60000; repeat: true; running: win.visible && (win.page === 2 || win.page === 3); onTriggered: win.refreshTheme() }
     // "22:00" -> "10:00 PM", and back. parseClock also takes "10pm", "10:30 pm", "7".
     function fmtClock(hhmm) {
         var m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || ""); if (!m) return hhmm || ""
@@ -1317,7 +1327,6 @@ FloatingWindow {
         { key: "notifications", label: "Notifications" },
         { key: "gtk",          label: "GTK apps" },
         { key: "discord",      label: "Discord (Vesktop)" },
-        { key: "spotify",      label: "Spotify" },
         { key: "brave",        label: "Brave" },
         { key: "kde",          label: "Dolphin / KDE apps" },
         { key: "telegram",     label: "Telegram (re-import)" }
@@ -1476,14 +1485,13 @@ FloatingWindow {
     }
     // ── White glass (Glass page) ── hyprwater adaptive_white lifts terminal glass
     // toward white; terminal-colors.py turns kitty's text black to match. kitty
-    // only: the one terminal whose colors change live.
+    // only: the one terminal whose colors change live. The toggle is a
+    // preference (theme-mode.conf WHITE_GLASS): theme-mode.py turns the glass
+    // on in light mode and off in dark, with the colors.
     readonly property bool whiteGlassTerminalOk: win.currentTerminal.trim().split(/\s+/)[0] === "kitty"
-    Process { id: whiteGlassProc; onExited: win.loadGlass() }
     function setWhiteGlass(on) {
-        whiteGlassProc.command = ["bash", "-c",
-            "\"$HOME/.config/hypr/hyprwater-set.sh\" adaptive_white " + (on ? 1 : 0) + "; "
-            + "\"$HOME/.config/hypr/terminal-colors.py\" " + (on ? "light" : "default")]
-        whiteGlassProc.running = true
+        win.themeStatus = Object.assign({}, win.themeStatus, { white_glass: on })
+        win.setTheme(["WHITE_GLASS=" + (on ? 1 : 0)])
     }
     Process { id: glassSetProc }
     function glassSet(key, val) {
@@ -1504,16 +1512,14 @@ FloatingWindow {
     Item {
         anchors.fill: parent
         focus: true
-        Keys.onEscapePressed: win.close()
 
         Row {
             anchors.fill: parent
             anchors.margins: 14      // outer glass margin
             spacing: 12              // glass gap between blocks
 
-            // ── sidebar block: title, then one entry per page. No close X —
-            // this is a keyboard-driven WM, so dismiss with Esc or re-toggle the
-            // opener. ──
+            // ── sidebar block: title, then one entry per page. Closed like any
+            // other window (the WM's close binds), or by re-toggling the opener. ──
             Rectangle {
                 id: sidebar
                 width: 196; height: parent.height; radius: 16; color: win.blockColor
@@ -1548,6 +1554,28 @@ FloatingWindow {
                 radius: 16; color: win.blockColor; clip: true
                 Text { id: pageTitle; x: 18; y: 14
                        text: win.pages[win.page].name; color: win.fg; font.pixelSize: 20; font.bold: true; font.family: win.ff }
+                Row {
+                    visible: win.windowButtons
+                    anchors.top: parent.top; anchors.right: parent.right; anchors.topMargin: 12; anchors.rightMargin: 14
+                    spacing: 6
+                    z: 2
+                    Repeater {
+                        model: [
+                            { glyph: 0xF2D1, run: () => win.windowAction("minimize.sh") },
+                            { glyph: 0xF2D0, run: () => win.windowAction("window-action.sh maximize") },
+                            { glyph: 0xF00D, run: () => win.close() }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            width: 28; height: 28; radius: 14
+                            color: wbM.containsMouse ? win.rowHover : win.rowBg
+                            Text { anchors.centerIn: parent; text: String.fromCodePoint(modelData.glyph)
+                                   color: win.fg; font.pixelSize: 12; font.family: win.ff }
+                            MouseArea { id: wbM; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: modelData.run() }
+                        }
+                    }
+                }
                 Loader {
                     anchors.top: pageTitle.bottom; anchors.topMargin: 12
                     anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom

@@ -23,14 +23,6 @@ main() {
 
     echo "Copying configs…"
     cp -r "$TMP"/hypr "$TMP"/quickshell "$TMP"/mako ~/.config/ 2>/dev/null
-    # Spicetify is OPT-IN at install time (it patches the Spotify client — against
-    # their ToS, so the installer asks first and warns). Updating must not quietly
-    # opt you in: only refresh the theme if you already have Spicetify or its config.
-    # Without this, anyone who declined Spotify theming got ~/.config/spicetify
-    # created behind their back on the first "Check for updates".
-    if command -v spicetify >/dev/null 2>&1 || [ -d ~/.config/spicetify ]; then
-        cp -r "$TMP"/spicetify ~/.config/ 2>/dev/null
-    fi
     # LibreOffice falls back to its ancient "gen" widget set under Hyprland (it only
     # maps KDE->kf6 and GNOME->gtk3), giving a cramped menubar and boxy toolbar
     # buttons. Same fix install.sh applies — repeated here so people who installed

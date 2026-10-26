@@ -3,7 +3,7 @@
 gen-kde-colors.py — technicolor palette -> KDE/Qt (Dolphin etc.) colors.
 
 Rewrites the [Colors:*] sections of ~/.config/kdeglobals IN PLACE (preserving
-everything else) from the wallpaper palette, mirroring the Spotify/Discord
+everything else) from the wallpaper palette, mirroring the Discord
 mapping: View (file area) = PRIMARY, Window/chrome = SECONDARY, Selection =
 ACCENT, per-surface contrast inks. KF6 apps watch kdeglobals and live-reload;
 a KGlobalSettings dbus signal nudges anything older.

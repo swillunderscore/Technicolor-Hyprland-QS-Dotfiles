@@ -365,7 +365,7 @@ hl.window_rule({ name = "steam-toast-nofocus",
 -- reload fired after), and the shade rules had been evaluated at the one startup
 -- reload while the shader list was still empty, so they never bound. Registering
 -- here (re-run on every reload) also means chromakey survives a plain reload —
--- e.g. tckey-reload.sh / Settings → Glass — instead of being wiped by it.
+-- e.g. from Settings → Glass — instead of being wiped by it.
 if hl.plugin and hl.plugin.darkwindow then
     local dw = hl.plugin.darkwindow
     dw.load_shader("tckey",      { path = H .. "/.config/hypr/technicolor-chromakey.glsl",
@@ -530,11 +530,11 @@ bind("toggle-tiling", "Windows", "Toggle tiling",
 bind("toggle-tiling-all", "Windows", "Toggle tiling (whole workspace)",
      mainMod .. " + SHIFT + SPACE", exec(H .. "/.config/hypr/tile-all.sh"))
 
--- Screenshots (note: original used $shiftMod which was undefined → SHIFT)
+-- Screenshots: KDE's Spectacle (works here through kwin-screenshot-shim.py)
 bind("screenshot-region", "Screenshots", "Screenshot a region",
-     "SHIFT + PRINT", exec([[grim -g "$(slurp)" -t ppm - | satty --filename - --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
+     "SHIFT + PRINT", exec("spectacle --region"))
 bind("screenshot-full", "Screenshots", "Screenshot full screen",
-     mainMod .. " + PRINT", exec([[grim - | satty --filename - --fullscreen --output-filename ]] .. H .. [[/Pictures/Screenshots/$(date '+%Y%m%d-%H%M%S').png --copy-command wl-copy]]))
+     mainMod .. " + PRINT", exec("spectacle --fullscreen"))
 
 -- Move focus
 -- ...and the mouse jumps to the newly focused window (focus-dir.sh)
@@ -671,11 +671,16 @@ hl.on("hyprland.start", function()
     hl.exec_cmd(H .. "/.config/hypr/window-geometry.py")
     hl.exec_cmd(H .. "/.config/hypr/tg-badge-listener.py")
     hl.exec_cmd(H .. "/.config/hypr/gen-wofi-font.sh")
-    hl.exec_cmd(H .. "/.config/hypr/technicolor-color-server.py")
-    -- A Spotify package upgrade silently reverts the spicetify patch, and the
-    -- whole-window chromakey then self-calibrates onto stock Spotify's near-black
-    -- and keys out album art. No-op unless that actually happened.
-    hl.exec_cmd(H .. "/.config/hypr/spicetify-guard.sh")
+    -- Keep what was copied after the app it came from closes (a Wayland
+    -- selection disappears with its owner). Selections KeePassXC marks as
+    -- passwords are left alone, so its clipboard auto-clear still works.
+    -- Regular clipboard only: persisting the primary selection breaks text
+    -- selection in GTK apps.
+    hl.exec_cmd("wl-clip-persist --clipboard regular --all-mime-type-regex '^(?!x-kde-passwordManagerHint).+'")
+    -- KDE's Spectacle captures only through KWin's screenshot D-Bus service;
+    -- this answers it with grim + hyprctl. Has to be running before Spectacle
+    -- starts (it checks for the name instead of starting it).
+    hl.exec_cmd(H .. "/.config/hypr/kwin-screenshot-shim.py")
     -- Load the vendored plugins (built against system headers by their load.sh;
     -- `hyprctl plugin load` is synchronous, so both are ready when load.sh returns)
     -- then `hyprctl reload`. The reload re-runs THIS config with the plugins now

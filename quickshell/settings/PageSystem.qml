@@ -1,7 +1,7 @@
 import QtQuick
 import Quickshell
 
-// Settings → System: font, default apps, updates, Spotify tools, and the
+// Settings → System: font, default apps, window buttons, updates, and the
 // machine-local Hyprland config.
 SmoothList {
     id: page
@@ -70,6 +70,15 @@ SmoothList {
             onPicked: (id) => page.s.setTerminal(id)
         }
 
+        // ── Window buttons (hypr/window-buttons.py) ──
+        Section { title: "Windows" }
+        ToggleRow {
+            title: "Window buttons"
+            desc: "Close, minimize and maximize buttons on Discord, GTK apps and this window. Off, windows close with your close hotkey (Hotkeys page)."
+            on: page.s.windowButtons
+            onToggled: (v) => page.s.setWindowButtons(v)
+        }
+
         // ── Update (pull latest from GitHub) ──
         Section {
             title: "Update"
@@ -113,29 +122,6 @@ SmoothList {
         }
         Text { width: parent.width; visible: page.s.updateStatus !== ""; wrapMode: Text.WordWrap; color: ST.fg; opacity: 0.7; font.pixelSize: 11; font.family: "monospace"
             text: page.s.updateStatus }
-
-        // ── Liked Songs tools (Spotify, via your Spicetify session) ──
-        Section {
-            title: "Spotify Liked Songs"
-            desc: "Runs through your open Spotify (no login or dev app, read-only). Scan checks your likes against a known-AI-artist list; Back up writes them all to a CSV (~/spotify-liked-DATE.csv) so you never lose your library."
-        }
-        Row {
-            width: parent.width; height: 36; spacing: 8
-            TcButton {
-                width: (parent.width - 8) / 2
-                enabled: !page.s.likedBusy
-                text: page.s.likedScanRunning ? "Scanning…" : "Scan for AI music"
-                onClicked: page.s.scanLiked()
-            }
-            TcButton {
-                width: (parent.width - 8) / 2
-                enabled: !page.s.likedBusy
-                text: page.s.likedExportRunning ? "Backing up…" : "Back up to CSV"
-                onClicked: page.s.exportLiked()
-            }
-        }
-        Text { width: parent.width; visible: page.s.likedStatus !== ""; wrapMode: Text.WordWrap; color: ST.fg; opacity: 0.75; font.pixelSize: 11; font.family: "monospace"
-            text: page.s.likedStatus }
 
         // ── local.conf (advanced) ──
         Section {

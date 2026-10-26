@@ -82,7 +82,6 @@ def load():
 _SURFACE_OF = {
     "gen-gtk-theme.py": "gtk",
     "gen-discord-theme.py": "discord",
-    "gen-spotify-theme.py": "spotify",
     "gen-brave-theme.py": "brave",
     "gen-kde-colors.py": "kde",
     "gen-telegram-theme.py": "telegram",
@@ -129,7 +128,7 @@ def _tune_palette(d, name):
     """Return d with `name`'s per-surface sat/bright/hue applied to every #RRGGBB
     value. Identity when that surface has no tuning set. Public so a generator
     that produces output for MORE THAN ONE surface (gen-discord also writes the
-    Spotify JSON) can re-tune the palette for the other surface explicitly."""
+    shared JSON) can re-tune the palette for the other surface explicitly."""
     sat, bright, hue = _surface_tuning_for(name)
     if abs(sat - 1) < 1e-3 and abs(bright - 1) < 1e-3 and abs(hue) < 1e-3:
         return d
@@ -191,7 +190,7 @@ def rel_lum(c):
 
 
 # ── user tuning (Settings → Colors). Shared by every generator that imports
-# this module (Spotify, Telegram, KDE, GTK, Brave all use ink_rgb), so a single
+# this module (Telegram, KDE, GTK, Brave all use ink_rgb), so a single
 # slider moves the light/dark text crossover everywhere at once.
 def _mode_tuning_path():
     """The current light/dark mode's color-tuning file (hypr/theme-mode.py).
@@ -579,12 +578,34 @@ def header(name, desc):
     return "/**\n * @name {}\n * @description {}\n */\n".format(name, desc)
 
 
+# Vesktop 1.6.8 dropped its "Discord titlebar" switch: a frameless window now
+# always shows Discord's minimize/maximize/close. Hidden (unless Settings →
+# System → Window buttons is on) with the selector Vencord's own native-titlebar
+# CSS uses; midnight reserves room for them whenever they are in the page, so
+# its no-buttons width ("Mac / Vesktop users") is put back too.
+NO_WINDOW_BUTTONS = """
+[class*="winButtons_"] { display: none !important; }
+[class*="base_"]:has(> [class*="bar_"] > [class*="trailing_"] > [class*="winButtons_"]) {
+  --top-bar-right-margin: calc(32px * var(--button-count) + var(--button-count) * var(--space-xs)) !important;
+}
+"""
+
+
+def window_buttons_shown():
+    try:
+        with open(os.path.expanduser("~/.config/hypr/window-buttons.conf"), encoding="utf-8") as f:
+            return any(line.strip() == "WINDOW_BUTTONS=1" for line in f)
+    except OSError:
+        return False
+
+
 def struct(name, *layers):
     return (header(name, "Technicolor structure (static). Live colors come from QuickCSS.")
             + MIDNIGHT + "\n"
             + props_block() + "\n"
             + vars_block(DEFAULTS, ":root") + "\n"
             + transition_rule() + "\n"
+            + ("" if window_buttons_shown() else NO_WINDOW_BUTTONS)
             + "\n/* @@TC-LAYER@@ */\n" + "\n".join(layers))
 
 
@@ -679,13 +700,12 @@ def main():
     V = compute_vars(primary, secondary, third, accent)
     write_quickcss(vars_block(V, "html:root"))
 
-    # Same palette as JSON for Spotify (served by technicolor-color-server.py,
-    # polled by the technicolor-sync Spicetify extension). Tiny in-place write.
-    # NOTE: `p` above carries the DISCORD surface tuning (this script's name).
-    # Spotify is its own surface, so re-tune the raw env palette for spotify and
-    # recompute its vars — otherwise Spotify would wrongly track Discord's slider.
+    # The same palette as JSON for other apps to read
+    # ($XDG_RUNTIME_DIR/technicolor-colors.json). `p` above carries the Discord
+    # surface tuning (this script's name), so this re-tunes the raw palette
+    # with the global sliders only — Discord's slider must not move it.
     try:
-        write_surface_json("spotify", "technicolor-colors.json")
+        write_surface_json("shared", "technicolor-colors.json")
     except Exception:
         pass
 

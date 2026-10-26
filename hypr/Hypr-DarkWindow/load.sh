@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build + load the vendored Hypr-DarkWindow (the Spotify/Brave/Dolphin chromakey
+# Build + load the vendored Hypr-DarkWindow (the Brave/Dolphin chromakey
 # "glass" plugin — provides the `darkwindow:shade` windowrule field + the tckey
 # custom shaders). Built against the SYSTEM Hyprland headers (pkg-config
 # hyprland) — no hyprpm, no sudo — so a Hyprland update can't strand it in a

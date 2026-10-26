@@ -13,6 +13,7 @@ phone's screen next turns off; the desktop doesn't wait.) Fully offline.
   theme-mode.py status          JSON for Settings: mode, next switch, location
   theme-mode.py set K=V ...     update theme-mode.conf, print status, apply
   theme-mode.py apply           push the current mode to the system
+  theme-mode.py glass           match white glass to the mode (Settings → Glass)
   theme-mode.py daemon          keep the system in the current mode (login)
   theme-mode.py cities QUERY    offline city search (theme-mode-cities.tsv)
   theme-mode.py tuning [MODE]   the color-tuning file a mode reads
@@ -51,8 +52,18 @@ TUNING_LIGHT = os.path.join(HYPR, "color-tuning-light.conf")
 
 # MODE defaults to dark: Technicolor ran dark before this existed, so an update
 # changes nothing until Auto/Custom/Light is picked in Settings.
+# WHITE_GLASS: Settings → Glass → "White glass in light mode".
 DEFAULTS = {"MODE": "dark", "CITY": "", "LAT": "", "LON": "",
-            "LIGHT_AT": "06:00", "DARK_AT": "22:00"}   # Android's custom-schedule defaults
+            "LIGHT_AT": "06:00", "DARK_AT": "22:00",   # Android's custom-schedule defaults
+            "WHITE_GLASS": "0"}
+
+# What white glass reads and writes. The plugin keeps adaptive_white in
+# hyprwater-tuning.conf (hyprwater-set.sh) and terminal-colors.py keeps kitty's
+# text colors in an include file; both say what is on screen now.
+TERM_OPACITY = os.path.join(HYPR, "terminal-opacity.conf")    # AUTO = "Adapt to what's behind"
+TERMINAL_CONF = os.path.join(HYPR, "terminal.conf")
+GLASS_TUNING = os.path.join(HYPR, "hyprwater-tuning.conf")
+KITTY_COLORS = os.path.join(HOME, ".config/kitty/technicolor-colors.conf")
 
 
 # ── Android's sunrise/sunset ────────────────────────────────────────────────
@@ -293,6 +304,17 @@ def load_conf(path=CONF):
     return conf
 
 
+def mode_picked(path=CONF):
+    """A mode was saved in Settings. Until then the system's own light/dark
+    setting and icon theme are left alone, even if the file exists for
+    another key."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return any(line.strip().startswith("MODE=") for line in f)
+    except OSError:
+        return False
+
+
 def set_conf(pairs, path=CONF):
     """Update some keys, keep the rest (the file is rewritten whole)."""
     present = {}
@@ -309,7 +331,7 @@ def set_conf(pairs, path=CONF):
         if k not in DEFAULTS:
             raise ValueError("unknown key: %s" % k)
         present[k] = v.replace("\n", " ").strip()
-    body = "# Written by Settings → Colors → Appearance (theme-mode.py).\n"
+    body = "# Written by Settings → Colors → Appearance and Glass (theme-mode.py).\n"
     body += "".join("%s=%s\n" % (k, present[k]) for k in DEFAULTS if k in present)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -580,6 +602,51 @@ def nudge_wallpaper():
         pass
 
 
+# ── White glass in light mode ───────────────────────────────────────────────
+def white_glass_wanted(conf, mode, term_auto, terminal):
+    """White glass lifts the adaptive tint, so it needs Adapt on; black text
+    needs kitty, the one terminal whose colors change live."""
+    return (conf["WHITE_GLASS"] == "1" and mode == "light" and term_auto
+            and terminal.split()[:1] == ["kitty"])
+
+
+def _read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _run_script(args):
+    try:
+        subprocess.run([os.path.join(HYPR, args[0])] + args[1:], capture_output=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def sync_white_glass(mode, conf, term_opacity=TERM_OPACITY, terminal_conf=TERMINAL_CONF,
+                     glass_tuning=GLASS_TUNING, kitty_colors=KITTY_COLORS, run=_run_script):
+    """Turn white glass on or off to match. Each half is checked and fixed on
+    its own, and nothing runs when both already match."""
+    term = _read(terminal_conf)
+    if term is None:
+        terminal = "kitty"   # Settings' default too
+    else:
+        m = re.search(r"\$terminal\s*=\s*(.+)", term)
+        if not m:
+            return           # Settings is mid-write; the next tick decides
+        terminal = m.group(1).strip()
+    term_auto = re.search(r"(?m)^AUTO=1\s*$", _read(term_opacity) or "") is not None
+    want = white_glass_wanted(conf, mode, term_auto, terminal)
+    glass = re.search(r"(?m)^plugin:hyprwater:adaptive_white = 1\s*$", _read(glass_tuning) or "") is not None
+    text = bool((_read(kitty_colors) or "").strip())
+    if glass != want:
+        run(["hyprwater-set.sh", "adaptive_white", "1" if want else "0"])
+    if text != want:
+        run(["terminal-colors.py", "light" if want else "default"])
+
+
 def read_state():
     try:
         with open(STATE, encoding="utf-8") as f:
@@ -609,7 +676,8 @@ def status():
     return {"setting": conf["MODE"], "mode": mode, "next_mode": next_mode,
             "next": int(nxt) if nxt else None,
             "location": loc[2] if loc else "", "location_source": loc[3] if loc else "none",
-            "light_at": conf["LIGHT_AT"], "dark_at": conf["DARK_AT"]}
+            "light_at": conf["LIGHT_AT"], "dark_at": conf["DARK_AT"],
+            "white_glass": conf["WHITE_GLASS"] == "1"}
 
 
 def daemon():
@@ -621,17 +689,18 @@ def daemon():
     while True:
         wait = 30.0
         try:
+            tz, tzname = local_tz()
+            conf = load_conf()
+            mode, _, nxt = schedule(time.time(), conf, tz, tzname)
             # Never set up in Settings: leave the system's own light/dark
             # setting and icon theme exactly as they are.
-            if not os.path.exists(CONF):
-                time.sleep(wait)
-                continue
-            tz, tzname = local_tz()
-            mode, _, nxt = schedule(time.time(), load_conf(), tz, tzname)
-            prev = read_state()
-            scheme = _gsettings("get", "org.gnome.desktop.interface", "color-scheme")
-            if mode != prev or (scheme is not None and scheme != scheme_for(mode)):
-                apply(mode)
+            if mode_picked():
+                prev = read_state()
+                scheme = _gsettings("get", "org.gnome.desktop.interface", "color-scheme")
+                if mode != prev or (scheme is not None and scheme != scheme_for(mode)):
+                    apply(mode)
+            # Switches with the colors (on time, even while the wallpaper is held).
+            sync_white_glass(mode, conf)
             # Wake right after the next switch; the 30 s cap re-checks the clock
             # anyway, so suspend, time zone changes and conf edits need nothing else.
             if nxt is not None:
@@ -648,12 +717,16 @@ def main(argv):
         print(schedule(time.time(), load_conf(), tz, tzname)[0])
     elif cmd == "status":
         print(json.dumps(status()))
-    elif cmd in ("apply", "set"):
+    elif cmd in ("apply", "set", "glass"):
         if cmd == "set":
             set_conf(dict(a.split("=", 1) for a in argv[1:] if "=" in a))
             print(json.dumps(status()), flush=True)  # Settings reads this line
         tz, tzname = local_tz()
-        apply(schedule(time.time(), load_conf(), tz, tzname)[0])
+        conf = load_conf()
+        mode = schedule(time.time(), conf, tz, tzname)[0]
+        if cmd != "glass" and mode_picked():
+            apply(mode)
+        sync_white_glass(mode, conf)
     elif cmd == "daemon":
         return daemon()
     elif cmd == "cities":

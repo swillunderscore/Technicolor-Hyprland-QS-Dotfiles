@@ -62,7 +62,7 @@ def to_hex(rgb):
 def load_tuning():
     """SATURATION / BRIGHTNESS / HUE knobs from Settings → Colors. Applied to the
     final 5 colors here at the source, so EVERY app that reads colors.env (bar,
-    Discord, Spotify, Telegram, Brave, GTK, KDE, mako) shifts together — no
+    Discord, Telegram, Brave, GTK, KDE, mako) shifts together — no
     per-app wiring. Defaults: sat 1.0 = as-extracted, bright 1.0 = unchanged,
     hue 0 = unchanged (degrees, -180..180)."""
     t = {'SATURATION': 1.0, 'BRIGHTNESS': 1.0, 'HUE': 0.0}

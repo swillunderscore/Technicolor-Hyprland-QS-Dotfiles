@@ -7,12 +7,17 @@
 
 kitty only: it is the terminal whose colors change live, through the same
 per-window socket terminal-opacity.py sets up (allow_remote_control +
-listen_on unix:/tmp/kitty-{kitty_pid}). The colors also go in a file kitty.conf
-includes, so new windows match. Every color here is at least 4.5:1 (WCAG AA)
-against both pure white and the glass's default white target.
+listen_on unix:/tmp/kitty-{kitty_pid}). Everything goes in a file kitty.conf
+includes, and open windows reload their config. Readability is kitty's own
+text_fg_override_threshold: every text color (this palette, 24-bit colors apps
+pick, the 256-color cube, text on colored backgrounds) has its lightness moved
+just enough for 4.5:1 (WCAG AA) against the cell behind it, hue kept. The
+default background is the glass's gray, so that is what plain text is
+measured against.
 """
 import glob
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +28,7 @@ COLORS = KITTY / "technicolor-colors.conf"
 INCLUDE = "include technicolor-colors.conf"
 
 LIGHT = {
-    "foreground": "#000000", "background": "#ffffff",
+    "foreground": "#000000",
     "cursor": "#000000", "cursor_text_color": "#ffffff",
     "selection_foreground": "#000000", "selection_background": "#b4cdfa",
     "url_color": "#0b41c2",
@@ -36,22 +41,28 @@ LIGHT = {
     "color6": "#00707a", "color14": "#006a74",
     "color7": "#555555", "color15": "#222222",
 }
-# kitty's built-in defaults, to put running windows back. New windows get them
-# anyway once the include file is empty.
-DEFAULT = {
-    "foreground": "#dddddd", "background": "#000000",
-    "cursor": "#cccccc", "cursor_text_color": "#111111",
-    "selection_foreground": "#000000", "selection_background": "#fffacd",
-    "url_color": "#0087bd",
-    "color0": "#000000", "color8": "#767676",
-    "color1": "#cc0403", "color9": "#f2201f",
-    "color2": "#19cb00", "color10": "#23fd00",
-    "color3": "#cecb00", "color11": "#fffd00",
-    "color4": "#0d73cc", "color12": "#1a8fff",
-    "color5": "#cb1ed1", "color13": "#fd28ff",
-    "color6": "#0dcdcd", "color14": "#14ffff",
-    "color7": "#dddddd", "color15": "#ffffff",
+LIGHT_OPTIONS = {
+    "text_fg_override_threshold": "4.5 ratio",
+    # Faint text (SGR 2) is the foreground at this opacity: kitty's 0.4 left it
+    # near 2.3:1 on the glass, 0.6 is about 4.8:1.
+    "dim_opacity": "0.6",
 }
+GLASS_TUNING = Path.home() / ".config/hypr/hyprwater-tuning.conf"
+
+
+def glass_background():
+    """The gray the white glass settles on (hyprwater adaptive_white_target,
+    0.78 by default). It is what the text contrast is measured against; with
+    the terminal's background see-through it is never drawn as such."""
+    target = 0.78
+    try:
+        m = re.search(r"(?m)^plugin:hyprwater:adaptive_white_target\s*=\s*([0-9.]+)\s*$",
+                      GLASS_TUNING.read_text())
+        if m:
+            target = min(1.0, max(0.0, float(m.group(1))))
+    except (OSError, ValueError):
+        pass
+    return "#%02x%02x%02x" % ((round(target * 255),) * 3)
 
 
 def body(colors):
@@ -80,20 +91,19 @@ def live_sockets():
     return out
 
 
-def apply_live(colors):
-    """Recolor every open kitty window; returns how many processes took it."""
-    tmp = KITTY / ".technicolor-colors.live"
-    tmp.write_text(body(colors))
+def apply_live():
+    """Reload every open kitty's config, include file and all; returns how many
+    processes took it. A reload, not set-colors: the contrast options aren't
+    colors. It also sets each window back to the config's font size, and
+    going back restores whatever kitty.conf itself says."""
     ok = 0
     for sock in live_sockets():
         try:
-            r = subprocess.run(["kitten", "@", "--to", "unix:" + sock, "set-colors",
-                                "--all", "--configured", str(tmp)],
+            r = subprocess.run(["kitten", "@", "--to", "unix:" + sock, "load-config"],
                                capture_output=True, timeout=5)
             ok += r.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             pass
-    tmp.unlink(missing_ok=True)
     return ok
 
 
@@ -109,8 +119,9 @@ def main(argv):
         print(__doc__)
         return 2
     ensure_include()
-    COLORS.write_text(body(LIGHT) if cmd == "light" else "")
-    n = apply_live(LIGHT if cmd == "light" else DEFAULT)
+    COLORS.write_text(body(dict(LIGHT, background=glass_background(), **LIGHT_OPTIONS))
+                      if cmd == "light" else "")
+    n = apply_live()
     print("%s: %d kitty process%s recolored" % (cmd, n, "" if n == 1 else "es"))
     return 0
 

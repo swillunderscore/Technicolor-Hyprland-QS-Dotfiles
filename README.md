@@ -2,7 +2,7 @@
 
 A Hyprland desktop that recolors itself from your wallpaper.
 
-Bar, notifications, Discord, Spotify, Dolphin, Brave and GTK all follow whatever's on screen.
+Bar, notifications, Discord, Dolphin, Brave and GTK all follow whatever's on screen.
 Everything is tunable from a settings app with sliders, so you don't have to open a config
 file.
 
@@ -45,19 +45,21 @@ hand:
 
 `hyprland`, `quickshell`, `mako`, `xdg-desktop-portal-hyprland`, `pipewire` + `wireplumber`,
 `ddcutil`, `nethogs`, `jq`, `gawk`, `kitty`, `wofi`, `awww`, `imagemagick`, `python-pillow`,
-`grim`, `slurp`, `satty`, `wl-clipboard`, `playerctl`, `brightnessctl`, `base-devel`, plus a
+`grim`, `slurp`, `spectacle`, `python-gobject`, `wl-clipboard`, `wl-clip-persist`, `playerctl`,
+`brightnessctl`, `base-devel`, plus a
 Nerd Font. Optional: `nwg-look`, `nwg-displays`, `dex`, `wlogout`, `gnome-keyring`.
 
 **Arch** — the entire core is in the official repos, no AUR helper needed:
 ```
 sudo pacman -S hyprland quickshell mako xdg-desktop-portal-hyprland pipewire wireplumber \
   ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
-  grim slurp satty wl-clipboard playerctl brightnessctl base-devel ttf-jetbrains-mono-nerd
+  grim slurp spectacle python-gobject wl-clipboard wl-clip-persist playerctl brightnessctl \
+  base-devel ttf-jetbrains-mono-nerd
 ```
 
 Most names are the same across distros. The ones to watch are `quickshell`, `awww` (the
 wallpaper daemon — this is the current name of the project formerly called `swww`, so don't
-also install `swww`), and `satty`.
+also install `swww`), and `wl-clip-persist`.
 
 <details>
 <summary>What each package is for</summary>
@@ -75,7 +77,8 @@ also install `swww`), and `satty`.
 - `wofi` — app launcher / run menu
 - `awww` — animated wallpaper daemon (successor to `swww`; provides both the `awww` client and the `awww-daemon` the scripts start)
 - `imagemagick` + `python-pillow` — pull the color palette out of the wallpaper
-- `grim` + `slurp` + `satty` + `wl-clipboard` — screenshots: capture, region-select, annotate, copy
+- `spectacle` + `grim` + `python-gobject` — screenshots: KDE's Spectacle, running outside KDE through `hypr/kwin-screenshot-shim.py` (see Screenshots and clipboard)
+- `wl-clipboard` + `wl-clip-persist` — clipboard; copies stay after the app they came from closes
 - `playerctl` — media keys
 - `brightnessctl` — laptop backlight keys
 - `base-devel` — `make`/`g++`/`pkg-config` to compile the two bundled plugins at startup. Skip it and Hyprland throws ~15 `hyprwater:` config errors on login and you get no glass; everything else still works.
@@ -90,7 +93,7 @@ also install `swww`), and `satty`.
 ```
 sudo dnf copr enable errornointernet/quickshell && sudo dnf install quickshell
 ```
-`awww` and `satty` aren't in the Fedora repos — build from source (`awww`: <https://codeberg.org/LGFae/awww>).
+`awww` isn't in the Fedora repos — build from source (<https://codeberg.org/LGFae/awww>). If `wl-clip-persist` isn't packaged for you, `cargo install wl-clip-persist`.
 
 **Debian / Ubuntu:** `apt` has most of these, but Hyprland and quickshell are usually too old or missing — build those two from source.
 
@@ -102,7 +105,7 @@ sudo dnf copr enable errornointernet/quickshell && sudo dnf install quickshell
 cp -r hypr quickshell mako ~/.config/
 mkdir -p ~/.local/share/applications && cp applications/*.desktop ~/.local/share/applications/
 ```
-(The `.desktop` makes the Settings app show up in your app list. Doing the Spotify theming? Also `cp -r spicetify ~/.config/`.)
+(The `.desktop` makes the Settings app show up in your app list.)
 
 ### 3. Per-machine files
 
@@ -188,11 +191,11 @@ the gear on the launcher popup or `qs ipc call settings open`.
 | **Bar & Apps** | Tint the pinned launcher icons with the wallpaper gradient (or show their own colors), dim minimized-window icons, hide individual tray icons (the app keeps running), and the pinned launcher apps — reorder, swap icons, add/remove. |
 | **Wallpaper** | Cover-flow picker (scroll or drag to spin, click the middle one). Shuffle, transition style, auto-cycle timer, pause-while-fullscreen so a game never eats a transition. "Shows in" sets whether a wallpaper is for light mode, dark mode or both. |
 | **Colors** | Light/dark mode (see below). Four sliders that retint every themed app at once: text contrast threshold, saturation ceiling, brightness ceiling, hue. The ceilings rein in over-saturated wallpapers without touching muted ones. Per-app fine-tuning on top. Light and dark mode each keep their own set. |
-| **Glass** | The look (refraction, lens distortion, edges, chromatic aberration, fresnel, specular), blur, color (brightness/contrast/saturation/vibrancy), and readability: terminal transparency, the adaptive tint, tinting terminals only, and white glass (terminal glass lifts toward white and kitty's text turns black). Write-in box for anything past a slider's range. |
+| **Glass** | The look (refraction, lens distortion, edges, chromatic aberration, fresnel, specular), blur, color (brightness/contrast/saturation/vibrancy), and readability: terminal transparency, the adaptive tint, tinting terminals only, and white glass in light mode (terminal glass lifts toward white, kitty's text turns black, and every other text color darkens just enough to stay readable). Write-in box for anything past a slider's range. |
 | **Water** | Moving water on/off; waves (size, speed, activity, viscosity), light (brightness, depth, water color, murk), currents, and how the mouse and dragged windows disturb it. |
 | **Performance** | The GPU governor and its thresholds, plus a manual effects step. |
 | **Hotkeys** | Every keybind, searchable and editable. Read live from `hyprctl binds`, so it matches your real config. Click the keys to rebind; conflicts are caught and named. |
-| **System** | UI font, default file manager and terminal, the update checker, Spotify library tools, and a `local.conf` editor. |
+| **System** | UI font, default file manager and terminal, window buttons (close/minimize/maximize on Discord, GTK apps and the Settings window — off by default), the update checker, and a `local.conf` editor. |
 
 **Terminal transparency** (Glass page) follows whichever terminal you've set as
 the default and drives *that* terminal's own background alpha, so the text stays
@@ -201,11 +204,6 @@ Alacritty, foot, Ghostty, WezTerm and GNOME Terminal change as you drag; Konsole
 and Xfce Terminal are saved to config and come up transparent in new windows.
 Anything else says so instead of pretending. Adapters live in
 `hypr/terminal-opacity.py` — one entry per terminal, easy to extend.
-
-**Spotify library tools** (System page): *Scan for AI music* checks your likes against the
-community [soul-over-ai](https://github.com/xoundbyte/soul-over-ai) list by artist ID. *Back up
-to CSV* exports your library. Both read-only, through your open Spotify via Spicetify — no
-developer app, no extra login.
 
 </details>
 
@@ -275,7 +273,7 @@ Configurable in **Settings → Performance**, including an optional low-battery 
 </details>
 
 <details>
-<summary><b>App theming</b> — Discord, Spotify, Dolphin, Brave, GTK</summary>
+<summary><b>App theming</b> — Discord, Dolphin, Brave, GTK</summary>
 
 All optional. Driven by `hypr/gen-*.py`, which `wallpaper-colors.py` calls on every wallpaper
 change; failures are silently skipped, so nothing breaks if you skip an app. The shared engine
@@ -285,7 +283,7 @@ are tunable live for every app at once from Settings → Colors.
 
 ```
 sudo pacman -S dolphin gcc                                 # official repos
-paru -S vesktop spotify spicetify-cli qt6ct-kde brave-bin  # AUR — the only part needing a helper
+paru -S vesktop qt6ct-kde brave-bin  # AUR — the only part needing a helper
 ```
 
 **Discord (Vesktop + Vencord)** — ⚠️ Vesktop is a third-party, unofficial Discord client.
@@ -297,17 +295,6 @@ Blocks**, in that order. Live colors go through Vencord's QuickCSS, which is wha
 wallpaper changes cross-fade in 1.4s with no flash.
 
 Built on [midnight-discord](https://github.com/refact0r/midnight-discord).
-
-**Spotify (spicetify)** — ⚠️ Spicetify patches the official client with third-party code.
-Open-source and widely used, but a client mod, so it's against Spotify's ToS. `spicetify config
-current_theme Technicolor`, then `spicetify backup apply`. Live colors poll a small local HTTP
-server via the `technicolor-sync.js` extension.
-
-Every Spotify **update** silently reverts that patch, and because the window is chromakeyed
-whole-window with a self-calibrating keyer, losing the theme doesn't just look untethered — the
-keyer re-calibrates onto stock Spotify's near-black and keys out album art and the player bar.
-`spicetify-guard.sh` runs at login, detects it (the packaged `xpui.spa` reappearing is the tell),
-and reapplies. No-op when nothing is wrong.
 
 **Dolphin / Qt** — `gen-kde-colors.py` rewrites `kdeglobals`, a KDE color scheme and a qt6ct
 palette. Needs `qt6ct-kde` with `QT_QPA_PLATFORMTHEME=qt6ct`.
@@ -357,19 +344,32 @@ Dolphin uses a fixed-key variant so its dialogs don't go transparent.
 <details>
 <summary><b>Reference</b> — layout, portability, swapping mako, notes</summary>
 
+<details>
+<summary><b>Screenshots and clipboard</b></summary>
+
+**Shift+Print** opens Spectacle's region editor on every screen: drag a selection, draw on it,
+resize it afterwards, then copy, save or extract text. **Super+Print** captures all screens.
+Spectacle normally only runs on KDE Plasma, because it asks KWin's `org.kde.KWin.ScreenShot2`
+D-Bus service for the pixels. `hypr/kwin-screenshot-shim.py` (started at login) answers those
+calls with `grim` and `hyprctl` instead; it claims only that one service name. Screen recording
+stays unavailable (it needs a KWin-only Wayland protocol).
+
+`wl-clip-persist` keeps whatever you copied after the app it came from closes. Copies a password
+manager marks as secret (KeePassXC does) are left alone, so its clipboard auto-clear still works.
+
+</details>
+
 ### What's where
-- `hypr/` — Hyprland config and scripts: workspace carousel, wallpaper cycling/colors, taskbar, minimize, alt-tab, the app-theming engine (`gen-*.py`), chromakey shaders, the color server, the Dolphin launcher/shim, and the `hyprwater` plugin.
+- `hypr/` — Hyprland config and scripts: workspace carousel, wallpaper cycling/colors, taskbar, minimize, alt-tab, the app-theming engine (`gen-*.py`), chromakey shaders, the Dolphin launcher/shim, the Spectacle screenshot shim, and the `hyprwater` plugin.
 - `quickshell/` — the bar (`Bar.qml`), the Settings app (`Settings.qml`), the alt-tab pie, notification scripts, system-monitor helpers, shaders.
 - `applications/` — the `.desktop` entry for the Settings app.
 - `mako/` — notification styling.
-- `spicetify/` — the Spotify live-color extension.
 
 ### Portability
 - **Distros** — the bar/compositor side is distro-agnostic. The theming extras are Arch-friendliest: `qt6ct-kde` is AUR (elsewhere you'd build it), and both vendored plugins compile against your Hyprland via their own `load.sh`, so you need `base-devel` plus the headers in the `hyprland` package — no cmake.
 - **Resolution & scale** — nothing is hardcoded to a resolution. The bar and themes are pixel-based, so on 4K you'll want a monitor scale like any px-based UI; the Qt theming and shaders are scale-aware.
 - **Hardware** — GPU-agnostic; see the bar section. Nvidia setup is a ready-to-uncomment block in `local.conf.example`. Monitor brightness needs DDC/CI-capable displays.
 - **Laptops** — works out of the box; the touchpad drives the 3-finger workspace swipe and the function keys are bound. Two caveats: the bar's brightness *sliders* drive external DDC/CI monitors, not the built-in panel (use the keys), and there's no battery indicator on the bar yet.
-- **Spotify** — theming assumes the native client; flatpak needs spicetify's flatpak setup.
 
 ### Swapping mako
 mako is fairly baked in. The tray shells out to `makoctl` and reads its JSON, and the theming

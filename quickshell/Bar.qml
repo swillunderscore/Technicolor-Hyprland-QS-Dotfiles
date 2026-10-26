@@ -90,7 +90,6 @@ PanelWindow {
         { icon: "steam",                            cmd: "steam",                                   nerdGlyph: "", imgPath: "" },
         { icon: "",                                 cmd: bar.homeDir + "/.local/bin/launch_slippi_and_keyb0xx.sh",nerdGlyph: "", imgPath: "file://" + bar.homeDir + "/Slippi/73bff6acc99072beb352c16a24b3e6cd.png" },
         { icon: "org.kde.dolphin",                  cmd: bar.homeDir + "/.config/hypr/dolphin-tc.sh",                             nerdGlyph: "", imgPath: "" },
-        { icon: "spotify",                          cmd: "spotify",                                 nerdGlyph: "", imgPath: "file:///usr/share/icons/char-white/apps/16/spotify-client.svg" },
         { icon: "org.telegram.desktop",             cmd: "flatpak run org.telegram.desktop",        nerdGlyph: "", imgPath: "" },
         { icon: "io.missioncenter.MissionCenter",   cmd: "missioncenter",                           nerdGlyph: "", imgPath: "" },
         { icon: "unityhub",                         cmd: "unityhub",                                nerdGlyph: "", imgPath: "" }

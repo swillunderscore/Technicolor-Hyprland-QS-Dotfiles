@@ -42,7 +42,7 @@ say "Installing the core (official repos only)…"
 sudo pacman -S --needed --noconfirm \
   hyprland quickshell mako polkit-gnome xdg-desktop-portal-hyprland pipewire wireplumber \
   ddcutil nethogs jq gawk kitty wofi awww imagemagick python-pillow \
-  grim slurp satty wl-clipboard playerctl brightnessctl base-devel ttf-jetbrains-mono-nerd
+  grim slurp spectacle python-gobject wl-clipboard wl-clip-persist playerctl brightnessctl base-devel ttf-jetbrains-mono-nerd
 ok "core installed"
 
 # ── copy configs (back up anything already there; cp merges, never nests) ───
@@ -114,16 +114,6 @@ if ask "Theme Discord?  (installs Vesktop)"; then
     ok "Vesktop installed"
     info "one-time: Vesktop → Settings → Themes → enable 'Technicolor', then 'Technicolor Blocks'"
   else warn "skipped Discord theming"; fi
-fi
-
-warn "Spotify theming installs Spicetify — it PATCHES the official Spotify client with third-party code."
-info "Widely used and FOSS, but it's a client mod: against Spotify's ToS, and it injects into the app."
-info "Only opt in if you're comfortable with that."
-if ask "Theme Spotify?  (installs spotify + spicetify-cli)"; then
-  if ensure_aur && aur_install spotify spicetify-cli; then
-    ok "Spotify + Spicetify installed"
-    info "one-time: launch Spotify once so Spicetify can patch it; colors follow your first wallpaper"
-  else warn "skipped Spotify theming"; fi
 fi
 
 if ask "Theme Brave?"; then

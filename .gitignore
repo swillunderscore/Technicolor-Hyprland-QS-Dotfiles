@@ -7,6 +7,7 @@ hypr/colors.conf
 hypr/color-tuning.conf
 hypr/color-tuning-light.conf
 hypr/theme-mode.conf
+hypr/window-buttons.conf
 hypr/hyprwater-tuning.conf
 hypr/wallpaper-dir.conf
 hypr/window-geometry.conf

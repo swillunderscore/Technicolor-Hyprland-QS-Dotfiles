@@ -145,7 +145,7 @@ SmoothList {
         SliderRow {
             label: "Color saturation"
             valueText: Math.round(page.s.tuneSaturation * 100) + "%"
-            hint: "A ceiling on saturation. Full right = the wallpaper's own colors, untouched; lower it to rein in over-saturated wallpapers (already-muted ones aren't affected). Applies everywhere — bar, Discord, Spotify, Brave, Dolphin, GTK, notifications."
+            hint: "A ceiling on saturation. Full right = the wallpaper's own colors, untouched; lower it to rein in over-saturated wallpapers (already-muted ones aren't affected). Applies everywhere — bar, Discord, Brave, Dolphin, GTK, notifications."
             from: 0; to: 1; value: page.s.tuneSaturation
             onMoved: (v) => page.s.tuneSaturation = v
             onCommitted: (v) => page.s.commitTuning()

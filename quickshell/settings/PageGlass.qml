@@ -110,12 +110,16 @@ SmoothList {
             onToggled: (v) => { page.s.glassSet("adaptive_tint_terminals_only", v ? 1 : 0); page.s.loadGlass() }
         }
         // White glass: hyprwater adaptive_white + kitty's text black
-        // (hypr/terminal-colors.py). Separate from light/dark mode.
+        // (hypr/terminal-colors.py), on in light mode only (theme-mode.py).
         ToggleRow {
             visible: page.s.termAuto && page.s.whiteGlassTerminalOk
-            title: "White glass"
-            desc: "Terminal glass lifts toward white instead of darkening, and the text turns black (with colors that stay readable on white). Separate from light/dark mode."
-            on: page.s.glassValue({ key: "adaptive_white", def: 0 }) >= 0.5
+            title: "White glass in light mode"
+            desc: "In light mode, terminal glass lifts toward white instead of darkening, and the text turns black. Every other text color, including ones apps pick themselves, keeps its hue and darkens just enough to stay readable. Dark mode keeps the usual glass. Switches with the app colors (Colors → Appearance)."
+                  + (!page.s.themeStatus.white_glass ? ""
+                     : page.s.themeStatus.mode === "light" ? " On now."
+                     : page.s.themeStatus.next_mode === "light" ? " Turns on at " + Qt.formatTime(new Date(page.s.themeStatus.next * 1000), "h:mm AP") + "."
+                     : " Light/dark is set to Dark, so it stays off.")
+            on: page.s.themeStatus.white_glass === true
             onToggled: (v) => page.s.setWhiteGlass(v)
         }
         Text { width: parent.width; wrapMode: Text.WordWrap; color: ST.fg; opacity: 0.55; font.pixelSize: 11; font.family: ST.ff
