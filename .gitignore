@@ -67,3 +67,6 @@ hypr/effects-governor.conf
 hypr/wallpaper-seed
 hypr/wallpaper-epoch
 hypr/*.local.sh
+
+# Claude Code's per-machine permission rules (can hold typed secrets)
+**/.claude/settings.local.json
