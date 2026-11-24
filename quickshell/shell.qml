@@ -183,6 +183,10 @@ ShellRoot {
         id: nethogsProc
         command: [root.homeDir + "/.config/quickshell/nethogs-stream.py"]
         running: true
+        // Back after 5 s if it dies (nethogs crash, streamer killed). Without
+        // this a dead streamer left the NETWORK popup with no per-app data
+        // until the whole bar restarted — and a hot reload doesn't respawn it.
+        onExited: nethogsRestart.start()
         stdout: SplitParser {
             splitMarker: "\n"
             onRead: function(data) {
@@ -212,7 +216,74 @@ ShellRoot {
         }
     }
 
-    property var primaryBar: null
+    // ── Workspace previews ── hypr/workspace-preview.py hands the bars a
+    // picture of every pictured monitor about once a second (made by the
+    // monitor-thumbs Hyprland plugin) and of a hovered workspace's windows. Design: hypr/docs/superpowers/specs/
+    // 2026-10-25-workspace-previews-design.md.
+    property var monPreview: ({})      // monitor name -> file URL (?seq makes Image reload)
+    property var winPreview: ({})      // window address -> file URL
+    // Monitors someone can see; an offscreen one shows a dot, not a picture.
+    readonly property string picturedMonitors: {
+        var pb = root.primaryBar
+        void (pb ? pb.monitorsOff : null); void (pb ? pb.streamOutput : null)
+        var out = [], mons = Hyprland.monitors.values
+        for (var i = 0; i < mons.length; i++)
+            if (!pb || !pb.isOffscreen(mons[i].name)) out.push(mons[i].name)
+        return out.join(",")
+    }
+    onPicturedMonitorsChanged: root.previewSend("monitors " + root.picturedMonitors)
+    function previewSend(line) { if (previewProc.running) previewProc.write(line + "\n") }
+    function previewHover(wsId, w, h) { root.previewSend("hover " + wsId + " " + Math.round(w) + " " + Math.round(h)) }
+    function previewUnhover() { root.previewSend("unhover") }
+    Process {
+        id: previewProc
+        command: ["python3", root.homeDir + "/.config/hypr/workspace-preview.py"]
+        running: true
+        stdinEnabled: true
+        onStarted: root.previewSend("monitors " + root.picturedMonitors)
+        onExited: previewRestart.start()
+        stdout: SplitParser {
+            splitMarker: "\n"
+            onRead: function (line) {
+                var p = line.split(" ")
+                if (p.length !== 4) return
+                var url = "file://" + p[2] + "?" + p[3]
+                // "-" = that monitor's picture is gone (no monitor-thumbs plugin):
+                // back to the plain color block rather than a frozen picture.
+                if (p[0] === "mon") { var m = Object.assign({}, root.monPreview); if (p[2] === "-") delete m[p[1]]; else m[p[1]] = url; root.monPreview = m }
+                else if (p[0] === "win") { var w = Object.assign({}, root.winPreview); w[p[1]] = url; root.winPreview = w }
+            }
+        }
+    }
+    // A switched workspace gets a fresh picture once the slide has settled,
+    // instead of showing the old workspace for up to a second.
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (event.name === "workspacev2" || event.name === "focusedmonv2" || event.name === "moveworkspacev2")
+                previewSoon.restart()
+        }
+    }
+    Timer {
+        id: nethogsRestart; interval: 5000
+        onTriggered: nethogsProc.running = true
+        // A reload that finds the streamer already dead gets no onExited.
+        Component.onCompleted: if (!nethogsProc.running) start()
+    }
+    Timer { id: previewSoon; interval: 450; onTriggered: root.previewSend("monitors " + root.picturedMonitors) }
+    // Back after 5 s if it dies; until then the bars fall back (state-color
+    // blocks, icon tiles).
+    Timer { id: previewRestart; interval: 5000; onTriggered: previewProc.running = true }
+
+    // The bar that Settings, AltTabPie, the gear IPC and picturedMonitors read
+    // (colors, pins, offscreen state): the last screen's LIVE bar. A binding on
+    // the Variants' instances, so it can never point at nothing while a bar
+    // exists. It used to be set by each bar's onCompleted and nulled by its
+    // onDestruction, which once left it null with both bars alive -> Settings
+    // fell back to #1e1e2e with no pinned apps (queue 83).
+    readonly property var primaryBar: barVariants.instances.length > 0
+        ? barVariants.instances[barVariants.instances.length - 1] : null
+    onPrimaryBarChanged: console.log("primaryBar ->", primaryBar && primaryBar.screen ? primaryBar.screen.name : "NULL")
 
     // Settings window state — a stable singleton on the shell root, NOT on a bar
     // instance (those go stale across config reloads, which left the window unable
@@ -227,6 +298,7 @@ ShellRoot {
     Timer { id: settingsShowTimer; interval: 24; onTriggered: root.settingsOpen = true }
 
     Variants {
+        id: barVariants
         model: Quickshell.screens
 
         Bar {
@@ -252,8 +324,9 @@ ShellRoot {
             sharedNetTopDownComm: root.netTopDownComm
             sharedNetProcRates: root.netProcRates
 
-            Component.onCompleted: root.primaryBar = this
-            Component.onDestruction: if (root.primaryBar === this) root.primaryBar = null
+            // Logged so the next unexplained bar rebuild shows up with a time.
+            Component.onCompleted: console.log("bar created", modelData ? modelData.name : "?")
+            Component.onDestruction: console.log("bar destroyed", modelData ? modelData.name : "?")
         }
     }
 
@@ -414,5 +487,6 @@ ShellRoot {
         function tab(n: int): void { root.settingsTab = n; root.showSettings() }
         function gear(): void { if (root.primaryBar) root.primaryBar.settingsRequested() }  // mirrors the gear button's signal path (diagnostic)
         function rebindcancel(): void { root.rebindCancelled() }
+        function primary(): string { return root.primaryBar ? String(root.primaryBar.screen ? root.primaryBar.screen.name : "bar-without-screen") : "NULL" }
     }
 }

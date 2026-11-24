@@ -19,8 +19,11 @@ plugin:hyprwater:layers:enabled = 1
 # NOTE: this REPLACES the list in hyprland.conf, it does not add to it. Keep
 # quickshell:pie and wofi here or the alt-tab pie and the wofi menu lose their
 # glass — which is exactly what happened when this line first said only the bar.
-plugin:hyprwater:layers:namespaces = quickshell:pie, wofi, quickshell:bar
-plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:pie=0.03, wofi=0.03, quickshell:bar=0.002
+# quickshell:bar-dock is the bar's workspace dock (the pictures + dots in the
+# middle and the view that grows out of them). It is its own layer window, so
+# it needs its own entry or it is the one part of the bar without glass.
+plugin:hyprwater:layers:namespaces = quickshell:pie, wofi, quickshell:bar, quickshell:bar-dock
+plugin:hyprwater:layers:namespace_mask_thresholds = quickshell:pie=0.03, wofi=0.03, quickshell:bar=0.002, quickshell:bar-dock=0.002
 
 # Per-pixel adaptive tint: wherever the backdrop showing through the glass is
 # brighter than adaptive_target, tint exactly enough to bring it down to that

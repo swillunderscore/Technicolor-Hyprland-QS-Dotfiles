@@ -20,6 +20,7 @@ tile/float/move/size it, that's remembered. Dialogs never inherit it (see
 matcher()).
 """
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -285,15 +286,27 @@ def _body_to_lua(body):
         action = f'{verb} = "{_lua_str(rest)}"'
     else:
         return 'hl.window_rule({"' + _lua_str(body) + '"})'  # unknown verb: raw fallback
-    return f'hl.window_rule({{ match = {{ {", ".join(match_fields)} }}, {action} }})'
+    # NAMED, one name per (what it sets, which windows). An unnamed rule is a NEW
+    # rule on every apply, and they piled up until the next `hyprctl reload`:
+    # after 5 days, each further add froze Hyprland ~90 ms and each window-title
+    # change ~26 ms (it re-checks windows against every rule); a reload took
+    # both to ~0 (measured 2026-10-28). A rule re-sent under the same name keeps
+    # its place and the newest value wins inside it (WindowRuleApplicator
+    # applies a rule's effects in order), which is what the pile did.
+    # float and tile both set "floating", so they share a name — two rules
+    # would leave whichever registered LAST winning forever.
+    slot = "float" if verb == "tile" else verb
+    name = "window-geometry:" + hashlib.sha1(
+        (slot + "|" + "|".join(match_fields)).encode()).hexdigest()[:16]
+    return f'hl.window_rule({{ name = "{name}", match = {{ {", ".join(match_fields)} }}, {action} }})'
 
 
 def apply_live(cls):
     """Apply the current rules live so a reopen THIS session uses the latest state.
     Under the Lua config `hyprctl keyword` is REJECTED, AND the raw-string
     hl.window_rule form silently no-ops for size/move/tile — so emit the STRUCTURED
-    hl.window_rule table via `hyprctl eval`. No unset needed: rules accumulate and
-    the LATEST matching one wins (verified).
+    hl.window_rule table via `hyprctl eval`. Each rule is NAMED (see _body_to_lua),
+    so a re-send replaces it instead of adding one more; the newest value wins.
 
     ALL of the class's records, in file order, not just the one that changed:
     where two families both match a title, the later record must win live
@@ -306,6 +319,38 @@ def apply_live(cls):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def settle(prev_shape, cur_shape, moving):
+    """Which windows the user just FINISHED moving/resizing.
+
+    A window counts once its shape changed and then held still between two
+    polls. Recording on every changed poll sent rules mid-drag, and each live
+    `hl.window_rule` add freezes Hyprland's main thread ~115 ms — at POLL 0.4
+    that froze a Super+drag for ~115 ms of every ~420 (measured 2026-10-28).
+
+    moving: addr -> shape from before the move began, carried across polls.
+    Returns (settled, moving): settled maps addr -> that pre-move shape.
+    """
+    still_moving, settled = {}, {}
+    for a, s in cur_shape.items():
+        p = prev_shape.get(a)
+        if p is None:
+            continue
+        if p != s:
+            still_moving[a] = moving.get(a, p)
+        elif a in moving:
+            settled[a] = moving[a]
+    return settled, still_moving
+
+
+def fs_before(prev_fs, settled):
+    """prev_fs, with each settled window's fullscreen state from before its move.
+    record() keys the maximize flag on the 0 -> 1 TRANSITION; a settled window's
+    previous poll already shows the new state, so it needs the pre-move one."""
+    out = dict(prev_fs)
+    out.update({a: s[1] for a, s in settled.items()})
+    return out
+
+
 def poll_loop():
     global _max_mons
     # Addresses seen on the PREVIOUS poll. A window is only recorded once it has
@@ -316,6 +361,7 @@ def poll_loop():
     prev_addrs = set()
     prev_shape = {}
     prev_fs = {}
+    moving = {}   # addr -> shape before the move; see settle()
     # Windows our rules demonstrably skipped, so never learned from: a window
     # whose record says TILED that still came up floating is one Hyprland
     # classed as a dialog (see matcher). Recording it — a Save dialog dragged
@@ -413,17 +459,18 @@ def poll_loop():
             cur_fs[addr] = c.get("fullscreen") or 0
             per_class.setdefault(cls, []).append((addr, c))
 
+        settled, moving = settle(prev_shape, cur_shape, moving)
+        rec_fs = fs_before(prev_fs, settled)
         changed = set()
         for cls, lst in per_class.items():
             # The window the user actively moved/resized is the one whose shape
-            # changed since the last poll. Recording THAT one — not just the biggest
-            # window sharing the class — is what makes "remember the last one I
-            # changed" work (a huge stale sibling no longer wins). If nothing of this
-            # class changed, keep what we already remember; only fall back to
-            # "largest" to SEED a class we've never recorded before.
+            # changed and has since come to rest (settle). Recording THAT one — not
+            # just the biggest window sharing the class — is what makes "remember
+            # the last one I changed" work (a huge stale sibling no longer wins). If
+            # nothing of this class changed, keep what we already remember; only
+            # fall back to "largest" to SEED a class we've never recorded before.
             edited = [(a, c) for (a, c) in lst
-                      if a in prev_shape and prev_shape[a] != cur_shape[a]
-                      and a not in skipped]
+                      if a in settled and a not in skipped]
             if edited:
                 # One pick per RECORD, not per class: a popup and the main window
                 # changing in the same poll are two separate facts to remember.
@@ -443,7 +490,7 @@ def poll_loop():
             else:
                 continue
             for c in picks:
-                if record(cls, c, prev_fs, moff):
+                if record(cls, c, rec_fs, moff):
                     changed.add(cls)
         for cls in changed:
             apply_live(cls)

@@ -150,7 +150,7 @@ int LuaCallbacks::loadShader(lua_State* L)
         return HyprLua::configError(
             L,
             "darkwindow.load_shader: expected second argument (config) to be a table "
-            "{ from?, path?, args?, introduces_transparency? }"
+            "{ from?, path?, source?, args?, introduces_transparency? }"
         );
 
     std::string id = lua_tostring(L, 1);
@@ -158,10 +158,16 @@ int LuaCallbacks::loadShader(lua_State* L)
         return HyprLua::configError(L, "darkwindow.load_shader: shader id cannot contain spaces");
     auto from = HyprLua::tableOptStr(L, 2, "from").value_or("");
     auto path = HyprLua::tableOptStr(L, 2, "path").value_or("");
+    auto source = HyprLua::tableOptStr(L, 2, "source").value_or("");
 
-    if (from.empty() && path.empty())
+    if (!path.empty() && !source.empty())
         return HyprLua::configError(
-            L, "darkwindow.load_shader: second argument (config) needs to have either 'from' or 'path' field set"
+            L, "darkwindow.load_shader: second argument (config) should only have one of 'path' or 'source' field set"
+        );
+
+    if (from.empty() && path.empty() && source.empty())
+        return HyprLua::configError(
+            L, "darkwindow.load_shader: second argument (config) needs to have 'from' or one of 'path' or 'source' field set"
         );
 
     auto introducesTransparency = HyprLua::tableOptBool(L, 2, "introduces_transparency").value_or(false);
@@ -180,6 +186,7 @@ int LuaCallbacks::loadShader(lua_State* L)
             .Id = id,
             .From = from,
             .Path = path,
+            .Source = source,
             .Args = *argsResult,
             .IntroducesTransparency = introducesTransparency,
             .FadeInSpeed = fadeInSpeed,
@@ -200,9 +207,10 @@ static int dispatchedShade(lua_State* L)
     PHLWINDOW window = nullptr;
     if (!lua_isnil(L, lua_upvalueindex(2)))
     {
-        // 0.56 removed CCompositor::getWindowByRegex; the Lua bindings' own
-        // selector helper is the supported replacement (and takes the same
-        // selector strings), so resolve the upvalue through it.
+        // LOCAL (0.56 port, kept): resolve through the Lua bindings' own selector
+        // helper instead of lua_tostring + query — same result for the string
+        // selector dsp_shade stores, but it can't feed a NULL char* into the
+        // query if the upvalue is ever not a string.
         window = HyprLua::windowFromLuaSelectorOrObject(L, lua_upvalueindex(2), "darkwindow.<dispatched shade>");
         if (!window)
             return HyprLua::dispatcherError(
@@ -259,14 +267,14 @@ int LuaCallbacks::shade(lua_State* L)
 }
 
 
-int LuaCallbacks::buildWindowRule(lua_State* L)
+int LuaCallbacks::buildRule(lua_State* L)
 {
     if (lua_gettop(L) != 1 || !lua_istable(L, 1))
-        return HyprLua::configError(L, "darkwindow.build_window_rule: expected a single table { ...shader } as argument");
+        return HyprLua::configError(L, "darkwindow.build_rule: expected a single table { ...shader } as argument");
 
     auto shaderResult = luaShaderToString(L, 1);
     if (!shaderResult)
-        return HyprLua::configError(L, "darkwindow.build_window_rule: invalid shader: " + shaderResult.error());
+        return HyprLua::configError(L, "darkwindow.build_rule: invalid shader: " + shaderResult.error());
 
     lua_pushstring(L, shaderResult.value().c_str());
     return 1;

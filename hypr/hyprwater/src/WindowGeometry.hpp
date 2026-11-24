@@ -1,24 +1,25 @@
 #pragma once
 
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/WindowRenderPresentation.hpp>
 #include <hyprutils/math/Box.hpp>
 #include <optional>
 
 namespace WindowGeometry {
 
-[[nodiscard]] inline std::optional<CBox> computeWindowBox(PHLWINDOW window, PHLMONITOR monitor) {
+// 0.57: Hyprland resolves a window's workspace offset (zero when pinned) and
+// floating offset into an SWindowRenderPresentation before drawing it, and
+// places the window surface with exactly those two vectors. The glass box uses
+// the same presentation so it sits where the window is drawn.
+[[nodiscard]] inline std::optional<CBox> computeWindowBox(PHLWINDOW window, PHLMONITOR monitor,
+                                                          const Render::SWindowRenderPresentation& presentation) {
     if (!window || !monitor)
         return std::nullopt;
 
-    const auto workspace = window->m_workspace;
-    const auto workspaceOffset = workspace && !window->m_pinned
-        ? workspace->m_renderOffset->value()
-        : Vector2D();
-
     auto box = window->getWindowMainSurfaceBox();
-    box.translate(workspaceOffset);
-    box.translate(-monitor->m_position + window->m_floatingOffset);
+    box.translate(presentation.workspaceOffset);
+    box.translate(-monitor->m_position + presentation.floatingOffset);
     box.scale(monitor->m_scale);
     box.round();
     return box;

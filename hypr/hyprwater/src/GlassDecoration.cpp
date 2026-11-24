@@ -7,7 +7,8 @@
 
 #include <algorithm>
 #include <GLES3/gl32.h>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -86,7 +87,8 @@ SDecorationPositioningInfo CGlassDecoration::getPositioningInfo() {
 
 void CGlassDecoration::onPositioningReply(const SDecorationPositioningReply& reply) {}
 
-void CGlassDecoration::draw(PHLMONITOR monitor, float const& alpha) {
+void CGlassDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR monitor, float const& alpha,
+                            const Render::SWindowRenderPresentation& presentation) {
     if (const auto w = m_window.lock())
         GlassRenderer::DBG_LOG("DRAWCALL win=%lx x=%.0f y=%.0f\n",
                                reinterpret_cast<uintptr_t>(w.get()),
@@ -112,14 +114,18 @@ void CGlassDecoration::draw(PHLMONITOR monitor, float const& alpha) {
     if (adaptiveApplies())
         m_lastAdaptiveDraw = std::chrono::steady_clock::now();
 
-    CGlassPassElement::SGlassPassData data{m_self, alpha};
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CGlassPassElement>(data));
+    CGlassPassElement::SGlassPassData data{m_self, alpha, presentation};
+    // 0.57: ctx.m_pass is the frame's main pass, what m_renderPass was. Added there
+    // directly (not via addPassElement, which follows a transformed window's pass
+    // redirection), exactly as before.
+    ctx.m_pass.add(makeUnique<CGlassPassElement>(data));
 
     const auto window = m_window.lock();
     if (window) {
         const auto workspace = window->m_workspace;
 
-        const bool wsAnimating = workspace && !window->m_pinned && workspace->m_renderOffset->isBeingAnimated();
+        const bool pinned      = !!(window->m_state & Desktop::View::WINDOW_STATE_PINNED);   // 0.57: m_pinned is a state bit
+        const bool wsAnimating = workspace && !pinned && workspace->m_renderOffset->isBeingAnimated();
         if (wsAnimating)
             damageEntire();
 
@@ -145,7 +151,8 @@ PHLWINDOW CGlassDecoration::getOwner() {
     return m_window.lock();
 }
 
-void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
+void CGlassDecoration::renderPass(Render::CRenderContext& rctx, PHLMONITOR monitor, const float& alpha,
+                                  const Render::SWindowRenderPresentation& presentation) {
     auto& shaderManager = g_pGlobalState->shaderManager;
     shaderManager.initializeIfNeeded();
 
@@ -157,26 +164,25 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
         GlassRenderer::DBG_LOG("RP bail=nowindow\n");
         return;
     }
-    const auto source = g_pHyprRenderer->m_renderData.currentFB;
+    const auto source = rctx.m_data.currentFB;
     if (!source) {
         GlassRenderer::DBG_LOG("RP win=%lx bail=nosource\n", reinterpret_cast<uintptr_t>(window.get()));
         return;
     }
 
-    auto optBox = WindowGeometry::computeWindowBox(window, monitor);
+    auto optBox = WindowGeometry::computeWindowBox(window, monitor, presentation);
     if (!optBox) {
         GlassRenderer::DBG_LOG("RP win=%lx bail=nobox\n", reinterpret_cast<uintptr_t>(window.get()));
         return;
     }
 
     CBox windowBox    = *optBox;
+    // 0.57 renders every scene in the NORMAL transform ("render: always render in
+    // normal transform"): the frame buffer is laid out like the logical monitor and
+    // the output rotation is applied only at the final blit. So the region to sample
+    // is the window box itself; the old inverse-output-transform step would now put
+    // it in the wrong place on a rotated monitor (on an unrotated one it was a no-op).
     CBox transformBox = windowBox;
-
-    const auto transform = Math::wlTransformToHyprutils(
-        Math::invertTransform(g_pHyprRenderer->m_renderData.pMonitor->m_transform));
-    transformBox.transform(transform,
-        g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.x,
-        g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.y);
 
     const bool isDark          = resolveThemeIsDark();
     const std::string preset   = resolvePresetName();
@@ -189,8 +195,8 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
 
     float blurRadius     = blurStrength * 12.0f / downscale;
     int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
-    int viewportWidth    = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.x);
-    int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.y);
+    int viewportWidth    = static_cast<int>(rctx.m_data.pMonitor->m_transformedSize.x);
+    int viewportHeight   = static_cast<int>(rctx.m_data.pMonitor->m_transformedSize.y);
     GlassRenderer::blurBackground(m_sampleFramebuffer, m_blurTempFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
     // One time-smoothed average for the whole window, so the dim is uniform and
@@ -200,7 +206,7 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
     const auto& lumaCfg = g_pGlobalState->config;
     const bool tintAllowed =
         !(lumaCfg.adaptiveTintTerminalsOnly && **lumaCfg.adaptiveTintTerminalsOnly) ||
-        isTerminalClass(window->m_class);
+        isTerminalClass(window->metadata().appID());   // 0.57: class lives in metadata
     SP<Render::IFramebuffer> adaptiveLumaFb;
     if (tintAllowed) {
         GlassRenderer::updateAdaptiveLuma(m_sampleFramebuffer, m_luma,
@@ -217,14 +223,14 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha) {
                            windowBox.x, windowBox.y, windowBox.width, windowBox.height);
 
     float monitorScale  = monitor->m_scale;
-    float cornerRadius  = window->rounding() * monitorScale;
-    float roundingPower = window->roundingPower();
+    float cornerRadius  = window->presentation().rounding() * monitorScale;   // 0.57: moved to presentation()
+    float roundingPower = window->presentation().roundingPower();
 
-    GlassRenderer::applyGlassEffect(m_sampleFramebuffer, source,
+    GlassRenderer::applyGlassEffect(rctx, m_sampleFramebuffer, source,
                                      windowBox, transformBox, alpha,
                                      cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
                                      nullptr, adaptiveLumaFb, tintAllowed,
-                                     isTerminalClass(window->m_class));
+                                     isTerminalClass(window->metadata().appID()));
 }
 
 eDecorationType CGlassDecoration::getDecorationType() {
@@ -241,12 +247,12 @@ bool CGlassDecoration::adaptiveApplies() const {
         return false;
     const bool termOnly = cfg.adaptiveTintTerminalsOnly && **cfg.adaptiveTintTerminalsOnly;
     const auto w        = m_window.lock();
-    return !termOnly || !w || isTerminalClass(w->m_class);
+    return !termOnly || !w || isTerminalClass(w->metadata().appID());
 }
 
 bool CGlassDecoration::adaptiveActive() const {
     const auto w = m_window.lock();
-    return w && w->m_isMapped && adaptiveApplies() &&
+    return w && w->mapped() && adaptiveApplies() &&
         std::chrono::steady_clock::now() - m_lastAdaptiveDraw < std::chrono::seconds(1);
 }
 
@@ -272,9 +278,9 @@ CBox CGlassDecoration::glassDamageBox() const {
     const auto workspace = window->m_workspace;
     auto surfaceBox = window->getWindowMainSurfaceBox();
 
-    if (workspace && workspace->m_renderOffset->isBeingAnimated() && !window->m_pinned)
+    if (workspace && workspace->m_renderOffset->isBeingAnimated() && !(window->m_state & Desktop::View::WINDOW_STATE_PINNED))
         surfaceBox.translate(workspace->m_renderOffset->value());
-    surfaceBox.translate(window->m_floatingOffset);
+    surfaceBox.translate(window->presentation().floatingOffset());   // 0.57: was m_floatingOffset
 
     // Expand damage by our sampling padding so the render pass re-renders
     // background content (wallpaper, other windows) in the padded margin.

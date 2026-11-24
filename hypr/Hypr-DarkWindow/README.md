@@ -57,11 +57,17 @@ if hl.plugin.darkwindow ~= nil then
     fade_out_speed = 3
   })
 
-  -- Use a custom shader from a file
+  -- Use a custom shader, see the section below (#custom-shaders) for how to write one
   hl.plugin.darkwindow.load_shader("chromakeyv2", {
-    --  see the section below (#custom-shaders) for the content of this file
+    -- path to the file, relative to the current lua file
     path = "~/path/to/shader.glsl",
-    
+    -- or write the source inline
+    source = [[
+      void windowShader(inout vec4 color) {
+          color.r = 1.;
+      }
+    ]],
+
     --  default arguments used in all instatiations
     args = {
       wow = { 1.0, 0 }
@@ -89,12 +95,20 @@ if hl.plugin.darkwindow ~= nil then
   -- Uniforms can also be passed on the fly
   hl.window_rule({
     match = { fullscreen = true },
-    ["darkwindow:shade"] = hl.plugin.darkwindow.build_window_rule({
+    ["darkwindow:shade"] = hl.plugin.darkwindow.build_rule_effect({
       shader = "tint",
       args = {
         tintColor = { 0, .3, 0 }
       }
     })
+  })
+
+  -- Same for layers
+  hl.layer_rule({
+    match = { namespace = "waybar" },
+    ["darkwindow:shade"] = hl.plugin.darkwindow.build_rule_effect({
+      shader = "tint",
+    }),
   })
 
   -- Or use a dispatcher
@@ -120,39 +134,6 @@ if hl.plugin.darkwindow ~= nil then
 end
 ```
 
-#### Hyprlang
-
-> DEPRECATED: will get fixes until Hyprland stops supporting Hyprlang configs.
-> But no new features will be backported.
-
-```ini
-# hyprland.conf
-
-plugin:darkwindow {
-  # To modify the uniforms of an already existing shader, create a new shader and set the uniforms you want
-  shader[tintRed] {
-      from = tint
-      args = tintColor=[1 0 0] tintStrength=0.1
-  }
-
-  # Use a custom shader from a file
-  shader[cool] {
-      path = /path/to/shader.glsl # see the section below (#custom-shaders) for the content of this file
-      args = wow=[1.0 0 0]
-      introduces_transparency = true # if you modify the alpha value make sure to set this value to true so hyprland knows it should enable blur
-  }
-}
-
-# Then to apply the shader to a window you can use window rules
-windowrule = darkwindow:shade invert, match:class (pb170.exe)
-# Uniforms can also be passed on the fly, but make sure to not use commas inside the arrays
-windowrule = darkwindow:shade tint tintColor=[0 1 0], match:fullscreen true
-
-# Or use a dispatcher
-bind = $mainMod, T, darkwindow:shadeactive, tint tintColor=[0 0.5 1] tintStrength=0.3
-# There is also a `darkwindow:shade WINDOW_REGEX SHADER_NAME` available (see https://wiki.hypr.land/Configuring/Basics/Dispatchers/#window)
-```
-
 ### Custom Shaders
 
 To add custom shaders use the `plugin:darkwindow:shader` config category (see example above).
@@ -170,19 +151,19 @@ You can use these variables anywhere in your shader code.
 Do not add the uniform declarations.
 This plugin will automatically detect the used variables and set them at each render.
 
-| **Name**                                                                                      | **Type**                        | **Description**                                                                                                                                      |
-| --------------------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **x_Time**                                                                                    | `float`                         | Time in seconds since the Shader was applied (mod `animation_interval`)<br>_using this will cause the entire window to rerender every frame_         |
-| How much the Shader has Faded In, stays 1 after fading in finishes, check out `fade_in_speed` |
-| **x_FadeOut**                                                                                 | `float` (0 -> 1)                | How much the Shader has Faded Out, is 0 before starting to fade out, check out `fade_out_speed`                                                      |
-| **x_PixelPos**                                                                                | `vec2`                          | Position of the current pixel in window space<br>(top left of the window is [0,0], monitor scaling already applied)                                  |
-| **x_CursorPos**                                                                               | `vec2`                          | Position of the cursor, same coordinate space as `x_PixelPos`<br>_using this will cause the entire window to rerender every time the mouse is moved_ |
-| **x_WindowSize**                                                                              | `vec2`                          | Size of the current window, same scaling as `x_PixelPos`                                                                                             |
-| **x_MonitorScale**                                                                            | `float`                         | Scaling of the monitor as seen in `hyprctl monitors`                                                                                                 |
-| **x_Texture**                                                                                 | `fn (vec2 texCoord) -> vec4`    | Gets the color of a pixel<br>(the difference of using this vs. using `texture(x_Tex, texCoord)` is that this function handles opaque windows)        |
-| **x_TextureOffset**                                                                           | `fn (vec2 pixelOffset) -> vec4` | Gets the color at a pixel offset to the currently drawn pixel                                                                                        |
-| **x_Tex**                                                                                     | `sampler2D`                     | The texture that gets sampled from                                                                                                                   |
-| **x_TexCoord**                                                                                | `vec2`                          | The coordinate that was used to get the current pixel color                                                                                          |
+| **Name**            | **Type**                        | **Description**                                                                                                                                      |
+| ------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **x_Time**          | `float`                         | Time in seconds since the Shader was applied (mod `animation_interval`)<br>_using this will cause the entire window to rerender every frame_         |
+| **x_FadeIn**        | `float` (0 -> 1)                | How much the Shader has Faded In, stays 1 after fading in finishes, check out `fade_in_speed`                                                        |
+| **x_FadeOut**       | `float` (0 -> 1)                | How much the Shader has Faded Out, is 0 before starting to fade out, check out `fade_out_speed`                                                      |
+| **x_PixelPos**      | `vec2`                          | Position of the current pixel in window space<br>(top left of the window is [0,0], monitor scaling already applied)                                  |
+| **x_CursorPos**     | `vec2`                          | Position of the cursor, same coordinate space as `x_PixelPos`<br>_using this will cause the entire window to rerender every time the mouse is moved_ |
+| **x_WindowSize**    | `vec2`                          | Size of the current window, same scaling as `x_PixelPos`                                                                                             |
+| **x_MonitorScale**  | `float`                         | Scaling of the monitor as seen in `hyprctl monitors`                                                                                                 |
+| **x_Texture**       | `fn (vec2 texCoord) -> vec4`    | Gets the color of a pixel<br>(the difference of using this vs. using `texture(x_Tex, texCoord)` is that this function handles opaque windows)        |
+| **x_TextureOffset** | `fn (vec2 pixelOffset) -> vec4` | Gets the color at a pixel offset to the currently drawn pixel                                                                                        |
+| **x_Tex**           | `sampler2D`                     | The texture that gets sampled from                                                                                                                   |
+| **x_TexCoord**      | `vec2`                          | The coordinate that was used to get the current pixel color                                                                                          |
 
 ## Installation
 

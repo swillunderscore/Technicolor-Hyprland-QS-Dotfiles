@@ -48,6 +48,19 @@ main() {
     # Files with safe defaults that are gitignored (so the copy above doesn't
     # touch the user's): create from the .example ONLY if missing — never clobber.
     cp -n ~/.config/hypr/hyprwater-tuning.conf.example ~/.config/hypr/hyprwater-tuning.conf 2>/dev/null
+    # The bar's workspace dock is its own layer window, "quickshell:bar-dock". A
+    # hyprwater-tuning.conf from before the dock existed glasses only
+    # "quickshell:bar", and its list REPLACES the default one, so the dock would
+    # be the one part of the bar without glass. Add the dock next to the bar,
+    # with the bar's mask threshold. Changes nothing when the bar isn't on the
+    # list or the dock already is.
+    tune=~/.config/hypr/hyprwater-tuning.conf
+    if [ -f "$tune" ] && ! grep -q 'quickshell:bar-dock' "$tune"; then
+        sed -i -E \
+            -e '/^[[:space:]]*plugin:hyprwater:layers:namespaces[[:space:]]*=/ s/quickshell:bar([[:space:]]*(,|$))/quickshell:bar, quickshell:bar-dock\1/' \
+            -e '/^[[:space:]]*plugin:hyprwater:layers:namespace_mask_thresholds[[:space:]]*=/ s/quickshell:bar=([0-9.]+)/quickshell:bar=\1, quickshell:bar-dock=\1/' \
+            "$tune" 2>/dev/null
+    fi
     cp -n ~/.config/mako/config.example ~/.config/mako/config 2>/dev/null
     cp -n ~/.config/hypr/terminal.conf.example ~/.config/hypr/terminal.conf 2>/dev/null
     cp -n ~/.config/hypr/wallpaper-timer.conf.example ~/.config/hypr/wallpaper-timer.conf 2>/dev/null

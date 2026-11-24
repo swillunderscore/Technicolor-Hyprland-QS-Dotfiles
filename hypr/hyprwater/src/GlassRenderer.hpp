@@ -9,6 +9,10 @@
 #include <hyprutils/math/Box.hpp>
 #include <hyprutils/math/Vector2D.hpp>
 
+namespace Render {
+    class CRenderContext;
+}
+
 // Shared GL rendering pipeline used by both window decorations and layer surfaces.
 // Callers own their sample framebuffers; these functions operate on passed-in state.
 namespace GlassRenderer {
@@ -112,7 +116,10 @@ void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer, SAdaptiveLu
 // tintAllowed=false strips every darkening tint from this pass — tint_color, the
 // tone curve's adaptive_dim and the adaptive tint — for surfaces that
 // adaptive_tint_terminals_only excludes. The rest of the glass is unchanged.
-void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
+// 0.57: ctx is the render context of the pass element doing the drawing (monitor,
+// projection, scissor convention).
+void applyGlassEffect(Render::CRenderContext& ctx,
+                       SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,

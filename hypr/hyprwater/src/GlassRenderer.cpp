@@ -167,7 +167,7 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
 
     // Clear the sample FBO before blitting. Clamped regions (near edges)
     // would otherwise contain uninitialized GPU memory (pink artifacts).
-    glBindFramebuffer(GL_FRAMEBUFFER, fbId(sampleFramebuffer));
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(sampleFramebuffer));
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
@@ -193,25 +193,25 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
         // Step 1: source -> half res. The destination rect is the final one
         // scaled by two, so this step is exactly 2x and the clipping math above
         // carries over unchanged.
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(halfFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(halfFramebuffer));
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(halfFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(halfFramebuffer));
         glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
                           dstX0 * 2, dstY0 * 2, dstX1 * 2, dstY1 * 2,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
         // Step 2: half res -> final. Whole surface to whole surface, so this is
         // exactly 2x again and the content keeps its position.
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(halfFramebuffer));
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, fbId(halfFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
         glBlitFramebuffer(0, 0, halfWidth, halfHeight,
                           0, 0, sampleWidth, sampleHeight,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
     } else {
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
         glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
                           dstX0, dstY0, dstX1, dstY1,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -297,7 +297,7 @@ static void bindSimTexture(int unit, const SP<Render::IFramebuffer>& fb) {
     // else sets these, and NEAREST prints the grid. CLAMP keeps the boundary
     // from wrapping to the far side. LINEAR is exact at texel centers, so the
     // whole-texel offsets of the derivative stencils are unaffected.
-    glActiveTexture(GL_TEXTURE0 + unit);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0 + unit);
     fb->getTexture()->bind();
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -447,7 +447,7 @@ static void stepFluidFrame() {
             // Zero is genuinely zero here (still water, no pressure), unlike
             // the height textures whose flat state is the bias value.
             for (auto* fb : fbs) {
-                glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
+                g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
                 glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
                 glClear(GL_COLOR_BUFFER_BIT);
             }
@@ -496,7 +496,7 @@ static void stepFluidFrame() {
             glUniform2f(fu.aForceDir, 0.0f, 0.0f);
             glUniform4f(fu.aForce, 0.0f, 0.0f, 1.0f, 0.0f);
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidVelFb[1 - st.fluidVelCurrent]));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidVelFb[1 - st.fluidVelCurrent]));
         bindSimTexture(3, st.fluidVelFb[st.fluidVelCurrent]);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         st.fluidVelCurrent = 1 - st.fluidVelCurrent;
@@ -509,7 +509,7 @@ static void stepFluidFrame() {
         sh->setUniformInt(SHADER_TEX, 3);
         glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
         glUniform2f(fu.dTexelSize, texel, texel);
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidDivFb));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidDivFb));
         bindSimTexture(3, st.fluidVelFb[st.fluidVelCurrent]);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
@@ -526,7 +526,7 @@ static void stepFluidFrame() {
         glUniform1i(fu.jDivTex, 4);
         bindSimTexture(4, st.fluidDivFb);
         for (int j = 0; j < FLUID_JACOBI_TICK; j++) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidPrsFb[1 - st.fluidPrsCurrent]));
+            g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidPrsFb[1 - st.fluidPrsCurrent]));
             bindSimTexture(3, st.fluidPrsFb[st.fluidPrsCurrent]);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             st.fluidPrsCurrent = 1 - st.fluidPrsCurrent;
@@ -541,7 +541,7 @@ static void stepFluidFrame() {
         glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
         glUniform2f(fu.gTexelSize, texel, texel);
         glUniform1i(fu.gPrsTex, 4);
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidVelFb[1 - st.fluidVelCurrent]));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(st.fluidVelFb[1 - st.fluidVelCurrent]));
         bindSimTexture(3, st.fluidVelFb[st.fluidVelCurrent]);
         bindSimTexture(4, st.fluidPrsFb[st.fluidPrsCurrent]);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -553,8 +553,8 @@ static void stepFluidFrame() {
 
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
     glBindVertexArray(0);
-    glActiveTexture(GL_TEXTURE0);
-    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 }
 
@@ -731,11 +731,11 @@ void renderTrailTex() {
     glUniform4fv(sm.trailUniforms.tPar, 26, par);
     g_pHyprOpenGL->setViewport(0, 0, SIM, SIM);
     g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbId(st.trailFb));
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(st.trailFb));
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
     glBindVertexArray(0);
-    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 }
 
@@ -844,11 +844,11 @@ static void buildSmoothWave() {
     // nothing more, so a single 4x reduction reads a 2x2 box out of a 4x4
     // footprint and discards 12 of every 16 — the same aliasing the backdrop
     // sampler had to be fixed for.
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(src));
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(st.waveHalfFb));
+    g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, fbId(src));
+    g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(st.waveHalfFb));
     glBlitFramebuffer(0, 0, SIM, SIM, 0, 0, SIM / 2, SIM / 2, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(st.waveHalfFb));
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(st.waveSmoothFb));
+    g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, fbId(st.waveHalfFb));
+    g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(st.waveSmoothFb));
     glBlitFramebuffer(0, 0, SIM / 2, SIM / 2, 0, 0, WAVE_SMOOTH_RES, WAVE_SMOOTH_RES,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
@@ -880,10 +880,10 @@ static void buildSmoothWave() {
     glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
     glUniform1f(bu.radius, blurR);
     g_pHyprOpenGL->setViewport(0, 0, WAVE_SMOOTH_RES, WAVE_SMOOTH_RES);
-    glActiveTexture(GL_TEXTURE8);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE8);
 
     auto pass = [&](SP<Render::IFramebuffer>& from, SP<Render::IFramebuffer>& to, float dx, float dy) {
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(to));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(to));
         from->getTexture()->bind();
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -895,7 +895,7 @@ static void buildSmoothWave() {
     pass(st.waveSmoothFb, st.waveSmoothTmpFb, 1.0f / WAVE_SMOOTH_RES, 0.0f);
     pass(st.waveSmoothTmpFb, st.waveSmoothFb, 0.0f, 1.0f / WAVE_SMOOTH_RES);
 
-    glActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
     glBindVertexArray(0);
 }
 
@@ -1019,24 +1019,24 @@ static void renderCausticTex() {
         glUniform2f(u.gridOrigin, float(sx0), float(sy0));
         glUniform1i(u.gridW, std::max(splatW, 1));
 
-        glActiveTexture(GL_TEXTURE8);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE8);
         st.waveFb[st.waveCurrent]->getTexture()->bind();
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         if (st.trailFb && st.trailFb->getTexture()) {
-            glActiveTexture(GL_TEXTURE9);
+            g_pHyprOpenGL->setActiveTexture(GL_TEXTURE9);
             st.trailFb->getTexture()->bind();
         }
         if (velOk) {
-            glActiveTexture(GL_TEXTURE10);
+            g_pHyprOpenGL->setActiveTexture(GL_TEXTURE10);
             vfb->getTexture()->bind();
         }
-        glActiveTexture(GL_TEXTURE0);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
 
         g_pHyprOpenGL->setViewport(0, 0, CAUSTIC_RES, CAUSTIC_RES);
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
 
         // Every frame starts dark and the points repaint the light. Alpha is
         // cleared to 1 and the points leave it alone. The clear color is
@@ -1099,14 +1099,14 @@ static void renderCausticTex() {
         sh->setUniformInt(SHADER_TEX, 8);
         glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
         glUniform1f(bu.radius, blurTexels);
-        glActiveTexture(GL_TEXTURE8);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE8);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(tmp));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(tmp));
         fb->getTexture()->bind();
         glUniform2f(bu.direction, 1.0f / CAUSTIC_RES, 0.0f);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
         tmp->getTexture()->bind();
         glUniform2f(bu.direction, 0.0f, 1.0f / CAUSTIC_RES);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1116,7 +1116,7 @@ static void renderCausticTex() {
         // What is actually IN the caustic texture after clear+splat+blur:
         // mean-1 illumination, or accumulated blow-out?
         float px[4] = {0, 0, 0, 0}; float acc[3] = {0, 0, 0};
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
         const int probes[3][2] = {{CAUSTIC_RES/4, CAUSTIC_RES/4}, {CAUSTIC_RES/2, CAUSTIC_RES/2}, {(3*CAUSTIC_RES)/4, (3*CAUSTIC_RES)/4}};
         for (int i = 0; i < 3; i++) {
             glReadPixels(probes[i][0], probes[i][1], 1, 1, GL_RGBA, GL_FLOAT, px);
@@ -1128,7 +1128,7 @@ static void renderCausticTex() {
     if (prevScissor)
         glEnable(GL_SCISSOR_TEST);
     glBindVertexArray(0);
-    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, prevFbo);
 
     // MIP CHAIN FOR THE CAUSTIC — this is the flickering rim on glass windows.
     //
@@ -1153,11 +1153,11 @@ static void renderCausticTex() {
     // colour attachment, and writing its mips while it is still attached is a
     // feedback loop.
     if (fb->getTexture()) {
-        glActiveTexture(GL_TEXTURE7);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE7);
         fb->getTexture()->bind();
         glGenerateMipmap(GL_TEXTURE_2D);
     }
-    glActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
     g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 }
 
@@ -1175,10 +1175,10 @@ static constexpr double SLOPE_CELL_PX = 4.0;
 // read reaches 2 texels out.
 static constexpr int SLOPE_MARGIN = 3;
 
-static void buildSlopeTex() {
+static void buildSlopeTex(Render::CRenderContext& ctx) {
     auto& st = *g_pGlobalState;
     auto& sm = st.shaderManager;
-    const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+    const auto mon = ctx.m_data.pMonitor.lock();
     // Once per monitor frame: every glass surface drawn in it reads the same
     // instant of water.
     if (!mon || st.slopeFrame == st.renderFrame)
@@ -1213,7 +1213,7 @@ static void buildSlopeTex() {
         // values. Only this monitor's part is refreshed below; zero the rest
         // so another monitor's first read of its part is calm, not garbage.
         if (fb->getTexture() && fbId(fb) != 0) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+            g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
             GLfloat prevClear[4];
             glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
             glClearColor(0.f, 0.f, 0.f, 1.f);
@@ -1247,7 +1247,7 @@ static void buildSlopeTex() {
         glUniform1f(u.flowShift, velOk ? st.flowDt : 0.0f);
 
         auto bindLinear = [](GLenum unit, const SP<Render::IFramebuffer>& f) {
-            glActiveTexture(unit);
+            g_pHyprOpenGL->setActiveTexture(unit);
             f->getTexture()->bind();
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1259,7 +1259,7 @@ static void buildSlopeTex() {
             bindLinear(GL_TEXTURE9, st.trailFb);
         if (velOk)
             bindLinear(GL_TEXTURE10, vfb);
-        glActiveTexture(GL_TEXTURE0);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
 
         // This monitor's texels only; gl_FragCoord stays in whole-texture
         // coordinates, so the viewport just picks which ones get written.
@@ -1268,7 +1268,7 @@ static void buildSlopeTex() {
         const int y0 = std::clamp(static_cast<int>(std::floor((mon->m_position.y - lo.y) / cell)) - SLOPE_MARGIN, 0, H);
         const int y1 = std::clamp(static_cast<int>(std::ceil((mon->m_position.y + mon->m_size.y - lo.y) / cell)) + SLOPE_MARGIN, 0, H);
         if (x1 > x0 && y1 > y0) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
+            g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(fb));
             g_pHyprOpenGL->setViewport(x0, y0, x1 - x0, y1 - y0);
             glBindVertexArray(sh->getUniformLocation(SHADER_SHADER_VAO));
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1276,7 +1276,7 @@ static void buildSlopeTex() {
         }
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
     g_pHyprOpenGL->setCapStatus(GL_BLEND, prevBlend);
     if (prevScissor)
@@ -1457,7 +1457,7 @@ void stepWaveSim() {
 
     if (fresh) {
         for (auto* fb : {&fbA, &fbB}) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
+            g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
             glClearColor(g_pGlobalState->waveBias, g_pGlobalState->waveBias, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
         }
@@ -1466,7 +1466,7 @@ void stepWaveSim() {
                          &g_pGlobalState->fluidPrsFb[0], &g_pGlobalState->fluidPrsFb[1],
                          &g_pGlobalState->fluidDivFb}) {
             if (*fb && fbId(*fb) != 0) {
-                glBindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
+                g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(*fb));
                 glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
                 glClear(GL_COLOR_BUFFER_BIT);
             }
@@ -1742,11 +1742,11 @@ void stepWaveSim() {
         }
         glUniform1f(u.volComp, volComp);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(d0));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(d0));
         // Unit 3, NOT unit 0: unit 0 is the glass shader's backdrop sampler, and
         // leaving the sim texture bound there makes the glass sample the water
         // height as if it were the wallpaper (observed: windows went flat grey).
-        glActiveTexture(GL_TEXTURE3);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE3);
         s0->getTexture()->bind();
         // The wave texture is read at roughly one texel per five screen
         // pixels, so its filtering is not a detail: on NEAREST the height
@@ -1764,7 +1764,7 @@ void stepWaveSim() {
         // unit 0 is the glass backdrop, unit 3 is the height field.
         if (fluidOn) {
             bindSimTexture(4, g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent]);
-            glActiveTexture(GL_TEXTURE3);
+            g_pHyprOpenGL->setActiveTexture(GL_TEXTURE3);
         }
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         g_pGlobalState->waveCurrent = 1 - g_pGlobalState->waveCurrent;
@@ -1773,12 +1773,12 @@ void stepWaveSim() {
     DBG("%.4f STEP-DRAWS-DONE\n", dbgNow());
     g_pHyprOpenGL->setCapStatus(GL_BLEND, true);
     glBindVertexArray(0);
-    glActiveTexture(GL_TEXTURE0);   // leave the active unit as the caller expects
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);   // leave the active unit as the caller expects
 
     // Restore the caller's target and viewport. blurBackground() does the same;
     // leaving the sim's 512x512 viewport bound would scissor the glass pass down
     // to a corner of the screen.
-    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     g_pHyprOpenGL->setViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
 
 }
@@ -1845,10 +1845,10 @@ void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer, SAdaptiveLu
     glUniform1f(sm.adaptiveLumaUniforms.seedPrev, state.seededBefore ? 1.0f : 0.0f);
 
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
-    glBindFramebuffer(GL_FRAMEBUFFER, fbId(lumaFb[next]));
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(lumaFb[next]));
     g_pHyprOpenGL->setViewport(0, 0, 1, 1);
 
-    glActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
     sampleFramebuffer->getTexture()->bind();
     // Build the mip chain so the shader can read the whole-window average from
     // the 1x1 level. Needs a mipmap min-filter to be sampled; put it back to
@@ -1856,17 +1856,17 @@ void updateAdaptiveLuma(SP<Render::IFramebuffer>& sampleFramebuffer, SAdaptiveLu
     // expects no mip selection.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glGenerateMipmap(GL_TEXTURE_2D);
-    glActiveTexture(GL_TEXTURE1);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE1);
     lumaFb[prev]->getTexture()->bind();
 
     g_pHyprOpenGL->setCapStatus(GL_BLEND, false);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-    glActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
     sampleFramebuffer->getTexture()->bind();
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glBindVertexArray(0);
-    glBindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
     g_pHyprOpenGL->setViewport(0, 0, viewportWidth, viewportHeight);
     if (hadScissor)
         glEnable(GL_SCISSOR_TEST);
@@ -1920,7 +1920,7 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFram
     glUniform1f(blurUniforms.radius, passRadius);
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
     g_pHyprOpenGL->setViewport(0, 0, width, height);
-    glActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
 
     if (dbgLog()) {
         // Is a leftover scissor from the render pass (or a previous window's
@@ -1973,13 +1973,13 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFram
     // Separable: sampleFramebuffer -> blurTempFramebuffer -> sampleFramebuffer.
     {
         // Horizontal pass: sampleFramebuffer → blurTempFramebuffer
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(blurTempFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(blurTempFramebuffer));
         sampleFramebuffer->getTexture()->bind();
         glUniform2f(blurUniforms.direction, 1.0f / width, 0.0f);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
         // Vertical pass: blurTempFramebuffer → sampleFramebuffer
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(sampleFramebuffer));
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(sampleFramebuffer));
         blurTempFramebuffer->getTexture()->bind();
         glUniform2f(blurUniforms.direction, 0.0f, 1.0f / height);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1991,12 +1991,13 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFram
         glEnable(GL_BLEND);
 
     // Restore caller's GL state without querying (avoids pipeline stalls)
-    glBindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
     glBindVertexArray(0);
     g_pHyprOpenGL->setViewport(0, 0, viewportWidth, viewportHeight);
 }
 
-void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
+void applyGlassEffect(Render::CRenderContext& ctx,
+                       SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
@@ -2026,25 +2027,25 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     auto& shaderManager  = g_pGlobalState->shaderManager;
     const auto& uniforms = shaderManager.glassUniforms;
 
-    const auto transform = Math::wlTransformToHyprutils(
-        Math::invertTransform(g_pHyprRenderer->m_renderData.pMonitor->m_transform));
-
-    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(rawBox, transform);
+    // 0.57 renders in the NORMAL transform (output rotation only at the final
+    // blit), and projectBoxToTarget's default box transform is now NORMAL to match;
+    // the old explicit inverse-output-transform argument mirrored the 0.56 default.
+    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(ctx, rawBox);
     auto texture    = sampleFramebuffer->getTexture();
 
     glMatrix.transpose();
 
-    glBindFramebuffer(GL_FRAMEBUFFER, fbId(targetFramebuffer));
-    glActiveTexture(GL_TEXTURE0);
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(targetFramebuffer));
+    g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
     texture->bind();
 
     // Layers only: bind the temp FBO texture (rendered surface) on texture unit 1.
     // The shader samples it to mask glass to visible content and composite surface on top.
     // Windows pass mask=nullptr so this block is skipped.
     if (mask && mask->textureId != 0) {
-        glActiveTexture(GL_TEXTURE1);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE1);
         glBindTexture(mask->target, mask->textureId);
-        glActiveTexture(GL_TEXTURE0);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
     }
 
     // Advance the water BEFORE binding the glass program: stepWaveSim binds its
@@ -2064,7 +2065,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             stepFluidFrame();
             renderTrailTex();
             renderCausticTex();   // after the trail: it reads it
-            buildSlopeTex();      // after the caustic: it rebuilds the smooth field
+            buildSlopeTex(ctx);   // after the caustic: it rebuilds the smooth field
         }
     }
 
@@ -2092,7 +2093,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     // needed here. Held in global state (not a function-local static) because
     // the mouse wake in stepWaveSim maps the cursor through the same bounds.
     auto& deskMax = g_pGlobalState->deskMax;
-    if (const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock()) {
+    if (const auto mon = ctx.m_data.pMonitor.lock()) {
         monOff = mon->m_position;
         deskMax.x = std::max(deskMax.x, mon->m_position.x + mon->m_size.x);
         deskMax.y = std::max(deskMax.y, mon->m_position.y + mon->m_size.y);
@@ -2290,13 +2291,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         if (intensity > 0.0f) {
             auto& wfb = g_pGlobalState->waveFb[g_pGlobalState->waveCurrent];
             if (wfb && wfb->getTexture()) {
-                glActiveTexture(GL_TEXTURE2);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE2);
                 wfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glActiveTexture(GL_TEXTURE0);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
                 glUniform1i(uniforms.waveTex, 2);
             }
             // The band-limited copy the refraction warp reads — see
@@ -2309,13 +2310,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // before the first build, which samples as zero slope: calm glass.
             glUniform1i(uniforms.slopeTex, 12);
             if (auto& slfb = g_pGlobalState->slopeFb; slfb && slfb->getTexture()) {
-                glActiveTexture(GL_TEXTURE12);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE12);
                 slfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glActiveTexture(GL_TEXTURE0);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
                 glUniform2f(uniforms.slopeOrigin, static_cast<float>(g_pGlobalState->slopeOrigin.x),
                             static_cast<float>(g_pGlobalState->slopeOrigin.y));
                 glUniform1f(uniforms.slopeCell, static_cast<float>(SLOPE_CELL_PX));
@@ -2327,13 +2328,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // 15x stronger than the caustic, scaling with window width.
             glUniform1f(uniforms.causticK, waterCausticK());
             if (auto& swfb = g_pGlobalState->waveSmoothFb; swfb && swfb->getTexture()) {
-                glActiveTexture(GL_TEXTURE11);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE11);
                 swfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glActiveTexture(GL_TEXTURE0);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
             }
             // The analytic stroke trail, freshly summed this frame. Unit 5 —
             // 0 backdrop, 1 layer mask, 2 water, 3/4 sim internals. The
@@ -2343,13 +2344,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             glUniform1i(uniforms.trailTex, 5);
             auto& tfb = g_pGlobalState->trailFb;
             if (tfb && tfb->getTexture()) {
-                glActiveTexture(GL_TEXTURE5);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE5);
                 tfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glActiveTexture(GL_TEXTURE0);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
             }
             // Velocity field for advected interpolation, unit 6. flowShift is
             // forced to 0 whenever the texture is unusable so the shader
@@ -2357,7 +2358,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             // The precomputed caustic, unit 7.
             glUniform1i(uniforms.causticTex, 7);
             if (auto& cfb = g_pGlobalState->causticFb; cfb && cfb->getTexture()) {
-                glActiveTexture(GL_TEXTURE7);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE7);
                 cfb->getTexture()->bind();
                 // Trilinear on minification so the mip chain built at the end
                 // of renderCausticTex actually gets used — see the note there.
@@ -2365,20 +2366,20 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glActiveTexture(GL_TEXTURE0);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
             }
             glUniform1i(uniforms.velTexG, 6);
             auto& vfb = g_pGlobalState->fluidVelFb[g_pGlobalState->fluidVelCurrent];
             const bool velOk = g_pGlobalState->flowDt > 0.0f && vfb && vfb->getTexture();
             glUniform1f(uniforms.flowShift, velOk ? g_pGlobalState->flowDt : 0.0f);
             if (velOk) {
-                glActiveTexture(GL_TEXTURE6);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE6);
                 vfb->getTexture()->bind();
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glActiveTexture(GL_TEXTURE0);
+                g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
             }
         }
     }
@@ -2418,9 +2419,9 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             cfgAd.adaptiveWhiteTarget ? static_cast<float>(**cfgAd.adaptiveWhiteTarget) : 0.78f);
         glUniform1i(uniforms.adaptiveLumaTex, 4);
         if (haveLuma) {
-            glActiveTexture(GL_TEXTURE4);
+            g_pHyprOpenGL->setActiveTexture(GL_TEXTURE4);
             adaptiveLumaFb->getTexture()->bind();
-            glActiveTexture(GL_TEXTURE0);
+            g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
         }
     }
     if (dbgLog()) {
@@ -2442,12 +2443,12 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glGetUniformfv(prog, uniforms.glassOpacity, &goEff);
         GLint prevActive = 0, tex0 = -1, tex2 = -1, tex5 = -1, tex6 = -1, tex7 = -1;
         glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
-        glActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex0);
-        glActiveTexture(GL_TEXTURE2); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex2);
-        glActiveTexture(GL_TEXTURE5); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex5);
-        glActiveTexture(GL_TEXTURE6); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex6);
-        glActiveTexture(GL_TEXTURE7); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex7);
-        glActiveTexture(static_cast<GLenum>(prevActive));
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex0);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE2); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex2);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE5); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex5);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE6); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex6);
+        g_pHyprOpenGL->setActiveTexture(GL_TEXTURE7); glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex7);
+        g_pHyprOpenGL->setActiveTexture(static_cast<GLenum>(prevActive));
         DBG("%.4f TEXBIND org=%.0f,%.0f t0=%d t2=%d t5=%d t6=%d t7=%d\n", dbgNow(),
             rawBox.x + monOff.x, rawBox.y + monOff.y, tex0, tex2, tex5, tex6, tex7);
         DBG("%.4f VERIFY org=%.0f,%.0f dark=%d pre=%s prog=%d lfb=%d/%d ta=%.3f/%.3f br=%.3f sa=%.3f ad=%.3f go=%.3f%s\n",
@@ -2484,7 +2485,10 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     shader->setUniformFloat(SHADER_ROUNDING_POWER, roundingPower);
 
     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
-    g_pHyprOpenGL->scissor(rawBox);
+    // 0.57: scissor boxes in a scene pass are no longer output-transformed
+    // (Hyprland's own draws pass ctx.m_data.transformDamage, false during the
+    // scene); 0.56 transformed them, which is what the old default did.
+    g_pHyprOpenGL->scissor(ctx, rawBox, ctx.m_data.transformDamage);
     // PIN THE BLEND FUNCTION FOR THE COMPOSITE — this is the flickering edge
     // pixel on glassed windows.
     //
@@ -2540,7 +2544,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             rawBox.x + monOff.x, rawBox.y + monOff.y,
             curFb, fbId(targetFramebuffer), px[0], px[1], px[2]);
     }
-    g_pHyprOpenGL->scissor(nullptr);
+    g_pHyprOpenGL->scissor(ctx, nullptr);
 }
 
 } // namespace GlassRenderer

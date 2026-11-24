@@ -9,14 +9,14 @@
 CGlassLayerCompositeElement::CGlassLayerCompositeElement(const SGlassLayerCompositeData& data)
     : m_data(data) {}
 
-std::vector<UP<IPassElement>> CGlassLayerCompositeElement::draw() {
+std::vector<UP<IPassElement>> CGlassLayerCompositeElement::draw(Render::CRenderContext& ctx) {
     if (m_data.layerState && m_data.layerState->getLayerSurface())
-        m_data.layerState->compositeAndRestore(g_pHyprRenderer->m_renderData.pMonitor.lock(), m_data.alpha);
+        m_data.layerState->compositeAndRestore(ctx, ctx.m_data.pMonitor.lock(), m_data.alpha);
 
     return {};
 }
 
-std::optional<CBox> CGlassLayerCompositeElement::boundingBox() {
+std::optional<CBox> CGlassLayerCompositeElement::boundingBox(Render::CRenderContext& ctx) {
     if (!m_data.layerState)
         return std::nullopt;
 
@@ -24,7 +24,7 @@ std::optional<CBox> CGlassLayerCompositeElement::boundingBox() {
     if (!layerSurface)
         return std::nullopt;
 
-    const auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
+    const auto monitor = ctx.m_data.pMonitor.lock();
     auto box = LayerGeometry::computeLayerBox(layerSurface, monitor);
     if (!box)
         return std::nullopt;
@@ -37,10 +37,10 @@ std::optional<CBox> CGlassLayerCompositeElement::boundingBox() {
     return box;
 }
 
-bool CGlassLayerCompositeElement::needsLiveBlur() {
+bool CGlassLayerCompositeElement::needsLiveBlur(Render::CRenderContext& ctx) {
     return false;
 }
 
-bool CGlassLayerCompositeElement::needsPrecomputeBlur() {
+bool CGlassLayerCompositeElement::needsPrecomputeBlur(Render::CRenderContext& ctx) {
     return false;
 }

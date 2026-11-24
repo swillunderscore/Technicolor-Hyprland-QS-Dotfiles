@@ -6,15 +6,20 @@
 
 #include <algorithm>
 #include <cmath>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>   // 0.57: was desktop/Workspace.hpp
 #include <GLES3/gl32.h>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprutils/math/Misc.hpp>
 
+// 0.57 renders every scene in the NORMAL transform: the frame buffer is laid out
+// like the logical monitor and the output rotation is applied only at the final
+// blit. So no inverse-output-transform step any more (it was a no-op on an
+// unrotated monitor, and would now misplace the box on a rotated one); the
+// normalisation the old version applied afterwards is kept.
 static CBox transformedLayerBox(CBox pixelBox, PHLMONITOR monitor) {
-    const auto transform = Math::wlTransformToHyprutils(Math::invertTransform(monitor->m_transform));
-    pixelBox.transform(transform, monitor->m_transformedSize.x, monitor->m_transformedSize.y).noNegativeSize().round();
+    (void)monitor;
+    pixelBox.noNegativeSize().round();
     return pixelBox;
 }
 
@@ -79,7 +84,7 @@ PHLLS CGlassLayerSurface::getLayerSurface() const {
 
 void CGlassLayerSurface::damageGlass() {
     const auto layerSurface = m_layerSurface.lock();
-    if (!layerSurface || !layerSurface->m_mapped)
+    if (!layerSurface || !layerSurface->mapped())   // 0.57: m_mapped is private
         return;
     const auto position = layerSurface->positionAnimation()->value();
     const auto size     = layerSurface->sizeAnimation()->value();
@@ -112,7 +117,7 @@ void CGlassLayerSurface::damageIfMoved() {
     const bool isAnimating = layerSurface->positionAnimation()->isBeingAnimated() ||
                              layerSurface->sizeAnimation()->isBeingAnimated() ||
                              layerSurface->alpha().isBeingAnimated() ||
-                             !layerSurface->m_mapped;   // 0.56: fade-outs are separate snapshots now
+                             !layerSurface->mapped();   // 0.56: fade-outs are separate snapshots now
 
     const bool moved = currentPosition != m_lastPosition || currentSize != m_lastSize;
 
@@ -132,7 +137,7 @@ void CGlassLayerSurface::damageIfMoved() {
     }
 }
 
-void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
+void CGlassLayerSurface::sampleAndRedirect(Render::CRenderContext& rctx, PHLMONITOR monitor, float alpha) {
     auto& shaderManager = g_pGlobalState->shaderManager;
     shaderManager.initializeIfNeeded();
 
@@ -143,7 +148,7 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
     if (!layerSurface)
         return;
 
-    auto source = g_pHyprRenderer->m_renderData.currentFB;
+    auto source = rctx.m_data.currentFB;
     if (!source)
         return;
 
@@ -175,7 +180,7 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
                                    currentGeneration != m_lastSceneGeneration ||
                                    isAnimating;
 
-    if (!layerSurface->m_mapped) {   // 0.56: see above
+    if (!layerSurface->mapped()) {   // 0.56: see above
         // During fade-out, re-sampling captures stale pixels. Reuse cached sample.
         if (!m_hasCachedSample)
             return;
@@ -191,8 +196,8 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
-        int viewportWidth    = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.x);
-        int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.y);
+        int viewportWidth    = static_cast<int>(rctx.m_data.pMonitor->m_transformedSize.x);
+        int viewportHeight   = static_cast<int>(rctx.m_data.pMonitor->m_transformedSize.y);
         GlassRenderer::blurBackground(m_sampleFramebuffer, m_blurTempFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
         // Layers have no window class to test against: when the terminal-only
@@ -227,8 +232,10 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
     m_savedCurrentFB = source;
 
-    g_pHyprRenderer->m_renderData.currentFB = m_surfaceTempFramebuffer;
-    glBindFramebuffer(GL_FRAMEBUFFER, dynamic_cast<Render::GL::CGLFramebuffer*>(m_surfaceTempFramebuffer.get())->getFBID());
+    rctx.m_data.currentFB = m_surfaceTempFramebuffer;
+    // 0.57 shadows the GL framebuffer binding; bind through it so the compositor's
+    // idea of what is bound stays true (a raw bind would make it skip rebinds).
+    g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, dynamic_cast<Render::GL::CGLFramebuffer*>(m_surfaceTempFramebuffer.get())->getFBID());
 
     CBox clearBox = transformBox;
     clearBox.expand(GlassRenderer::SAMPLE_PADDING_PX);
@@ -236,18 +243,18 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
     if (std::isfinite(clearBox.x) && std::isfinite(clearBox.y) && std::isfinite(clearBox.w) && std::isfinite(clearBox.h) &&
         clearBox.w > 0.0 && clearBox.h > 0.0) {
-        g_pHyprOpenGL->scissor(clearBox, false);
+        g_pHyprOpenGL->scissor(rctx, clearBox, false);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        g_pHyprOpenGL->scissor(nullptr);
+        g_pHyprOpenGL->scissor(rctx, nullptr);
     }
 }
 
-void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
+void CGlassLayerSurface::compositeAndRestore(Render::CRenderContext& rctx, PHLMONITOR monitor, float alpha) {
     // Restore the original currentFB before compositing
     if (m_savedCurrentFB) {
-        g_pHyprRenderer->m_renderData.currentFB = m_savedCurrentFB;
-        glBindFramebuffer(GL_FRAMEBUFFER, dynamic_cast<Render::GL::CGLFramebuffer*>(m_savedCurrentFB.get())->getFBID());
+        rctx.m_data.currentFB = m_savedCurrentFB;
+        g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, dynamic_cast<Render::GL::CGLFramebuffer*>(m_savedCurrentFB.get())->getFBID());
         m_savedCurrentFB.reset();
     }
 
@@ -259,7 +266,7 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     if (!layerSurface)
         return;
 
-    auto target = g_pHyprRenderer->m_renderData.currentFB;
+    auto target = rctx.m_data.currentFB;
     if (!target)
         return;
 
@@ -308,7 +315,7 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     const bool termOnly = g_pGlobalState->config.adaptiveTintTerminalsOnly &&
                           **g_pGlobalState->config.adaptiveTintTerminalsOnly;
     SP<Render::IFramebuffer> lumaFb = termOnly ? nullptr : m_luma.fb[m_luma.current];
-    GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
+    GlassRenderer::applyGlassEffect(rctx, m_sampleFramebuffer, target,
                                      rawBox, transformBox, alpha,
                                      cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
                                      &maskInfo, lumaFb, !termOnly);

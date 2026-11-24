@@ -6,14 +6,14 @@
 CGlassPassElement::CGlassPassElement(const SGlassPassData& data)
     : m_data(data) {}
 
-std::vector<UP<IPassElement>> CGlassPassElement::draw() {
+std::vector<UP<IPassElement>> CGlassPassElement::draw(Render::CRenderContext& ctx) {
     if (m_data.decoration.valid())
-        m_data.decoration->renderPass(g_pHyprRenderer->m_renderData.pMonitor.lock(), m_data.alpha);
+        m_data.decoration->renderPass(ctx, ctx.m_data.pMonitor.lock(), m_data.alpha, m_data.presentation);
 
     return {};
 }
 
-std::optional<CBox> CGlassPassElement::boundingBox() {
+std::optional<CBox> CGlassPassElement::boundingBox(Render::CRenderContext& ctx) {
     if (!m_data.decoration.valid())
         return std::nullopt;
 
@@ -21,8 +21,8 @@ std::optional<CBox> CGlassPassElement::boundingBox() {
     if (!window)
         return std::nullopt;
 
-    const auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
-    auto box = WindowGeometry::computeWindowBox(window, monitor);
+    const auto monitor = ctx.m_data.pMonitor.lock();
+    auto box = WindowGeometry::computeWindowBox(window, monitor, m_data.presentation);
     if (!box)
         return std::nullopt;
 
@@ -34,7 +34,7 @@ std::optional<CBox> CGlassPassElement::boundingBox() {
     return box;
 }
 
-bool CGlassPassElement::needsLiveBlur() {
+bool CGlassPassElement::needsLiveBlur(Render::CRenderContext& ctx) {
     // Windows need live blur so the render pass fully re-renders the
     // background behind the glass before we sample it. Without this,
     // partial damage (e.g. typing in a window below) leaves stale pixels
@@ -44,10 +44,10 @@ bool CGlassPassElement::needsLiveBlur() {
     return m_data.decoration.valid() && m_data.decoration->getOwner();
 }
 
-bool CGlassPassElement::needsPrecomputeBlur() {
+bool CGlassPassElement::needsPrecomputeBlur(Render::CRenderContext& ctx) {
     return false;
 }
 
-bool CGlassPassElement::disableSimplification() {
+bool CGlassPassElement::disableSimplification(Render::CRenderContext& ctx) {
     return m_data.decoration.valid() && m_data.decoration->getOwner();
 }

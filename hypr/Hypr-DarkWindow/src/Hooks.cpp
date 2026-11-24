@@ -1,91 +1,148 @@
+#include <hyprland/src/render/pass/SurfacePassElement.hpp>
+#include <hyprutils/utils/ScopeGuard.hpp>
+
+#include "CustomShader.h"
 #include "State.h"
 
-HOOK_FUNCTION(Desktop::View::, CWindow, opaque,
-    bool, (Desktop::View::CWindow* thisptr))
+static ShadedElement* getShaderForSurfacePass(CSurfacePassElement* element)
 {
-    auto config = g.Manager.GetShaderForWindow(thisptr->m_self.lock());
+    if (element->m_data.pWindow)
+        return g.Manager.GetShaderForElement(element->m_data.pWindow);
+    if (element->m_data.pLS)
+        return g.Manager.GetShaderForElement(element->m_data.pLS);
+
+    return nullptr;
+}
+
+HOOK_FUNCTION(
+    Desktop::View::,
+    CWindowPresentation,
+    opaque,
+    bool,
+    (const Desktop::View::CWindowPresentation* thisptr, const Render::SWindowRenderPresentation& presentation)
+)
+{
+    auto config = g.Manager.GetShaderForElement(thisptr->m_window.m_self.lock());
     if (config && config->ActiveShader->Transparency)
         // so Hyprland does not try to optimize away the drawing of the background
         return false;
 
-    return original(thisptr);
+    return trampoline(thisptr, presentation);
 }
 
-HOOK_FUNCTION(Render::, CRenderPass, render,
-    CRegion, (Render::CRenderPass* thisptr, const CRegion& damage_))
+HOOK_FUNCTION(
+    Render::,
+    CRenderPass,
+    render,
+    CRegion,
+    (Render::CRenderPass * thisptr, Render::CRenderContext& ctx, const CRegion& damage_)
+)
 {
     for (auto& elData : thisptr->m_passElements)
     {
-        if (CSurfacePassElement* s = dynamic_cast<CSurfacePassElement*>(elData.element.get()))
+        if (auto s = dc<CSurfacePassElement*>(elData.element.get()))
         {
-            if (s->m_data.pWindow)
-            {
-                auto config = g.Manager.GetShaderForWindow(s->m_data.pWindow);
-
-                if (config)
-                {
-                    // bool success = SaveTextureAsBMP(*s->m_data.texture, "/home/micha4w/Code/Linux/Hypr-DarkWindow/todo/" + s->m_data.pWindow->m_class + ".bmp");
-                    if (config->ActiveShader && config->ActiveShader->Transparency && s->m_data.alpha >= 1)
-                        // so the blur gets drawn
-                        s->m_data.alpha = 0.999f;
-                }
-            }
+            auto config = getShaderForSurfacePass(s);
+            if (config && config->ActiveShader->Transparency && s->m_data.alpha >= 1)
+                // so the blur gets drawn, this needs to be set before render() executes
+                s->m_data.alpha = 0.999f;
         }
     }
 
-    return original(thisptr, damage_);
+    return trampoline(thisptr, ctx, damage_);
 }
 
-HOOK_FUNCTION(Render::GL::, CHyprOpenGLImpl, renderTextureWithBlurInternal,
-    void, (Render::GL::CHyprOpenGLImpl* thisptr, SP<Render::ITexture> tex, const CBox& box, const Render::GL::CHyprOpenGLImpl::STextureRenderData& data))
+HOOK_FUNCTION(
+    Render::,
+    IElementRenderer,
+    drawSurface,
+    void,
+    (Render::IElementRenderer * thisptr, Render::CRenderContext& ctx, WP<CSurfacePassElement> element, const CRegion& damage)
+)
 {
-    g.RenderState.BlurredBG = data.blurredBG;
-    original(thisptr, tex, box, data);
-    g.RenderState.BlurredBG.reset();
+    Hyprutils::Utils::CScopeGuard _state(
+        [&]
+        {
+            g.RenderState.ShaderConfig = nullptr;
+            g.RenderState.Texture = nullptr;
+        }
+    );
+    g.RenderState.ShaderConfig = getShaderForSurfacePass(element.get());
+
+    if (g.RenderState.ShaderConfig)
+    {
+        g.RenderState.Texture = element->m_data.texture;
+        g.RenderState.Uniforms.MonitorScale = ctx.m_data.pMonitor.lock()->m_scale;
+        // LOCAL (0.56 port, kept): the public sizeAnimation()/positionAnimation()
+        // accessors (same animated values as the protected m_realSize/m_realPosition
+        // upstream reads through `#define protected public`).
+        if (element->m_data.pWindow)
+        {
+            g.RenderState.Uniforms.WindowSize = element->m_data.pWindow->sizeAnimation()->value();
+            g.RenderState.Uniforms.WindowPos = element->m_data.pWindow->positionAnimation()->value();
+        }
+        else
+        {
+            g.RenderState.Uniforms.WindowSize = element->m_data.pLS->sizeAnimation()->value();
+            g.RenderState.Uniforms.WindowPos = element->m_data.pLS->positionAnimation()->value();
+        }
+    }
+
+    trampoline(thisptr, ctx, element, damage);
 }
 
-HOOK_FUNCTION(Render::GL::, CHyprOpenGLImpl, renderTextureInternal,
-    void, (Render::GL::CHyprOpenGLImpl* thisptr, SP<Render::ITexture> tex, const CBox& box, const Render::GL::CHyprOpenGLImpl::STextureRenderData& data))
+HOOK_FUNCTION(
+    Render::GL::,
+    CHyprOpenGLImpl,
+    renderTextureInternal,
+    void,
+    (Render::GL::CHyprOpenGLImpl * thisptr,
+     Render::CRenderContext& ctx,
+     SP<Render::ITexture> tex,
+     const CBox& box,
+     const Render::GL::CHyprOpenGLImpl::STextureRenderData& data)
+)
 {
     // so the blurred background does not get shaded
-    g.RenderState.Ignore = g.RenderState.BlurredBG == tex;
-    original(thisptr, tex, box, data);
-    g.RenderState.Ignore = true;
+    g.RenderState.Active = g.RenderState.ShaderConfig && g.RenderState.Texture == tex;
+    Hyprutils::Utils::CScopeGuard _active([&] { g.RenderState.Active = false; });
+
+    trampoline(thisptr, ctx, tex, box, data);
 }
 
-
-HOOK_FUNCTION(Render::GL::, CHyprOpenGLImpl, getShaderVariant,
-    WP<CShader>, (Render::GL::CHyprOpenGLImpl* thisptr, Render::ePreparedFragmentShader frag, Render::ShaderFeatureFlags features))
+HOOK_FUNCTION(
+    Render::GL::,
+    CHyprOpenGLImpl,
+    getShaderVariant,
+    WP<CShader>,
+    (Render::GL::CHyprOpenGLImpl * thisptr, Render::ePreparedFragmentShader frag, const Render::SShaderVariant& variant)
+)
 {
-    if (g.RenderState.Ignore || frag != Render::SH_FRAG_SURFACE)
-        return original(thisptr, frag, features);
+    if (!g.RenderState.Active || frag != Render::SH_FRAG_SURFACE)
+        return trampoline(thisptr, frag, variant);
 
-    auto window = g_pHyprRenderer->renderData().currentWindow.lock();
-    if (!window)
-        return original(thisptr, frag, features);
-
-    auto config = g.Manager.GetShaderForWindow(window);
-    if (!config || config->ActiveShader->Compiled->FailedCompilation)
-        return original(thisptr, frag, features);
-    auto shaders = config->ActiveShader;
-
+    auto shaders = g.RenderState.ShaderConfig->ActiveShader;
     try
     {
-        auto shader = shaders->Compiled->GetOrCreateVariant(features, [&] {
-            std::string fragSrc = Render::g_pShaderLoader->getVariantSource(frag, features);
-            std::string modifiedFragSrc = shaders->Compiled->EditShader(fragSrc);
+        auto shader = shaders->Compiled->GetOrCreateVariant(
+            variant,
+            [&]
+            {
+                std::string fragSrc = Render::g_pShaderLoader->getVariantSource(frag, variant);
+                std::string modifiedFragSrc = shaders->Compiled->EditShader(fragSrc);
 
-            auto newShader = makeShared<CShader>();
-            newShader->createProgram(thisptr->m_shaders->TEXVERTSRC, modifiedFragSrc, true, true);
-            return newShader;
-        });
+                auto newShader = makeShared<CShader>();
+                newShader->createProgram(thisptr->m_shaders->TEXVERTSRC, modifiedFragSrc, true, true);
+                return newShader;
+            }
+        );
 
-        shader.SetUniforms(*config, g_pHyprRenderer->renderData().pMonitor.lock(), window);
+        shader.SetUniforms(*g.RenderState.ShaderConfig, g.RenderState.Uniforms);
         return shader.Shader;
     }
     catch (const std::exception& ex)
     {
         g.NotifyError(std::string("Failed to apply custom shader: ") + ex.what());
-        return original(thisptr, frag, features);
+        return trampoline(thisptr, frag, variant);
     }
 }

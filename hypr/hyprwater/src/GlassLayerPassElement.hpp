@@ -17,11 +17,12 @@ class CGlassLayerPassElement : public IPassElement {
     explicit CGlassLayerPassElement(const SGlassLayerPassData& data);
     ~CGlassLayerPassElement() override = default;
 
-    std::vector<UP<IPassElement>> draw() override;
-    [[nodiscard]] bool                needsLiveBlur() override;
-    [[nodiscard]] bool                needsPrecomputeBlur() override;
-    [[nodiscard]] std::optional<CBox> boundingBox() override;
-    [[nodiscard]] bool                disableSimplification() override;
+    // 0.57: every pass-element hook receives the render context explicitly.
+    std::vector<UP<IPassElement>> draw(Render::CRenderContext& ctx) override;
+    [[nodiscard]] bool                needsLiveBlur(Render::CRenderContext& ctx) override;
+    [[nodiscard]] bool                needsPrecomputeBlur(Render::CRenderContext& ctx) override;
+    [[nodiscard]] std::optional<CBox> boundingBox(Render::CRenderContext& ctx) override;
+    [[nodiscard]] bool                disableSimplification(Render::CRenderContext& ctx) override;
 
     [[nodiscard]] const char* passName() override { return "CGlassLayerPassElement"; }
     [[nodiscard]] ePassElementType type() override { return EK_CUSTOM; }

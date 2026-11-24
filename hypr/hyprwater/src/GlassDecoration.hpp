@@ -3,9 +3,10 @@
 #include "GlassRenderer.hpp"
 #include "PluginConfig.hpp"
 
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>   // 0.57: views moved into view/window/
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 #include <hyprland/src/render/Framebuffer.hpp>
+#include <hyprland/src/render/WindowRenderPresentation.hpp>
 
 class CGlassDecoration : public IHyprWindowDecoration {
   public:
@@ -14,7 +15,10 @@ class CGlassDecoration : public IHyprWindowDecoration {
 
     [[nodiscard]] SDecorationPositioningInfo getPositioningInfo() override;
     void                                     onPositioningReply(const SDecorationPositioningReply& reply) override;
-    void                                     draw(PHLMONITOR monitor, float const& alpha) override;
+    // 0.57: the render context and the window's resolved presentation (workspace /
+    // floating offsets) are passed in explicitly instead of read from renderer globals.
+    void                                     draw(Render::CRenderContext& ctx, PHLMONITOR monitor, float const& alpha,
+                                                  const Render::SWindowRenderPresentation& presentation) override;
     [[nodiscard]] eDecorationType            getDecorationType() override;
     void                                     updateWindow(PHLWINDOW window) override;
     void                                     damageEntire() override;
@@ -23,7 +27,8 @@ class CGlassDecoration : public IHyprWindowDecoration {
     [[nodiscard]] std::string                getDisplayName() override;
 
     [[nodiscard]] PHLWINDOW getOwner();
-    void                    renderPass(PHLMONITOR monitor, const float& alpha);
+    void                    renderPass(Render::CRenderContext& rctx, PHLMONITOR monitor, const float& alpha,
+                                       const Render::SWindowRenderPresentation& presentation);
 
     // Adaptive tint on this window and its glass drawn within the last second
     // (i.e. on screen). See draw() for why that needs whole-glass redraws.

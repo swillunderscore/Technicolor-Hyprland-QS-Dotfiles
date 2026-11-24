@@ -51,7 +51,16 @@ if [ "$gi" = 0 ]; then
 fi
 
 # Memory, in kB: MemTotal MemAvailable
-awk '/^MemTotal:/{mt=$2} /^MemAvailable:/{ma=$2} END{print "mem " mt " " ma}' /proc/meminfo
+# + "memx SHMEM GPU" (kB): tmpfs/shm pages in RAM, and the GPU driver's
+# system-RAM pages (GPUActive/GPUReclaim; 0 on kernels without them). Neither
+# belongs to any process, so the popup shows them as their own rows.
+awk '/^MemTotal:/{mt=$2} /^MemAvailable:/{ma=$2} /^Shmem:/{sh=$2}
+     /^GPUActive:/{ga=$2} /^GPUReclaim:/{gr=$2}
+     END{print "mem " mt " " ma; print "memx " sh+0 " " ga+gr}' /proc/meminfo
+
+# zram's compressed store lives in RAM but in no process: "zrammem BYTES"
+# (mm_stat field 3 = mem_used_total, summed over zram devices).
+cat /sys/block/zram*/mm_stat 2>/dev/null | awk '{z+=$3} END{print "zrammem " z+0}'
 
 # Swap (covers zram + disk swap): Used / Size summed across all swap devices
 awk 'NR>1 {sz+=$3; us+=$4} END{print "swap " us+0 " " sz+0}' /proc/swaps
@@ -62,8 +71,21 @@ awk -F'[: ]+' '/^[ ]*(en|eth|wl|wlp|enp|eno|ens)/{rx+=$3; tx+=$11} END{print "ne
 # Disk I/O: cumulative sectors (512B) read/written over whole-disk devices
 awk '$3 ~ /^(sd[a-z]|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|vd[a-z])$/ {r+=$6; w+=$10} END{print "disk " r+0 " " w+0}' /proc/diskstats
 
-# Swap backing kind: zram-backed swap is labelled differently from disk swap
-[ -e /sys/block/zram0 ] && echo "swapkind ZRAM" || echo "swapkind SWAP"
+# One line per swap device, so the SWAP popup can say where swapped data
+# actually sits: "swapdev KIND USEDKB SIZEKB RAMBYTES PRIO". KIND = zram (lives in
+# RAM, compressed — RAMBYTES is the real RAM it takes, mm_stat field 3),
+# file (swapfile on disk) or partition (on disk). Disk kinds take no RAM.
+# PRIO = swap priority: Linux fills the highest first (the popup's order).
+awk 'NR > 1 {
+  kind = ($2 == "file") ? "file" : "partition"; ram = 0
+  if ($1 ~ /^\/dev\/zram[0-9]+$/) {
+    kind = "zram"; dev = substr($1, 6)
+    f = "/sys/block/" dev "/mm_stat"
+    if ((getline line < f) > 0) { split(line, m, " "); ram = m[3] + 0 }
+    close(f)
+  }
+  print "swapdev", kind, $4 + 0, $3 + 0, ram, $5 + 0
+}' /proc/swaps
 
 # Per-process CPU + memory: "pcs PID COMM JIFFIES RSSBYTES" — single pass over
 # /proc/*/stat (comm may contain spaces/parens: parse around the closing ')').
@@ -80,17 +102,33 @@ gawk -v ps="$(getconf PAGESIZE)" '
     print "pcs", pid, comm, j, f[22] * ps   # f[22] = rss pages (field 24)
 }' /proc/[0-9]*/stat 2>/dev/null
 
-# Per-process swap: "psw PID COMM KB" (zram or disk swap alike; nonzero only)
+# Per-process swap + RAM, one pass over /proc/*/status:
+#   "psw PID COMM KB"        swapped out (zram or disk swap alike; nonzero only)
+#   "pmem PID COMM KB SHMKB" RAM the process holds that counts toward "used"
+#                            (MemTotal - MemAvailable): RssAnon + RssShmem +
+#                            locked file pages. Plain RssFile is page cache the
+#                            kernel counts as available, so it's left out —
+#                            otherwise the rows add up to MORE than "used".
+#                            Only >= 1 MB, to keep the line count sane.
+#   "pmemtot KB SHMKB"       the same, summed over EVERY process, so the
+#                            popup's "other apps" row covers the small ones.
+# Kernel threads have no Vm*/Rss* lines and never reach VmSwap.
 gawk '
-/^Name:/  { comm = $2 }
+FNR == 1  { comm = "-"; anon = 0; file = 0; shm = 0; lck = 0 }
+/^Name:/  { comm = $0; sub(/^Name:[ \t]*/, "", comm); gsub(/ /, "_", comm); if (comm == "") comm = "-" }
+/^VmLck:/    { lck = $2 + 0 }
+/^RssAnon:/  { anon = $2 + 0 }
+/^RssFile:/  { file = $2 + 0 }
+/^RssShmem:/ { shm = $2 + 0 }
 /^VmSwap:/ {
-  if ($2 + 0 > 0) {
-    pid = FILENAME; gsub(/^.*\/proc\/|\/status$/, "", pid)
-    gsub(/ /, "_", comm); if (comm == "") comm = "-"
-    print "psw", pid, comm, $2
-  }
+  pid = FILENAME; gsub(/^.*\/proc\/|\/status$/, "", pid)
+  if ($2 + 0 > 0) print "psw", pid, comm, $2
+  held = anon + shm + (lck < file ? lck : file)
+  tot += held; tshm += shm
+  if (held >= 1024) print "pmem", pid, comm, held, shm
   nextfile
-}' /proc/[0-9]*/status 2>/dev/null
+}
+END { print "pmemtot", tot + 0, tshm + 0 }' /proc/[0-9]*/status 2>/dev/null
 
 # Per-process disk I/O: one "pio PID COMM RBYTES WBYTES" line per process
 # with nonzero cumulative counters. Bar.qml diffs against the previous tick

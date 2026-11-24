@@ -6,6 +6,7 @@ import Quickshell.Io
 import Quickshell.Services.Pipewire
 import Quickshell.Services.SystemTray
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Layouts
 import QtQuick.Shapes
 
@@ -65,7 +66,17 @@ PanelWindow {
     // popup is open, so there'd be no history to draw.)
     property var cpuProcHist: []
     property var memProcHist: []
+    // Index-aligned with memProcHist: per tick {all: bytes held by EVERY
+    // process, rows: {name: bytes}} for the RAM no process owns (zram store,
+    // tmpfs, GPU driver, kernel). breakdownView() turns the pair into the
+    // popup's lines + legend, which always sum to the used total.
+    property var memRestHist: []
     property var swapProcHist: []
+    // Same idea for swap: {all: swap held by EVERY process, rows: {"tmpfs
+    // files": swap used minus that}} — tmpfs/shm pages pushed to swap
+    // belong to no process (no VmSwap), so without this row the swap
+    // popup listed ~2 GB of a 23 GB total.
+    property var swapRestHist: []
     // Same shape for disk, built from the pio diffs each tick ({comm:
     // [readBps, writeBps]}). Caveat: /proc/PID/io is owner-readable only, so
     // other users' processes (system services) can't be attributed here.
@@ -521,7 +532,14 @@ PanelWindow {
     property int swapUsage: 0
     property real swapUsedGB: 0
     property real swapTotalGB: 0
+    // Always SWAP: the cell measures ALL swap (zram + any disk swapfile/
+    // partition). It used to auto-say "ZRAM" whenever a zram device existed,
+    // which hid the disk part and read as a RAM figure. The popup lists each
+    // device (swapDevs) and what it really costs.
     property string swapLabel: "SWAP"
+    // [{kind: "zram"|"file"|"partition", used, size, ram}] in bytes, from
+    // sysmon's swapdev lines; ram = real RAM taken (zram only, else 0).
+    property var swapDevs: []
     property int vramUsage: 0
     property real vramUsedGB: 0
     property real vramTotalGB: 0
@@ -648,6 +666,43 @@ PanelWindow {
                        abs: abs[keys[j]] || 0 })
         }
         return out
+    }
+
+    // Memory/swap popup lines + legend that account for the WHOLE total: the
+    // top k apps (by window peak, as procTopApps), "other apps" = every other
+    // process, then the non-process rows from memRestHist/swapRestHist.
+    // Returns {data: per-tick {name: [pct, bytes]} for MonGraph, apps: legend
+    // entries}; in every tick the entries sum to the header's used figure.
+    function breakdownView(ph, rh, k, denom) {
+        var n = Math.min(ph ? ph.length : 0, rh ? rh.length : 0)
+        if (n === 0 || !(denom > 0)) return { data: [], apps: [] }
+        var p0 = ph.length - n, r0 = rh.length - n
+        var shown = bar.procTopApps(ph.slice(p0), 0, k).map(function (a) { return a.app })
+        var data = [], peak = {}, names = shown.slice()
+        names.push("other apps")
+        for (var rk in rh[rh.length - 1].rows) names.push(rk)
+        for (var i = 0; i < n; i++) {
+            var b = ph[p0 + i], r = rh[r0 + i], o = {}, sumShown = 0
+            for (var s = 0; s < shown.length; s++) {
+                var e = b[shown[s]]
+                if (e) { o[shown[s]] = [100 * e[1] / denom, e[1]]; sumShown += e[1] }
+            }
+            var rest = Math.max(0, r.all - sumShown)
+            o["other apps"] = [100 * rest / denom, rest]
+            for (var key in r.rows) o[key] = [100 * r.rows[key] / denom, r.rows[key]]
+            for (var nk in o) if (!(nk in peak) || o[nk][1] > peak[nk]) peak[nk] = o[nk][1]
+            data.push(o)
+        }
+        var last = data[n - 1], apps = []
+        for (var j = 0; j < names.length; j++) {
+            var nm = names[j]
+            // under 1 MiB across the whole window = noise, not a row
+            if (!(peak[nm] >= 1048576)) continue
+            var c = last[nm]
+            apps.push({ app: nm, cur: c ? c[0] : 0, peak: 100 * peak[nm] / denom, abs: c ? c[1] : 0 })
+        }
+        apps.sort(function (x, y) { return y.peak - x.peak })
+        return { data: data, apps: apps }
     }
 
     function closeLauncher() {
@@ -1183,6 +1238,11 @@ PanelWindow {
             var pNetRx = 0, pNetTx = 0, hasNet = false
             var pDiskRd = 0, pDiskWr = 0, hasDisk = false
             var cpuVal = -1, gpuVal = -1, vramVal = -1, memVal = -1, swapVal = -1
+            // Memory breakdown inputs (bytes): used = MemTotal - MemAvailable,
+            // procTot/procShm from "pmemtot" (-1 = line missing), the rest
+            // from "memx"/"zrammem".
+            var memUsedB = 0, procTotB = -1, procShmB = 0, shmemB = 0, gpuDrvB = 0, zramB = 0
+            var swapUsedB = 0, swapDevsTick = []
             // Multi-GPU: indexed "gpux IDX BUSY" / "vramx IDX USED TOTAL",
             // one pair per card (single-GPU machines emit index 0 only).
             var gxBusy = [], gxVu = [], gxVt = []
@@ -1194,11 +1254,32 @@ PanelWindow {
                     continue
                 }
                 if (p[0] === "pcs") {
-                    // pcs PID COMM JIFFIES RSSBYTES
-                    if (p.length >= 5) {
-                        currPcs[p[1]] = [p[2], parseFloat(p[3]) || 0]
-                        memAgg[p[2]] = (memAgg[p[2]] || 0) + (parseFloat(p[4]) || 0)
+                    // pcs PID COMM JIFFIES RSSBYTES (cpu only — memory comes
+                    // from pmem, which leaves out reclaimable file cache)
+                    if (p.length >= 5) currPcs[p[1]] = [p[2], parseFloat(p[3]) || 0]
+                    continue
+                }
+                if (p[0] === "pmem") {
+                    // pmem PID COMM KB SHMKB
+                    if (p.length >= 5) memAgg[p[2]] = (memAgg[p[2]] || 0) + (parseFloat(p[3]) || 0) * 1024
+                    continue
+                }
+                if (p[0] === "pmemtot") {
+                    if (p.length >= 3) {
+                        procTotB = (parseFloat(p[1]) || 0) * 1024
+                        procShmB = (parseFloat(p[2]) || 0) * 1024
                     }
+                    continue
+                }
+                if (p[0] === "memx") {
+                    if (p.length >= 3) {
+                        shmemB = (parseFloat(p[1]) || 0) * 1024
+                        gpuDrvB = (parseFloat(p[2]) || 0) * 1024
+                    }
+                    continue
+                }
+                if (p[0] === "zrammem") {
+                    zramB = parseFloat(p[1]) || 0
                     continue
                 }
                 if (p[0] === "psw") {
@@ -1253,12 +1334,14 @@ PanelWindow {
                     bar.memUsage = Math.round(100 * (1 - ma / mt))
                     bar.memTotalGB = mt / 1048576
                     bar.memUsedGB = (mt - ma) / 1048576
+                    memUsedB = (mt - ma) * 1024
                     memVal = bar.memUsage
                 } else if (p[0] === "swap") {
                     var su = parseFloat(p[1]) || 0, ssz = parseFloat(p[2]) || 1
                     bar.swapUsage = ssz > 0 ? Math.round(100 * su / ssz) : 0
                     bar.swapTotalGB = ssz / 1048576
                     bar.swapUsedGB = su / 1048576
+                    swapUsedB = su * 1024
                     swapVal = bar.swapUsage
                 } else if (p[0] === "net") {
                     pNetRx = parseFloat(p[1]) || 0
@@ -1268,10 +1351,16 @@ PanelWindow {
                     pDiskRd = parseFloat(p[1]) || 0
                     pDiskWr = parseFloat(p[2]) || 0
                     hasDisk = true
-                } else if (p[0] === "swapkind") {
-                    if (p[1]) bar.swapLabel = p[1]
+                } else if (p[0] === "swapdev") {
+                    // swapdev KIND USEDKB SIZEKB RAMBYTES PRIO
+                    if (p.length >= 5) swapDevsTick.push({ kind: p[1],
+                        used: (parseFloat(p[2]) || 0) * 1024, size: (parseFloat(p[3]) || 0) * 1024,
+                        ram: parseFloat(p[4]) || 0, prio: parseFloat(p[5]) || 0 })
                 }
             }
+            // the order Linux fills them: highest priority first
+            swapDevsTick.sort(function (x, y) { return y.prio - x.prio })
+            bar.swapDevs = swapDevsTick
 
             // ── Disk: diff per-process counters — top reader/writer for the
             //    small chart, per-comm rates for the popup's per-app lines ──
@@ -1348,12 +1437,35 @@ PanelWindow {
                 var mph = bar.memProcHist.slice()
                 mph.push(bar.procBucket(memAgg, 8, bar.memTotalGB * 1073741824))
                 while (mph.length > bar.ioHistLen) mph.shift()
+                // RAM no process owns. "kernel memory" is whatever is left
+                // of used after everything else (slab, page tables, vmalloc,
+                // the kernel's free-page reserves, driver pages), so the rows
+                // always add up to the header exactly.
+                var allProcB = 0
+                if (procTotB >= 0) allProcB = procTotB
+                else for (var mk2 in memAgg) allProcB += memAgg[mk2]
+                var tmpfsB = Math.max(0, shmemB - procShmB)
+                var kernB = Math.max(0, memUsedB - allProcB - zramB - gpuDrvB - tmpfsB)
+                var mrh = bar.memRestHist.slice()
+                mrh.push({ all: allProcB, rows: {
+                    "zram swap": zramB, "tmpfs files": tmpfsB,
+                    "gpu driver": gpuDrvB, "kernel memory": kernB } })
+                while (mrh.length > bar.ioHistLen) mrh.shift()
+                bar.memRestHist = mrh
                 bar.memProcHist = mph
             }
             if (swapVal >= 0) {
                 var sph = bar.swapProcHist.slice()
                 sph.push(bar.procBucket(swapAgg, 8, bar.swapTotalGB * 1073741824))
                 while (sph.length > bar.ioHistLen) sph.shift()
+                // psw lists every process with any swap, so this is the
+                // full per-process total; the rest of swap used is tmpfs.
+                var allSwapB = 0
+                for (var sk2 in swapAgg) allSwapB += swapAgg[sk2]
+                var srh = bar.swapRestHist.slice()
+                srh.push({ all: allSwapB, rows: { "tmpfs files": Math.max(0, swapUsedB - allSwapB) } })
+                while (srh.length > bar.ioHistLen) srh.shift()
+                bar.swapRestHist = srh
                 bar.swapProcHist = sph
             }
             if (cpuVal >= 0)  bar.cpuHist  = bar.pushHist(bar.cpuHist,  { v: cpuVal,  app: topCpuComm })
@@ -1793,12 +1905,49 @@ PanelWindow {
     // Stable hue from a comm name, so the chip fallback for the same app
     // is always the same color across reloads. Saturation/lightness picked
     // to stay readable on both dark and light popup backgrounds.
-    function commColor(comm) {
-        if (!comm || comm === "-") return Qt.rgba(0.4, 0.4, 0.4, 1.0)
+    function commHue(comm) {
         var h = 0
         for (var i = 0; i < comm.length; i++) h = ((h * 31) + comm.charCodeAt(i)) | 0
-        var hue = (Math.abs(h) % 360) / 360
-        return Qt.hsla(hue, 0.55, 0.48, 1.0)
+        return Math.abs(h) % 360
+    }
+    function commColor(comm) {
+        if (!comm || comm === "-") return Qt.rgba(0.4, 0.4, 0.4, 1.0)
+        return Qt.hsla(bar.commHue(comm) / 360, 0.55, 0.48, 1.0)
+    }
+    // Colors for ONE popup's rows, never shared: the name hash alone gave
+    // different apps the same or near-same hue. Rows go in legend order; each
+    // keeps its usual commColor hue unless that sits within `gap` degrees of a
+    // row above it, then it takes the nearest hue that clears all of them (or,
+    // with the wheel too full for the gap, the hue farthest from all). Top rows
+    // therefore keep their colors when lower rows come and go.
+    function distinctColors(names) {
+        var out = {}, uniq = [], hues = []
+        for (var i = 0; i < names.length; i++) {
+            var nm = names[i]
+            if (nm && nm !== "-" && !(nm in out)) { out[nm] = null; uniq.push(nm) }
+        }
+        var gap = Math.min(45, 330 / Math.max(1, uniq.length))
+        function dist(a, b) { var d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d }
+        function clearance(h) {
+            var m = 360
+            for (var j = 0; j < hues.length; j++) m = Math.min(m, dist(h, hues[j]))
+            return m
+        }
+        for (var k = 0; k < uniq.length; k++) {
+            var pref = bar.commHue(uniq[k]), best = pref
+            if (clearance(pref) < gap) {
+                var okHue = -1, okDist = 999, farHue = pref, farClear = -1
+                for (var hh = 0; hh < 360; hh += 3) {
+                    var c = clearance(hh)
+                    if (c >= gap && dist(hh, pref) < okDist) { okHue = hh; okDist = dist(hh, pref) }
+                    if (c > farClear) { farHue = hh; farClear = c }
+                }
+                best = okHue >= 0 ? okHue : farHue
+            }
+            hues.push(best)
+            out[uniq[k]] = Qt.hsla(best / 360, 0.55, 0.48, 1.0)
+        }
+        return out
     }
     function monGraphAutoMax(data, dual, fixedMax, seriesPick) {
         if (fixedMax > 0) return fixedMax
@@ -1835,6 +1984,10 @@ PanelWindow {
         property var procData: []
         property var procApps: []
         property int procField: 0
+        // app -> color for the lines (the popup's distinctColors map); apps
+        // missing from it fall back to commColor.
+        property var colorMap: ({})
+        onColorMapChanged: requestPaint()
         // How many buckets the per-app series lags the total (see the draw code).
         // Measured end-to-end over several de-phased bursts: 1.26-2.02 s,
         // mean 1.62 s (1 bucket = 1 s). The spread is nethogs' 1 s snapshot
@@ -1911,7 +2064,7 @@ PanelWindow {
                 ctx.lineWidth = 1.3
                 for (var pi = 0; pi < apps.length; pi++) {
                     var comm = apps[pi].app
-                    ctx.strokeStyle = bar.commColor(comm)
+                    ctx.strokeStyle = mg.colorMap[comm] || bar.commColor(comm)
                     ctx.beginPath()
                     for (var ti = 0; ti < pn; ti++) {
                         var e = pd[ti][comm]
@@ -1938,7 +2091,7 @@ PanelWindow {
         spacing: isPrimary ? 4 : 3
         Rectangle {
             width: isPrimary ? 8 : 6; height: width; radius: width / 2
-            color: bar.commColor(mpc.modelData.app)
+            color: monPopup.appColors[mpc.modelData.app] || bar.commColor(mpc.modelData.app)
             anchors.verticalCenter: parent.verticalCenter
         }
         Image {
@@ -2312,8 +2465,52 @@ PanelWindow {
     // ══════════════════════════════════════════════
 
     property int hoveredWsId: -1
-    property int lastHoveredWsId: -1
     property bool previewOpen: false
+    // A monitor's size in desktop space (resolution / scale, swapped when rotated).
+    function monLogicalSize(m) {
+        if (!m || !m.width || !m.height) return Qt.size(1920, 1080)
+        var t = m.lastIpcObject ? (m.lastIpcObject.transform || 0) : 0
+        var sc = m.scale || 1
+        return (t % 2 === 1) ? Qt.size(m.height / sc, m.width / sc) : Qt.size(m.width / sc, m.height / sc)
+    }
+    // Workspace pictures and preview cards are sized against the tallest screen.
+    readonly property real maxMonLogicalH: {
+        var mx = 0, ms = Hyprland.monitors.values
+        for (var i = 0; i < ms.length; i++) mx = Math.max(mx, bar.monLogicalSize(ms[i]).height)
+        return mx || 1080
+    }
+    // A grown view's size: its workspace's monitor shape, sized against the
+    // tallest screen like the bar pictures (170 px tall there on the primary bar).
+    function grownSizeOf(wsId) {
+        var all = Hyprland.workspaces.values, mon = null
+        for (var i = 0; i < all.length; i++) if (all[i].id === wsId) { mon = all[i].monitor; break }
+        var ms = bar.monLogicalSize(mon || bar.hyprMon)
+        var h = Math.round((isPrimary ? 170 : 130) * ms.height / bar.maxMonLogicalH)
+        return Qt.size(Math.round(h * ms.width / ms.height), h)
+    }
+    readonly property int grownBorder: isPrimary ? 3 : 2
+    // The helper pictures the hovered workspace's windows while a view is grown,
+    // at the size the view shows them.
+    function sendPreviewHover() {
+        if (!bar.shell) return
+        if (bar.previewOpen && bar.hoveredWsId > 0) {
+            var s = bar.grownSizeOf(bar.hoveredWsId)
+            bar.shell.previewHover(bar.hoveredWsId, s.width - 2 * bar.grownBorder, s.height - 2 * bar.grownBorder)
+        } else if (!bar.previewOpen)
+            bar.shell.previewUnhover()
+    }
+    onHoveredWsIdChanged: sendPreviewHover()
+    onPreviewOpenChanged: sendPreviewHover()
+    // Card background: wallpaper-thumbs.sh names thumbnails by the md5 of the path.
+    property string wallpaperPath: ""
+    FileView {
+        path: "/tmp/wallpaper-current-path"
+        watchChanges: true
+        onFileChanged: this.reload()
+        onLoaded: bar.wallpaperPath = this.text().trim()
+    }
+    readonly property string wallpaperThumb: bar.wallpaperPath
+        ? "file://" + bar.homeDir + "/.cache/hypr-wallpaper-thumbs/" + Qt.md5(bar.wallpaperPath) + ".png" : ""
     property var wsLayoutData: []
     // True from the moment a preview tile starts dragging until the mouse is
     // released. While it's set, nothing is allowed to rebuild or close the
@@ -2401,7 +2598,6 @@ PanelWindow {
         Quickshell.execDetached(["sh", "-c", "rm -f /tmp/tc-window-drag"])
     }
     property color hoveredDotColor: colorEmpty
-    property real hoveredDotGlobalX: 0
     property string hoveredDotState: ""
 
     Process {
@@ -2422,23 +2618,264 @@ PanelWindow {
         onTriggered: layoutProc.running = true
     }
 
-    // ── Dots container (normal, inside the bar) ──
-    Rectangle {
-        id: dotsContainer
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.verticalCenter: parent.verticalCenter
-        height: parent.height - (isPrimary ? 6 : 4)
-        width: dotsRow.implicitWidth + (isPrimary ? 16 : 10)
-        color: bar.pillFill; radius: isPrimary ? 14 : 12
+    // ══ Workspace dock ═══════════════════════════════════════════════════
+    // Pictures + dots, the minimized apps attached on their right, and the
+    // hovered picture/dot growing IN PLACE into that workspace's view (queue
+    // 62-64, spec docs/superpowers/specs/2026-10-28-bar-grow-in-place-design.md).
+    //
+    // Its own layer window over the bar's centre, at a FIXED size. A layer
+    // surface that changes size shows its old buffer at the new place for a
+    // frame (Hyprland applies set_size on commit, before the client's new
+    // buffer — LayerShell.cpp, v0.56.2), so growing the bar itself would make
+    // the whole bar jump at every hover. The hovered item and its grown view
+    // live in this one window, so moving up into the view never "leaves"
+    // anything: the separate popup this replaces took the pointer from the
+    // hovered item and closed itself 0.4 s after opening.
+    //
+    // Namespace quickshell:bar-dock: on hyprwater's glass list next to the
+    // bar (hyprwater-tuning.conf), and NOT "quickshell:bar", which
+    // wlogout-launch.sh reads the bar's height from.
+    //
+    // Must stack ABOVE the bar, or the bar (no input mask) takes every hover
+    // and click over the pill. Hyprland stacks layers by creation order, and
+    // Quickshell shows a nested window BEFORE its parent (onReload reloads
+    // children before showing the window), so on a fresh start the dock was
+    // created first and sat under the bar. Showing it only once the bar's own
+    // window is up makes it the later one, on every start and every reload.
+    PanelWindow {
+        id: wsDock
+        visible: bar.backingWindowVisible
+        screen: bar.screen
+        anchors { bottom: true; left: true; right: true }
+        exclusionMode: ExclusionMode.Ignore
+        color: "transparent"
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "quickshell:bar-dock"
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        // Only the pill and a grown tab take the pointer; the rest of this tall
+        // window lets clicks through to the windows under it.
+        mask: Region { item: pillHit; Region { item: tabHit } }
 
-        RowLayout {
-            id: dotsRow; anchors.centerIn: parent; spacing: 0
+        // ── Geometry (window coordinates, y grows down) ──
+        readonly property int pillH: bar.implicitHeight - (isPrimary ? 6 : 4)
+        readonly property real pillBottom: height - (isPrimary ? 3 : 2)
+        readonly property real pillTop: pillBottom - pillH
+        readonly property int padX: isPrimary ? 8 : 5
+        readonly property int pillR: isPrimary ? 14 : 12
+        readonly property int tabPad: isPrimary ? 6 : 4          // glass around a grown view
+        readonly property int tabR: (isPrimary ? 10 : 8) + tabPad
+        readonly property int gapX: isPrimary ? 6 : 4            // grown view <-> neighbours
+        readonly property int filletR: isPrimary ? 12 : 9        // same joins as the bar menus
+        readonly property int restPicH: isPrimary ? 30 : 22
+        // A grown view keeps the bottom line of a resting picture.
+        readonly property real grownBottom: pillBottom - (pillH - restPicH) / 2
+        implicitHeight: Math.ceil((isPrimary ? 3 : 2) + (pillH - restPicH) / 2 + (isPrimary ? 170 : 130) + tabPad + 2)
+
+        // ── Layout ──
+        // Each slot reports its resting width, its grown width, how far it has
+        // grown (0..1) and its current shape. A growing slot widens around its
+        // OWN centre: slots left of it shift left by half the added width,
+        // slots right of it shift right by half. Both group edges move by the
+        // same amount, so the group stays centred, and the grown slot stays
+        // under the pointer. Superposed per slot, so two slots trading places
+        // (one shrinking, one growing) never overlap.
+        // The workspace range, held still while a window is being dragged out of
+        // a grown view: dragging a workspace's ONLY window away makes Hyprland
+        // delete that workspace, and losing its slot mid-drag destroyed the
+        // MouseArea waiting for the release — the window kept following the
+        // cursor after you let go.
+        property var range: bar.wsRange
+        Connections {
+            target: bar
+            function onWsRangeChanged() { if (!bar.draggingWindow) wsDock.range = bar.wsRange }
+            function onDraggingWindowChanged() { if (!bar.draggingWindow) wsDock.range = bar.wsRange }
+        }
+        readonly property int slotCount: range[1] - range[0] + 1
+        property var restWs: []
+        property var grownWs: []
+        property var grows: []
+        property var shapeWs: []
+        property var shapeTops: []
+        property int rev: 0
+        function setSlot(i, restW, grownW, g, shapeW, shapeTop) {
+            restWs[i] = restW; grownWs[i] = grownW; grows[i] = g; shapeWs[i] = shapeW; shapeTops[i] = shapeTop
+            rev++
+        }
+        function extraOf(i) { return (grows[i] || 0) * ((grownWs[i] || 0) + 2 * tabPad + gapX - (restWs[i] || 0)) }
+        readonly property real restTotal: { void rev; var t = 0; for (var k = 0; k < slotCount; k++) t += (restWs[k] || 0); return t }
+        readonly property real extraTotal: { void rev; var t = 0; for (var k = 0; k < slotCount; k++) t += extraOf(k); return t }
+        function centerOf(i) {
+            void rev
+            var c = width / 2 - restTotal / 2, k
+            for (k = 0; k < i; k++) c += (restWs[k] || 0)
+            c += (restWs[i] || 0) / 2
+            for (k = 0; k < slotCount; k++) if (k !== i) c += (k < i ? 1 : -1) * extraOf(k) / 2
+            return c
+        }
+        function slotW(i) { void rev; return (restWs[i] || 0) + extraOf(i) }
+        // ONLY the pictures + dots are centred; the minimized apps hang off the
+        // group's right edge and never count toward the centring.
+        readonly property real groupLeft: width / 2 - restTotal / 2 - extraTotal / 2
+        readonly property real groupRight: width / 2 + restTotal / 2 + extraTotal / 2
+        readonly property bool hasTray: bar.minimizedWindows.length > 0
+        readonly property real pillLeft: groupLeft - padX
+        readonly property real pillRight: hasTray ? minimizedRow.x + minimizedRow.width + padX : groupRight + padX
+
+        // Grown tabs, left to right: {l, r, top} of the glass around each
+        // view that rises above the pill.
+        readonly property var tabs: {
+            void rev
+            var out = []
+            for (var i = 0; i < slotCount; i++) {
+                if (!((grows[i] || 0) > 0.001)) continue
+                var top = (shapeTops[i] || 0) - tabPad
+                if (top >= pillTop - 0.5) continue
+                var c = centerOf(i), half = (shapeWs[i] || 0) / 2 + tabPad
+                out.push({ l: c - half, r: c + half, top: top })
+            }
+            return out
+        }
+        // The glass outline: the pill, with each tab rising out of its top
+        // edge through concave joins (the volume/calendar menus' shape).
+        function outlinePath() {
+            var x0 = pillLeft, x1 = pillRight, yT = pillTop, yB = pillBottom
+            var r = Math.min(pillR, pillH / 2)
+            var p = "M " + x0 + "," + (yT + r) + " A " + r + "," + r + " 0 0 1 " + (x0 + r) + "," + yT
+            for (var j = 0; j < tabs.length; j++) {
+                var t = tabs[j], h = yT - t.top
+                var leftRoom = t.l - (j > 0 ? tabs[j - 1].r : x0 + r)
+                var rightRoom = (j < tabs.length - 1 ? tabs[j + 1].l : x1 - r) - t.r
+                var fl = Math.max(0, Math.min(filletR, h / 2, j > 0 ? leftRoom / 2 : leftRoom))
+                var fr = Math.max(0, Math.min(filletR, h / 2, j < tabs.length - 1 ? rightRoom / 2 : rightRoom))
+                var rr = Math.max(0, Math.min(tabR, h - Math.max(fl, fr), (t.r - t.l) / 2))
+                p += " L " + (t.l - fl) + "," + yT
+                if (fl > 0.5) p += " A " + fl + "," + fl + " 0 0 0 " + t.l + "," + (yT - fl)
+                p += " L " + t.l + "," + (t.top + rr)
+                if (rr > 0.5) p += " A " + rr + "," + rr + " 0 0 1 " + (t.l + rr) + "," + t.top
+                p += " L " + (t.r - rr) + "," + t.top
+                if (rr > 0.5) p += " A " + rr + "," + rr + " 0 0 1 " + t.r + "," + (t.top + rr)
+                p += " L " + t.r + "," + (yT - fr)
+                if (fr > 0.5) p += " A " + fr + "," + fr + " 0 0 0 " + (t.r + fr) + "," + yT
+            }
+            p += " L " + (x1 - r) + "," + yT + " A " + r + "," + r + " 0 0 1 " + x1 + "," + (yT + r)
+            p += " L " + x1 + "," + (yB - r) + " A " + r + "," + r + " 0 0 1 " + (x1 - r) + "," + yB
+            p += " L " + (x0 + r) + "," + yB + " A " + r + "," + r + " 0 0 1 " + x0 + "," + (yB - r) + " Z"
+            return p
+        }
+
+        // ── Hover: open, switch, close ──
+        property int pendingWs: -1
+        property point lastPointer: Qt.point(-1, -1)
+        function slotAt(px, py) {
+            for (var i = 0; i < slotCount; i++) {
+                var c = centerOf(i), w = slotW(i)
+                if (px < c - w / 2 || px >= c + w / 2) continue
+                if (py >= pillTop) return i
+                if ((grows[i] || 0) > 0.001 && py >= (shapeTops[i] || 0) - tabPad) return i
+                return -1
+            }
+            return -1
+        }
+        function openWs(ws) {
+            var s = slotRepeater.itemAt(ws - wsDock.range[0])
+            if (s) { bar.hoveredDotColor = s.dotColor; bar.hoveredDotState = s.dotState }
+            // hoveredWsId first: a slot that is folding away must already have
+            // let go of the shared layout before it's cleared (see shownLayout).
+            bar.hoveredWsId = ws
+            bar.wsLayoutData = []
+            layoutProc.running = true
+            bar.previewOpen = true
+        }
+        function closeNow() {
+            openDelay.stop(); closeGrace.stop()
+            wsDock.pendingWs = -1
+            bar.previewOpen = false
+            bar.hoveredWsId = -1
+            bar.wsLayoutData = []
+        }
+        // The slot under the pointer is chosen from the pointer's own MOVES.
+        // Qt also re-sends a still pointer's position when things slide under
+        // it; those are ignored, so a growing/shrinking neighbour can never
+        // flip the hover back and forth.
+        function pointerMoved(pos) {
+            if (bar.draggingWindow) return      // the dragged window's view stays put
+            if (pos.x === lastPointer.x && pos.y === lastPointer.y) return
+            lastPointer = pos
+            var i = slotAt(pos.x, pos.y)
+            var ws = i >= 0 ? i + wsDock.range[0] : -1
+            if (bar.previewOpen) {
+                if (ws > 0) {
+                    closeGrace.stop()
+                    if (ws !== bar.hoveredWsId) openWs(ws)
+                } else if (!closeGrace.running) closeGrace.restart()   // the tray, the pill's ends
+            } else if (ws !== pendingWs) {
+                pendingWs = ws
+                if (ws > 0) openDelay.restart(); else openDelay.stop()
+            }
+        }
+        Timer { id: openDelay; interval: 300; onTriggered: if (wsDock.pendingWs > 0) wsDock.openWs(wsDock.pendingWs) }
+        // Window pictures in a grown view take hover themselves; whether the
+        // dock's HoverHandler still sees the pointer over them isn't something
+        // to bet the view on, so they are counted too.
+        property int tileHovers: 0
+        Timer {
+            id: closeGrace; interval: 400
+            onTriggered: {
+                if (!bar.previewOpen || bar.draggingWindow || wsDock.tileHovers > 0) return
+                if (dockHover.hovered && wsDock.slotAt(wsDock.lastPointer.x, wsDock.lastPointer.y) >= 0) return
+                wsDock.closeNow()
+            }
+        }
+
+        Item {
+            id: dockContent
+            anchors.fill: parent
+
+            HoverHandler {
+                id: dockHover
+                onPointChanged: wsDock.pointerMoved(point.position)
+                onHoveredChanged: {
+                    if (dockHover.hovered) return
+                    wsDock.lastPointer = Qt.point(-1, -1)
+                    openDelay.stop(); wsDock.pendingWs = -1
+                    if (bar.previewOpen && !bar.draggingWindow) closeGrace.restart()
+                }
+            }
+            // Clicking the dock closes the launcher, like clicking the bar does.
+            TapHandler { onTapped: if (bar.launcherOpen) bar.closeLauncher() }
+
+            // Input mask pieces (the window's `mask`)
+            Item { id: pillHit; x: wsDock.pillLeft; y: wsDock.pillTop; width: wsDock.pillRight - wsDock.pillLeft; height: wsDock.pillH }
+            Item {
+                id: tabHit
+                readonly property var b: {
+                    var t = wsDock.tabs
+                    if (!t.length) return { l: 0, r: 0, top: wsDock.pillTop }
+                    var l = 1e9, r = -1e9, top = 1e9
+                    for (var k = 0; k < t.length; k++) { l = Math.min(l, t[k].l); r = Math.max(r, t[k].r); top = Math.min(top, t[k].top) }
+                    return { l: l, r: r, top: top }
+                }
+                x: b.l; y: b.top; width: b.r - b.l; height: wsDock.pillTop - b.top
+            }
+
+            // The glass: pill + tabs as one shape.
+            Shape {
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeWidth: 0
+                    fillColor: bar.pillFill
+                    PathSvg { path: wsDock.outlinePath() }
+                }
+            }
+
             Repeater {
-                model: bar.wsRange[1] - bar.wsRange[0] + 1
+                id: slotRepeater
+                model: wsDock.slotCount
                 delegate: Item {
                     id: dotDelegate
                     required property int index
-                    readonly property int wsId: index + bar.wsRange[0]
+                    readonly property int wsId: index + wsDock.range[0]
                     readonly property var wsObj: {
                         var all = Hyprland.workspaces.values
                         for (var i = 0; i < all.length; i++) {
@@ -2453,82 +2890,283 @@ PanelWindow {
                     readonly property bool hasWindows: wsObj ? wsObj.toplevels.values.length > 0 : false
                     readonly property string dotState: {
                         if (isFocused) return "focused"
-                            if (isActive) return "visible"
-                                if (hasWindows) return "occupied"
-                                    return "empty"
+                        if (isActive) return "visible"
+                        if (hasWindows) return "occupied"
+                        return "empty"
                     }
                     readonly property color dotColor: {
                         if (dotState === "focused") return bar.gradientStart   // the bar's left color
-                            if (dotState === "visible") return bar.gradientEnd     // the bar's right color
-                                if (dotState === "occupied") return bar.colorOccupied  // offscreen — the third color
-                                    return bar.colorEmpty
+                        if (dotState === "visible") return bar.gradientEnd     // the bar's right color
+                        if (dotState === "occupied") return bar.colorOccupied  // offscreen — the third color
+                        return bar.colorEmpty
                     }
-                    Layout.preferredWidth: isPrimary ? 28 : 22
-                    Layout.preferredHeight: isPrimary ? 36 : 28
+                    // On a monitor someone can see -> a tiny picture of it; every
+                    // other workspace is a circle (filled = has windows).
+                    readonly property bool isPicture: isActive
+                    readonly property string monName: (wsObj && wsObj.monitor) ? wsObj.monitor.name : ""
+                    // Sized by the screen's desktop size (resolution / scale): the
+                    // tallest screen gets the full height, the others shrink in
+                    // proportion, so a 1080p screen sits smaller than a 1440p one.
+                    readonly property size monSize: bar.monLogicalSize(wsObj ? wsObj.monitor : null)
+                    readonly property real picScale: (isPrimary ? 30 : 22) / bar.maxMonLogicalH
+                    readonly property int picH: Math.max(8, Math.round(monSize.height * picScale))
+                    readonly property int picW: Math.max(8, Math.round(monSize.width * picScale))
+                    readonly property int dotDiam: isFocused ? (isPrimary ? 22 : 16) : (isPrimary ? 17 : 12)
+                    // resting look, animated on its own for the dot <-> picture morph
+                    property real restW: isPicture ? picW + (isPrimary ? 8 : 6) : (isPrimary ? 28 : 22)
+                    property real restShapeW: isPicture ? picW : dotDiam
+                    property real restShapeH: isPicture ? picH : dotDiam
+                    property real restRadius: isPicture ? (isPrimary ? 5 : 4) : dotDiam / 2
+                    Behavior on restW { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                    Behavior on restShapeW { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                    Behavior on restShapeH { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                    Behavior on restRadius { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                    // grown look: this workspace's monitor shape
+                    readonly property size grownSize: { void Hyprland.workspaces.values; return bar.grownSizeOf(wsId) }
+                    property real g: (bar.previewOpen && bar.hoveredWsId === wsId) ? 1 : 0
+                    Behavior on g { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                    readonly property real contentFade: g > 0.6 ? (g - 0.6) / 0.4 : 0
+                    // What this slot's grown view shows, kept after it starts folding
+                    // away (the pointer left, or another slot took over) so the windows
+                    // fade out WHILE it shrinks — the reverse of opening. Reading the
+                    // shared bar.wsLayoutData directly, the view went empty the moment
+                    // it closed and the shrinking shape flashed its bare border color.
+                    readonly property bool isOpenSlot: bar.previewOpen && bar.hoveredWsId === wsId
+                    property var shownLayout: []
+                    Connections {
+                        target: bar
+                        function onWsLayoutDataChanged() { if (dotDelegate.isOpenSlot) dotDelegate.shownLayout = bar.wsLayoutData }
+                    }
 
-                    // FILLED-CIRCLE states (focused/visible) \u2192 real antialiased vector
-                    // circle (glyph rasterization left jagged edges; a Rectangle with
-                    // antialiasing:true is perfectly smooth on a hi-DPI panel). The
-                    // DIAMOND states stay glyphs (a circle can't draw those shapes).
-                    readonly property bool isCircle: dotState === "focused" || dotState === "visible"
-                    readonly property real dotOffset: dotState === "focused" ? (isPrimary ? -6 : -4) : 0
-                    // hover highlight: null = use dotColor; set to a color to highlight.
-                    // Both the circle and the diamond glyph bind to this so the
-                    // pre-preview hover highlight works regardless of dot shape.
-                    property var dotHighlight: null
-                    readonly property color dotPaint: dotHighlight !== null ? dotHighlight : dotColor
+                    readonly property real shapeW: restShapeW + (grownSize.width - restShapeW) * g
+                    readonly property real shapeH: restShapeH + (grownSize.height - restShapeH) * g
+                    // dock coordinates of the shape's top: centred in the pill at
+                    // rest, bottom on the grown line when grown
+                    readonly property real shapeTop: (wsDock.pillTop + (wsDock.pillH - restShapeH) / 2) * (1 - g)
+                                                     + (wsDock.grownBottom - grownSize.height) * g
+                    function report() { wsDock.setSlot(index, restW, grownSize.width, g, shapeW, shapeTop) }
+                    onRestWChanged: report()
+                    onGChanged: report()
+                    onShapeWChanged: report()
+                    onShapeTopChanged: report()
+                    Component.onCompleted: report()
 
-                    // Dot diameters are tied to the preview STEM so they line up exactly:
-                    //   big = the stem's end-circle diameter (dotSize, 22/16) so a hovered
-                    //     dot meets the stem seamlessly. The FOCUSED dot stays at this big
-                    //     size always (so hovering it doesn't resize it). Other dots rest
-                    //     slightly smaller and grow to big on hover.
-                    readonly property int dotHoverDiam: isPrimary ? 22 : 16   // == wsPreviewPopup.dotSize
-                    readonly property int dotRestDiam:  isPrimary ? 17 : 12   // slightly smaller
-                    readonly property bool dotHovered: bar.hoveredWsId === wsId && bar.previewOpen
-                    // focused dot is permanently big; others grow only while hovered+preview
-                    readonly property int dotDiam: (dotState === "focused" || dotHovered)
-                                                   ? dotHoverDiam : dotRestDiam
+                    x: { void wsDock.rev; return wsDock.centerOf(index) - width / 2 }
+                    y: wsDock.pillTop
+                    width: { void wsDock.rev; return wsDock.slotW(index) }
+                    height: wsDock.pillH
 
+                    readonly property bool pending: wsDock.pendingWs === wsId && !bar.previewOpen
+                    readonly property color dotPaint: pending ? "#F8F8F2" : dotColor
+                    readonly property string previewUrl: (bar.shell && monName) ? (bar.shell.monPreview[monName] || "") : ""
+
+                    // One shape that morphs: circle <-> monitor-shaped picture <-> grown view.
                     Rectangle {
-                        id: dotCircle
-                        visible: dotDelegate.isCircle
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.verticalCenterOffset: dotDelegate.dotOffset
-                        width: dotDelegate.dotDiam
-                        height: width
-                        radius: width / 2
-                        antialiasing: true                  // smooth circle edge
-                        color: dotDelegate.dotPaint
-                        Behavior on color { ColorAnimation { duration: 150 } }
-                        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        Behavior on anchors.verticalCenterOffset { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                    }
-
-                    Text {
-                        id: dotText
-                        visible: !dotDelegate.isCircle      // diamond states only now
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.verticalCenterOffset: dotDelegate.dotOffset
-                        text: dotDelegate.dotState === "empty" ? "\u25C7" : "\u25C6"   // hollow / filled diamond
+                        id: wsShape
+                        x: (dotDelegate.width - width) / 2
+                        y: dotDelegate.shapeTop - wsDock.pillTop
+                        width: dotDelegate.shapeW
+                        height: dotDelegate.shapeH
+                        radius: dotDelegate.restRadius + ((isPrimary ? 10 : 8) - dotDelegate.restRadius) * dotDelegate.g
                         antialiasing: true
-                        color: dotDelegate.dotPaint
-                        // Render the glyph LARGE and scale DOWN to the display size
-                        // (downscaling a big glyph stays crisp vs upscaling a small one).
-                        // Diamond glyph (◆ at font 44) visually fills ~its font size, so
-                        // scale to the same rest/hover diameters as the circle dots: a
-                        // diamond reads slightly larger than a circle at equal width, so
-                        // nudge ~0.9× to balance them optically.
-                        font.pixelSize: isPrimary ? 44 : 36
-                        font.family: bar.fontFamily
-                        scale: dotDelegate.dotDiam / (isPrimary ? 44 : 36) * 0.9
-                        opacity: 1.0
+                        // Picture: border in the state color, filled with it until
+                        // the first picture lands. Circle: filled, or a ring when empty.
+                        color: dotDelegate.isPicture || dotDelegate.g > 0 || dotDelegate.dotState !== "empty" ? dotDelegate.dotPaint : "transparent"
+                        border.width: dotDelegate.isPicture || dotDelegate.g > 0
+                            ? 1.5 + (bar.grownBorder - 1.5) * dotDelegate.g
+                            : (dotDelegate.dotState === "empty" ? (isPrimary ? 2 : 1.5) : 0)
+                        border.color: dotDelegate.dotPaint
                         Behavior on color { ColorAnimation { duration: 150 } }
-                        Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-                        Behavior on anchors.verticalCenterOffset { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+                        PreviewImage {
+                            anchors.fill: parent
+                            anchors.margins: wsShape.border.width
+                            radius: Math.max(0, wsShape.radius - wsShape.border.width)
+                            source: dotDelegate.isPicture ? dotDelegate.previewUrl : ""
+                            // Fades in once when a picture first lands, then stays fully
+                            // opaque UNDER the grown view, which fades over it. Crossfading
+                            // the two (each half transparent) let the shape's border-color
+                            // fill show through mid-fade; a fade that lagged the shrink left
+                            // the shape bare for a moment on the way back down.
+                            property real landed: dotDelegate.isPicture && ready ? 1 : 0
+                            Behavior on landed { NumberAnimation { duration: 200 } }
+                            opacity: landed
+                        }
+
+                        // A click anywhere on it (resting or grown, outside a
+                        // window) goes to that workspace. No hover here: picking
+                        // the hovered slot is the dock's job (see pointerMoved).
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (bar.launcherOpen) bar.closeLauncher()
+                                wsDock.closeNow()
+                                root.workspaceGoto(dotDelegate.wsId, bar.hyprMon ? bar.hyprMon.id : 0)
+                            }
+                        }
+
+                        // ── The grown view: wallpaper + this workspace's windows ──
+                        Loader {
+                            x: wsShape.border.width; y: wsShape.border.width
+                            active: dotDelegate.g > 0.55
+                            sourceComponent: grownView
+                        }
+                        Component {
+                            id: grownView
+                            Item {
+                                id: gv
+                                // laid out at the full grown size, scaled while growing
+                                readonly property real fullW: dotDelegate.grownSize.width - 2 * bar.grownBorder
+                                readonly property real fullH: dotDelegate.grownSize.height - 2 * bar.grownBorder
+                                width: fullW; height: fullH
+                                scale: (wsShape.width - 2 * wsShape.border.width) / Math.max(1, fullW)
+                                transformOrigin: Item.TopLeft
+                                opacity: dotDelegate.contentFade
+                                // window tiles reach the view's corners (a maximized window
+                                // fills it): cut everything to the rounded inside
+                                layer.enabled: true
+                                layer.effect: MultiEffect {
+                                    maskEnabled: true
+                                    maskSource: gvMask
+                                    maskThresholdMin: 0.5
+                                    maskSpreadAtMin: 1.0
+                                }
+                                Rectangle {
+                                    id: gvMask
+                                    width: gv.fullW; height: gv.fullH
+                                    radius: Math.max(0, (isPrimary ? 10 : 8) - bar.grownBorder)
+                                    visible: false
+                                    layer.enabled: true
+                                    layer.smooth: true
+                                }
+                                // the wallpaper behind the windows (wallpaper-thumbs.sh's cache)
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: bar.pillFill
+                                    PreviewImage { anchors.fill: parent; source: bar.wallpaperThumb }
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    visible: dotDelegate.shownLayout.length === 0
+                                    text: "Workspace " + dotDelegate.wsId
+                                    color: bar.colDim
+                                    font.pixelSize: isPrimary ? 12 : 10
+                                    font.family: bar.fontFamily
+                                }
+                                Repeater {
+                                    model: dotDelegate.shownLayout.length
+                                    delegate: Item {
+                                        id: winItem
+                                        required property int index
+                                        readonly property var winData: dotDelegate.shownLayout[index]
+                                        readonly property var tiles: bar.previewTiles(dotDelegate.shownLayout, gv.fullW, gv.fullH)
+                                        readonly property var tile: (tiles && tiles.length > index) ? tiles[index] : null
+                                        x: tile ? tile.x : 0
+                                        y: tile ? tile.y : 0
+                                        width: tile ? tile.w : 1
+                                        height: tile ? tile.h : 1
+                                        Behavior on x { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+                                        Behavior on y { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+
+                                        Rectangle {
+                                            anchors.fill: parent; anchors.margins: 1
+                                            radius: isPrimary ? 4 : 3
+                                            color: winMouse.containsMouse ? Qt.rgba(0.2, 0.2, 0.25, 1.0) : Qt.rgba(0.12, 0.12, 0.16, 1.0)
+                                            border.width: winMouse.containsMouse ? 1.5 : 0.5
+                                            border.color: winMouse.containsMouse ? bar.hoveredDotColor : Qt.rgba(1, 1, 1, 0.08)
+                                            Behavior on color { ColorAnimation { duration: 80 } }
+
+                                            PreviewImage {
+                                                id: winPic
+                                                anchors.fill: parent
+                                                anchors.margins: 1
+                                                radius: Math.max(0, parent.radius - 1)
+                                                source: (bar.shell && winItem.winData) ? (bar.shell.winPreview[winItem.winData.address] || "") : ""
+                                                visible: ready
+                                            }
+                                            Image {
+                                                id: winIcon; anchors.centerIn: parent
+                                                width: Math.min(parent.width * 0.45, parent.height * 0.45, isPrimary ? 32 : 22); height: width
+                                                sourceSize.width: 128; sourceSize.height: 128
+                                                mipmap: true; smooth: true
+                                                visible: !winPic.ready && status === Image.Ready
+                                                source: { void bar.iconCacheReady; void bar.steamIconVersion; return (winItem.winData && winItem.winData.class) ? bar.resolveAppIcon(winItem.winData.class, winItem.winData.title) : "" }
+                                            }
+                                            Text {
+                                                anchors.centerIn: parent; visible: !winPic.ready && !winIcon.visible
+                                                text: winItem.winData && winItem.winData.class ? winItem.winData.class[0].toUpperCase() : "?"
+                                                color: Qt.rgba(1, 1, 1, 0.4)
+                                                font.pixelSize: Math.min(parent.width * 0.3, parent.height * 0.3, isPrimary ? 16 : 11)
+                                                font.family: bar.fontFamily; font.bold: true
+                                            }
+                                            Text {
+                                                anchors.bottom: parent.bottom; anchors.bottomMargin: 2
+                                                anchors.horizontalCenter: parent.horizontalCenter; width: parent.width - 6
+                                                visible: winMouse.containsMouse && parent.width > 50
+                                                text: winItem.winData ? (winItem.winData.title || winItem.winData.class || "") : ""
+                                                color: "#CDD6F4"; font.pixelSize: isPrimary ? 8 : 6; font.family: bar.fontFamily
+                                                elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter
+                                            }
+                                            MouseArea {
+                                                id: winMouse; anchors.fill: parent; hoverEnabled: true
+                                                onContainsMouseChanged: wsDock.tileHovers += containsMouse ? 1 : -1
+                                                Component.onDestruction: {
+                                                    if (containsMouse) wsDock.tileHovers--
+                                                    // Never leave a window following the cursor because
+                                                    // its tile went away before the release arrived.
+                                                    if (dragging) { bar.endWindowGrab(); bar.draggingWindow = false }
+                                                }
+                                                cursorShape: winMouse.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                                                // Hold the grab: without this the dock swallows the drag the
+                                                // moment the pointer leaves the tile, which is immediately.
+                                                preventStealing: true
+                                                property point pressPt
+                                                property bool dragging: false
+                                                onPressed: (m) => { winMouse.pressPt = Qt.point(m.x, m.y); winMouse.dragging = false }
+                                                // Let go: stop the follow, then fold the view away. Also
+                                                // fires if the pointer is released outside the tile,
+                                                // which it always is.
+                                                function finishDrag() {
+                                                    if (!winMouse.dragging) return
+                                                    bar.endWindowGrab()
+                                                    winMouse.dragging = false
+                                                    bar.draggingWindow = false
+                                                    wsDock.closeNow()
+                                                }
+                                                onReleased: winMouse.finishDrag()
+                                                onCanceled: winMouse.finishDrag()
+                                                onPositionChanged: (m) => {
+                                                    if (!winMouse.pressed || winMouse.dragging) return
+                                                    // A few px of slop so a slightly sloppy click still counts
+                                                    // as a click. Past that, you meant to drag.
+                                                    if (Math.abs(m.x - winMouse.pressPt.x) < 6 && Math.abs(m.y - winMouse.pressPt.y) < 6) return
+                                                    winMouse.dragging = true
+                                                    bar.draggingWindow = true
+                                                    var a = (winItem.winData && winItem.winData.address) ? winItem.winData.address : ""
+                                                    // The view deliberately stays grown until release —
+                                                    // folding it here destroys this MouseArea, and then no
+                                                    // onReleased ever arrives to stop the window following.
+                                                    bar.grabWindowToCursor(a)
+                                                }
+                                                onClicked: {
+                                                    if (winMouse.dragging) return   // that was a drag, not a click
+                                                    var addr = (winItem.winData && winItem.winData.address) ? winItem.winData.address : ""
+                                                    var wsTarget = dotDelegate.wsId
+                                                    var monTarget = bar.hyprMon ? bar.hyprMon.id : 0
+                                                    wsDock.closeNow()
+                                                    Quickshell.execDetached(["sh", "-c", bar.homeDir + "/.config/hypr/workspace-goto.sh " + wsTarget + " " + monTarget])
+                                                    if (addr !== "") {
+                                                        focusDelayTimer.windowAddr = addr
+                                                        focusDelayTimer.restart()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Folder-style aggregate notification badge — counts unread
@@ -2536,10 +3174,10 @@ PanelWindow {
                     Rectangle {
                         readonly property int badgeCount: bar.workspaceBadgeCounts[dotDelegate.wsId.toString()] || 0
                         readonly property bool badgeMuted: bar.workspaceBadgeMuted[dotDelegate.wsId.toString()] || false
-                        visible: badgeCount > 0
+                        visible: badgeCount > 0 && dotDelegate.g < 0.05
                         anchors.top: parent.top
                         anchors.right: parent.right
-                        anchors.topMargin: isPrimary ? 2 : 1
+                        anchors.topMargin: (wsDock.pillH - (isPrimary ? 36 : 28)) / 2 + (isPrimary ? 2 : 1)
                         anchors.rightMargin: isPrimary ? -2 : -1
                         width: Math.max(dotBadgeText.implicitWidth + (isPrimary ? 6 : 4), isPrimary ? 16 : 12)
                         height: isPrimary ? 14 : 11
@@ -2557,425 +3195,102 @@ PanelWindow {
                             font.family: bar.fontFamily
                         }
                     }
+                }
+            }
 
-                    Timer {
-                        id: hoverDelay
-                        interval: 300; repeat: false
-                        onTriggered: {
-                            // Restore dot color before opening preview — so when the dot
-                            // becomes visible again later, it won't flash the highlight
-                            dotDelegate.dotHighlight = null
-                            var mapped = dotDelegate.mapToItem(null, dotDelegate.width / 2, 0)
-                            bar.hoveredDotGlobalX = mapped.x
-                            bar.hoveredDotColor = dotDelegate.dotColor
-                            bar.hoveredDotState = dotDelegate.dotState
-                            bar.hoveredWsId = dotDelegate.wsId
-                            bar.wsLayoutData = []
-                            layoutProc.running = true
-                            bar.previewOpen = true
+            // ── Minimized apps, attached right of the pictures + dots ──
+            Rectangle {
+                visible: wsDock.hasTray
+                x: wsDock.groupRight + wsDock.padX
+                y: wsDock.pillTop + (isPrimary ? 8 : 6)
+                width: 1
+                height: wsDock.pillH - 2 * (isPrimary ? 8 : 6)
+                color: Qt.rgba(0, 0, 0, 0.28)   // the bar's MonSep
+            }
+        RowLayout {
+            id: minimizedRow; spacing: isPrimary ? 6 : 4
+            visible: wsDock.hasTray
+            x: wsDock.groupRight + wsDock.padX + 1 + wsDock.padX
+            y: wsDock.pillTop + (wsDock.pillH - height) / 2
+            Repeater {
+                model: bar.minimizedWindows.length
+                delegate: Item {
+                    id: minDelegate
+                    required property int index
+                    readonly property var winData: bar.minimizedWindows[index]
+                    Layout.preferredWidth: isPrimary ? 30 : 22
+                    Layout.preferredHeight: isPrimary ? 30 : 22
+                    // Undimmed icons have no opacity change to show hover; scale
+                    // instead, the same cue the pinned launchers use.
+                    scale: !bar.dimMinimized && minMouse.containsMouse ? 1.2 : 1.0
+                    Behavior on scale { NumberAnimation { duration: 100 } }
+
+                    Image {
+                        id: minIcon; anchors.centerIn: parent
+                        width: isPrimary ? 22 : 16; height: width
+                        sourceSize.width: 64; sourceSize.height: 64
+                        mipmap: true; smooth: true
+                        fillMode: Image.PreserveAspectFit
+                        visible: status === Image.Ready
+                        opacity: !bar.dimMinimized || minMouse.containsMouse ? 1.0 : 0.65
+                        source: {
+                            void bar.iconCacheReady; void bar.steamIconVersion
+                            if (!minDelegate.winData) return ""
+                            return bar.resolveAppIcon(minDelegate.winData.appId || "", minDelegate.winData.title || "")
                         }
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
                     }
-
+                    Text {
+                        anchors.centerIn: parent; visible: !minIcon.visible
+                        text: minDelegate.winData && minDelegate.winData.appId ? minDelegate.winData.appId[0].toUpperCase() : "?"
+                        color: bar.colText
+                        font.pixelSize: isPrimary ? 12 : 9; font.family: bar.fontFamily; font.bold: true
+                        opacity: !bar.dimMinimized || minMouse.containsMouse ? 1.0 : 0.65
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
+                    }
                     MouseArea {
+                        id: minMouse
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         hoverEnabled: true
                         onClicked: {
-                            bar.lastHoveredWsId = -1
-                            wsPreviewPopup.closePreview()
-                            root.workspaceGoto(dotDelegate.wsId, bar.hyprMon ? bar.hyprMon.id : 0)
-                        }
-                        onEntered: {
-                            if (bar.previewOpen) {
-                                // Switch preview instantly — no highlight on the dot
-                                hoverDelay.stop()
-                                var mapped = dotDelegate.mapToItem(null, dotDelegate.width / 2, 0)
-                                bar.hoveredDotGlobalX = mapped.x
-                                bar.hoveredDotColor = dotDelegate.dotColor
-                                bar.hoveredDotState = dotDelegate.dotState
-                                bar.hoveredWsId = dotDelegate.wsId
-                                bar.wsLayoutData = []
-                                layoutProc.running = true
-                            } else {
-                                dotDelegate.dotHighlight = "#F8F8F2"
-                                hoverDelay.start()
+                            if (minDelegate.winData && minDelegate.winData.address) {
+                                Quickshell.execDetached(["sh", "-c", bar.homeDir + "/.config/hypr/minimize-restore.sh " + minDelegate.winData.address])
+                                // Refresh immediately rather than waiting for the next 800ms tick
+                                minimizedProc.running = true
                             }
                         }
-                        onExited: {
-                            dotDelegate.dotHighlight = null
-                            hoverDelay.stop()
-                        }
                     }
-                }
-            }
-        }
-    }
 
-    // Hover bridge — sits above the dots container, catches mouse traveling to popup
-    MouseArea {
-        id: dotsBridge
-        visible: bar.previewOpen
-        anchors.horizontalCenter: dotsContainer.horizontalCenter
-        anchors.bottom: dotsContainer.top
-        width: dotsContainer.width + 60
-        height: isPrimary ? 10 : 8
-        hoverEnabled: true
-        acceptedButtons: Qt.NoButton
-    }
-
-    // ── Preview popup (tag shape — grows from dot) ──
-    PopupWindow {
-        id: wsPreviewPopup
-        anchor.window: bar
-        anchor.rect.x: bar.hoveredDotGlobalX - prevW / 2
-        anchor.rect.y: -(prevH + tagTailH - tailOverlap) + (bar.hoveredDotState === "focused" ? (isPrimary ? -6 : -4) : 0)
-
-        readonly property int prevW: isPrimary ? 300 : 230
-        readonly property int prevH: isPrimary ? 170 : 130
-        readonly property int tagTailH: isPrimary ? 58 : 44
-        readonly property int tailOverlap: isPrimary ? 34 : 24
-        readonly property int bdr: isPrimary ? 3 : 2
-        readonly property int cardRadius: isPrimary ? 10 : 8
-        readonly property int dotSize: isPrimary ? 22 : 16
-
-        implicitWidth: prevW
-        implicitHeight: prevH + tagTailH
-        visible: bar.previewOpen || closeAnim.running
-        color: "transparent"
-
-        // Input mask: only the card area accepts clicks, tail is click-through to bar
-        mask: Region {
-            item: cardInputRegion
-        }
-
-        Item {
-            id: cardInputRegion
-            x: 0; y: 0
-            width: wsPreviewPopup.prevW
-            height: wsPreviewPopup.prevH
-        }
-
-        property bool showContent: bar.previewOpen
-        property int hovWsId: bar.hoveredWsId
-        property int hovMonId: bar.hyprMon ? bar.hyprMon.id : 0
-
-        function closePreview() {
-            bar.previewOpen = false
-            bar.hoveredWsId = -1
-            bar.wsLayoutData = []
-        }
-
-        property string pendingFocusAddr: ""
-        property alias focusTimer: _focusTimer
-        Timer {
-            id: _focusTimer
-            interval: 1200; repeat: false
-            onTriggered: {
-                if (wsPreviewPopup.pendingFocusAddr !== "")
-                    Hyprland.dispatch('hl.dsp.focus({window="address:' + wsPreviewPopup.pendingFocusAddr + '"})')
-                    wsPreviewPopup.pendingFocusAddr = ""
-            }
-        }
-
-        Timer {
-            id: closeAnim
-            interval: 520
-            onTriggered: { running = false; bar.lastHoveredWsId = -1 }
-        }
-
-        MouseArea {
-            id: popupMouseTracker
-            anchors.fill: parent
-            hoverEnabled: true
-            acceptedButtons: Qt.NoButton
-            propagateComposedEvents: true
-        }
-
-        // ── The tag: fluid grow from dot ──
-        Item {
-            id: tagShape
-            anchors.fill: parent
-            visible: wsPreviewPopup.showContent || closeAnim.running
-
-            property real liquidProgress: wsPreviewPopup.showContent ? 1.0 : 0.0
-            Behavior on liquidProgress { NumberAnimation { duration: 500; easing.type: Easing.InOutCubic } }
-
-            // ── 1. Tag visual shape (source texture) ──
-            Item {
-                id: tagSourceItem
-                anchors.fill: parent
-
-                // Card border
-                Rectangle {
-                    id: cardOuter
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: wsPreviewPopup.prevH
-                    radius: wsPreviewPopup.cardRadius
-                    color: bar.hoveredDotColor
-                    Behavior on color { ColorAnimation { duration: 150 } }
-
-                    // Dark inner
+                    // Notification badge for this minimized app
                     Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: wsPreviewPopup.bdr
-                        radius: Math.max(0, parent.radius - wsPreviewPopup.bdr)
-                        color: Qt.rgba(0.06, 0.06, 0.08, 0.95)
-                    }
-                }
-
-                // Stem
-                Canvas {
-                    id: tagTail
-                    anchors.top: cardOuter.bottom
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width
-                    height: wsPreviewPopup.tagTailH
-
-                    onPaint: {
-                        var ctx = getContext("2d")
-                        ctx.clearRect(0, 0, width, height)
-                        var col = bar.hoveredDotColor.toString()
-                        var cx = width / 2
-                        var topW = wsPreviewPopup.prevW
-                        var dotR = wsPreviewPopup.dotSize / 2
-                        var h = height
-                        if (h < 2) return
-                            var mouthW = topW * 0.85
-                            var isDiamond = (bar.hoveredDotState === "occupied" || bar.hoveredDotState === "empty")
-                            ctx.fillStyle = col
-                            ctx.beginPath()
-                            ctx.moveTo(cx - mouthW / 2, 0)
-                            ctx.lineTo(cx + mouthW / 2, 0)
-                            ctx.bezierCurveTo(cx + mouthW * 0.15, 0, cx + dotR, h * 0.12, cx + dotR, h - dotR)
-                            if (isDiamond) {
-                                // Diamond bottom
-                                ctx.lineTo(cx, h)
-                                ctx.lineTo(cx - dotR, h - dotR)
-                            } else {
-                                // Circle bottom
-                                ctx.arc(cx, h - dotR, dotR, 0, Math.PI, false)
-                            }
-                            ctx.bezierCurveTo(cx - dotR, h * 0.12, cx - mouthW * 0.15, 0, cx - mouthW / 2, 0)
-                            ctx.closePath()
-                            ctx.fill()
-                    }
-
-                    Connections {
-                        target: bar
-                        function onHoveredDotColorChanged() { tagTail.requestPaint() }
-                        function onHoveredDotStateChanged() { tagTail.requestPaint() }
-                    }
-                    Component.onCompleted: requestPaint()
-                }
-            }
-
-            // ── 2. Liquid mask (procedural rising fill) ──
-            ShaderEffect {
-                id: liquidMaskEffect
-                anchors.fill: parent
-                fragmentShader: "liquidmask.frag.qsb"
-                property real progress: tagShape.liquidProgress
-                property real totalH: wsPreviewPopup.prevH + wsPreviewPopup.tagTailH
-                property real seed: Math.random() * 100
-            }
-
-            // ── 3. Combined: tag shape × liquid mask ──
-            ShaderEffect {
-                id: combinedEffect
-                anchors.fill: parent
-                fragmentShader: "combine.frag.qsb"
-                property var src: ShaderEffectSource { sourceItem: tagSourceItem; hideSource: true }
-                property var mask: ShaderEffectSource { sourceItem: liquidMaskEffect; hideSource: true }
-            }
-
-            // ── 4. Workspace content overlay ──
-            Item {
-                id: wsAreaClip
-                x: wsPreviewPopup.bdr
-                y: wsPreviewPopup.bdr
-                width: wsPreviewPopup.prevW - wsPreviewPopup.bdr * 2
-                height: wsPreviewPopup.prevH - wsPreviewPopup.bdr * 2
-                clip: true
-                opacity: tagShape.liquidProgress > 0.5 ? (tagShape.liquidProgress - 0.5) / 0.5 : 0.0
-
-                Rectangle {
-                    id: wsArea
-                    anchors.fill: parent
-                    radius: Math.max(0, wsPreviewPopup.cardRadius - wsPreviewPopup.bdr)
-                    color: "transparent"
-                    clip: true
-
-                    Text {
-                        anchors.centerIn: parent
-                        visible: bar.wsLayoutData.length === 0 && bar.previewOpen
-                        text: "Workspace " + bar.hoveredWsId
-                        color: bar.colDim
-                        font.pixelSize: isPrimary ? 12 : 10
-                        font.family: bar.fontFamily
-                    }
-
-                    Repeater {
-                        model: bar.wsLayoutData.length
-                        delegate: Item {
-                            id: winItem
-                            required property int index
-                            readonly property var winData: bar.wsLayoutData[index]
-                            readonly property real areaW: wsArea.width
-                            readonly property real areaH: wsArea.height
-                            readonly property var tiles: bar.previewTiles(bar.wsLayoutData, areaW, areaH)
-                            readonly property var tile: (tiles && tiles.length > index) ? tiles[index] : null
-                            x: tile ? tile.x : 0
-                            y: tile ? tile.y : 0
-                            width: tile ? tile.w : 1
-                            height: tile ? tile.h : 1
-                            Behavior on x { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
-                            Behavior on y { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
-
-                            Rectangle {
-                                anchors.fill: parent; anchors.margins: 1
-                                radius: isPrimary ? 4 : 3
-                                color: winMouse.containsMouse ? Qt.rgba(0.2, 0.2, 0.25, 1.0) : Qt.rgba(0.12, 0.12, 0.16, 1.0)
-                                border.width: winMouse.containsMouse ? 1.5 : 0.5
-                                border.color: winMouse.containsMouse ? bar.hoveredDotColor : Qt.rgba(1, 1, 1, 0.08)
-                                Behavior on color { ColorAnimation { duration: 80 } }
-
-                                Image {
-                                    id: winIcon; anchors.centerIn: parent
-                                    width: Math.min(parent.width * 0.45, parent.height * 0.45, isPrimary ? 32 : 22); height: width
-                                    sourceSize.width: 128; sourceSize.height: 128
-                                    mipmap: true; smooth: true
-                                    visible: status === Image.Ready
-                                    source: { void bar.iconCacheReady; void bar.steamIconVersion; return (winItem.winData && winItem.winData.class) ? bar.resolveAppIcon(winItem.winData.class, winItem.winData.title) : "" }
-                                }
-                                Text {
-                                    anchors.centerIn: parent; visible: !winIcon.visible
-                                    text: winItem.winData && winItem.winData.class ? winItem.winData.class[0].toUpperCase() : "?"
-                                    color: Qt.rgba(1, 1, 1, 0.4)
-                                    font.pixelSize: Math.min(parent.width * 0.3, parent.height * 0.3, isPrimary ? 16 : 11)
-                                    font.family: bar.fontFamily; font.bold: true
-                                }
-                                Text {
-                                    anchors.bottom: parent.bottom; anchors.bottomMargin: 2
-                                    anchors.horizontalCenter: parent.horizontalCenter; width: parent.width - 6
-                                    visible: winMouse.containsMouse && parent.width > 50
-                                    text: winItem.winData ? (winItem.winData.title || winItem.winData.class || "") : ""
-                                    color: "#CDD6F4"; font.pixelSize: isPrimary ? 8 : 6; font.family: bar.fontFamily
-                                    elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter
-                                }
-                                MouseArea {
-                                    id: winMouse; anchors.fill: parent; hoverEnabled: true
-                                    cursorShape: winMouse.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
-                                    // Hold the grab: without this the popup swallows the drag the
-                                    // moment the pointer leaves the tile, which is immediately.
-                                    preventStealing: true
-                                    property point pressPt
-                                    property bool dragging: false
-                                    onPressed: (m) => { winMouse.pressPt = Qt.point(m.x, m.y); winMouse.dragging = false }
-                                    // Let go and the window stops following. Also fires if the
-                                    // pointer is released outside the tile, which it always is.
-                                    // Let go: stop the follow, then tear the preview down.
-                                    function finishDrag() {
-                                        if (!winMouse.dragging) return
-                                        bar.endWindowGrab()
-                                        winMouse.dragging = false
-                                        bar.draggingWindow = false
-                                        bar.lastHoveredWsId = -1
-                                        wsPreviewPopup.closePreview()
-                                    }
-                                    onReleased: winMouse.finishDrag()
-                                    onCanceled: winMouse.finishDrag()
-                                    onPositionChanged: (m) => {
-                                        if (!winMouse.pressed || winMouse.dragging) return
-                                        // A few px of slop so a slightly sloppy click still counts
-                                        // as a click. Past that, you meant to drag.
-                                        if (Math.abs(m.x - winMouse.pressPt.x) < 6 && Math.abs(m.y - winMouse.pressPt.y) < 6) return
-                                        winMouse.dragging = true
-                                        bar.draggingWindow = true
-                                        var a = (winItem.winData && winItem.winData.address) ? winItem.winData.address : ""
-                                        // The preview deliberately stays open until release —
-                                        // closing it here destroys this MouseArea, and then no
-                                        // onReleased ever arrives to stop the window following.
-                                        bar.grabWindowToCursor(a)
-                                    }
-                                    onClicked: {
-                                        if (winMouse.dragging) return   // that was a drag, not a click
-                                        var addr = (winItem.winData && winItem.winData.address) ? winItem.winData.address : ""
-                                        var wsTarget = wsPreviewPopup.hovWsId
-                                        var monTarget = wsPreviewPopup.hovMonId
-                                        bar.lastHoveredWsId = -1
-                                        wsPreviewPopup.closePreview()
-                                        Quickshell.execDetached(["sh", "-c", bar.homeDir + "/.config/hypr/workspace-goto.sh " + wsTarget + " " + monTarget])
-                                        if (addr !== "") {
-                                            wsPreviewPopup.pendingFocusAddr = addr
-                                            wsPreviewPopup.focusTimer.start()
-                                        }
-                                    }
-                                }
-                            }
+                        readonly property string minCls: minDelegate.winData ? (minDelegate.winData.appId || "") : ""
+                        readonly property int badgeCount: bar.effectiveBadgeCount(minCls)
+                        readonly property bool badgeMuted: bar.effectiveBadgeMuted(minCls)
+                        visible: badgeCount > 0
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.topMargin: isPrimary ? -2 : -1
+                        anchors.rightMargin: isPrimary ? -2 : -1
+                        width: Math.max(minBadgeText.implicitWidth + (isPrimary ? 6 : 4), isPrimary ? 16 : 12)
+                        height: isPrimary ? 14 : 11
+                        radius: height / 2
+                        color: badgeMuted ? Qt.rgba(0.42, 0.44, 0.5, 0.92) : bar.gradientEnd
+                        border.color: Qt.rgba(0, 0, 0, 0.6); border.width: 1
+                        z: 2
+                        Text {
+                            id: minBadgeText
+                            anchors.centerIn: parent
+                            text: parent.badgeCount > 99 ? "99+" : parent.badgeCount.toString()
+                            color: bar.contrastText(parent.color)
+                            font.pixelSize: isPrimary ? 9 : 7
+                            font.bold: true
+                            font.family: bar.fontFamily
                         }
                     }
                 }
             }
         }
-    }
-
-    // ── Close preview with grace period ──
-    property int closeCountdown: 0
-    Timer {
-        interval: 50; repeat: true; running: bar.previewOpen && !bar.draggingWindow
-        onTriggered: {
-            var mouseIsRelevant = false
-
-            if (popupMouseTracker.containsMouse) mouseIsRelevant = true
-                if (dotsBridge.containsMouse) mouseIsRelevant = true
-
-                    if (!mouseIsRelevant && wsArea && wsArea.children) {
-                        for (var k = 0; k < wsArea.children.length; k++) {
-                            var item = wsArea.children[k]
-                            if (item && item.children) {
-                                for (var m = 0; m < item.children.length; m++) {
-                                    var rect = item.children[m]
-                                    if (rect && rect.children) {
-                                        for (var n = 0; n < rect.children.length; n++) {
-                                            var ma = rect.children[n]
-                                            if (ma && ma.containsMouse !== undefined && ma.containsMouse) { mouseIsRelevant = true; break }
-                                        }
-                                    }
-                                    if (mouseIsRelevant) break
-                                }
-                            }
-                            if (mouseIsRelevant) break
-                        }
-                    }
-
-                    if (!mouseIsRelevant) {
-                        for (var i = 0; i < dotsRow.children.length; i++) {
-                            var child = dotsRow.children[i]
-                            if (child && child.children) {
-                                for (var j = 0; j < child.children.length; j++) {
-                                    var dma = child.children[j]
-                                    if (dma && dma.containsMouse !== undefined && dma.containsMouse) { mouseIsRelevant = true; break }
-                                }
-                            }
-                            if (mouseIsRelevant) break
-                        }
-                    }
-
-                    if (mouseIsRelevant) {
-                        bar.closeCountdown = 0
-                    } else {
-                        bar.closeCountdown++
-                        if (bar.closeCountdown >= 8) {
-                            closeAnim.start()
-                            bar.lastHoveredWsId = bar.hoveredWsId
-                            bar.previewOpen = false
-                            bar.hoveredWsId = -1
-                            bar.wsLayoutData = []
-                            bar.closeCountdown = 0
-                        }
-                    }
         }
     }
 
@@ -3022,6 +3337,13 @@ PanelWindow {
             + (!ioWide && multiGpu ? (bar.gpuHists.length - 1) * (isPrimary ? 64 : 50) : 0)
             + (!ioWide && topApps.length > 0 && singleProcApps.length === 0
                  ? topAppsFlow.implicitHeight + (isPrimary ? 6 : 4) : 0)
+            // memory's/swap's legends run to ~8-11 rows: grow the body by
+            // it so the graph above keeps its height instead of being squeezed
+            + ((mk === "mem" || mk === "zram") && singleProcApps.length > 0
+                 ? singleLegend.implicitHeight + (isPrimary ? 3 : 2) : 0)
+            // SWAP's per-device rows (zram in RAM vs disk) sit above the graph
+            + (mk === "zram" && bar.swapDevs.length > 0
+                 ? swapDevCol.implicitHeight + (isPrimary ? 3 : 2) : 0)
         Behavior on bodyW { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
         Behavior on bodyH { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
         visible: monPopup.shown || monShape.liquidProgress > 0.001
@@ -3096,14 +3418,28 @@ PanelWindow {
         // Single-stat per-app series. gpu/vram intentionally absent — their
         // per-process scan only runs while the popup is open, so there is no
         // history behind it; those keep the peak-app icon instead.
+        // Memory and swap get the full breakdown (apps + other apps + the
+        // non-process rows) so their legends sum to the header total.
+        readonly property var restView: mk === "mem"
+            ? bar.breakdownView(bar.memProcHist, bar.memRestHist, 6, bar.memTotalGB * 1073741824)
+            : mk === "zram"
+            ? bar.breakdownView(bar.swapProcHist, bar.swapRestHist, 6, bar.swapTotalGB * 1073741824)
+            : ({ data: [], apps: [] })
         readonly property var singleProcData: mk === "cpu" ? bar.cpuProcHist
-            : mk === "mem" ? bar.memProcHist
-            : mk === "zram" ? bar.swapProcHist : []
-        readonly property var singleProcApps: (!monPopup.graphDual && singleProcData.length)
+            : (mk === "mem" || mk === "zram") ? restView.data : []
+        readonly property var singleProcApps: (mk === "mem" || mk === "zram") ? restView.apps
+            : (!monPopup.graphDual && singleProcData.length)
             ? bar.procTopApps(singleProcData, 0, 6) : []
         readonly property string singleProcUnit: mk === "cpu" ? "pct" : "bytes"
         readonly property var procAppsA: monPopup.graphDual ? bar.procTopApps(procHistData, 0, 6) : []
         readonly property var procAppsB: monPopup.graphDual ? bar.procTopApps(procHistData, 1, 6) : []
+        // Every row in this popup gets its own color (lines, legend dots and
+        // peak dots all read this map). Net/disk: upload rows first (they are
+        // listed first), then download; one app keeps one color in both.
+        readonly property var appColors: bar.distinctColors(
+            (monPopup.graphDual ? monPopup.procAppsB.concat(monPopup.procAppsA)
+             : monPopup.singleProcApps.length ? monPopup.singleProcApps
+             : monPopup.topApps).map(function (a) { return a.app }))
 
         // Paint-up body — opaque Shape with an animated drippy top edge.
         // Sized to the animated bodyW/bodyH, not the popup window size, and
@@ -3181,6 +3517,58 @@ PanelWindow {
                         font.family: bar.fontFamily
                         font.bold: true
                     }
+                    // ── SWAP: where the swapped data actually sits, one row
+                    //    per device, in plain words. zram is swap that lives
+                    //    IN RAM, compressed — so it fills swap at full size
+                    //    AND costs (less) real RAM, which MEMORY lists as
+                    //    "zram swap". Spelled out so the two never look
+                    //    like a contradiction. ──
+                    ColumnLayout {
+                        id: swapDevCol
+                        visible: monPopup.mk === "zram" && bar.swapDevs.length > 0
+                        Layout.fillWidth: true
+                        spacing: isPrimary ? 3 : 2
+                        Repeater {
+                            model: monPopup.mk === "zram" ? bar.swapDevs : []
+                            delegate: ColumnLayout {
+                                id: sdRow
+                                required property var modelData
+                                readonly property bool isZram: modelData.kind === "zram"
+                                Layout.fillWidth: true
+                                spacing: 0
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text {
+                                        text: sdRow.isZram ? "zram · compressed, kept in RAM"
+                                            : sdRow.modelData.kind === "file" ? "swapfile · on disk, uses no RAM"
+                                            : "swap partition · on disk, uses no RAM"
+                                        color: monPopup.fg
+                                        font.pixelSize: isPrimary ? 11 : 9
+                                        font.family: bar.fontFamily
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: (sdRow.modelData.used / 1073741824).toFixed(1) + " / "
+                                            + (sdRow.modelData.size / 1073741824).toFixed(1) + " GB"
+                                        color: monPopup.fg
+                                        font.pixelSize: isPrimary ? 11 : 9
+                                        font.family: bar.fontFamily
+                                        font.bold: true
+                                    }
+                                }
+                                Text {
+                                    visible: sdRow.isZram
+                                    text: "those " + (sdRow.modelData.used / 1073741824).toFixed(1)
+                                        + " GB are squeezed into " + (sdRow.modelData.ram / 1073741824).toFixed(1)
+                                        + " GB of real RAM (MEMORY → zram swap)"
+                                    color: monPopup.fg
+                                    opacity: 0.75
+                                    font.pixelSize: isPrimary ? 10 : 8
+                                    font.family: bar.fontFamily
+                                }
+                            }
+                        }
+                    }
                     // ── Single-stat graph with ONE icon over the global peak
                     //    of the visible window (same idea as the per-core
                     //    minis): the app that caused the max. Ties go to the
@@ -3201,6 +3589,7 @@ PanelWindow {
                             // One line per app, same tick as the total -> no shift.
                             procData: monPopup.singleProcData
                             procApps: monPopup.singleProcApps
+                            colorMap: monPopup.appColors
                             procField: 0
                             procLagBuckets: 0
                         }
@@ -3256,7 +3645,7 @@ PanelWindow {
                                 width: parent.width * 0.7
                                 height: width
                                 radius: width / 2
-                                color: bar.commColor(sPeak.peakApp)
+                                color: monPopup.appColors[sPeak.peakApp] || bar.commColor(sPeak.peakApp)
                                 visible: !sImg.visible
                             }
                         }
@@ -3264,6 +3653,7 @@ PanelWindow {
 
                     // Legend for the single-stat per-app lines (cpu/mem/swap).
                     Flow {
+                        id: singleLegend
                         visible: monPopup.singleProcApps.length > 0
                         Layout.fillWidth: true
                         spacing: isPrimary ? 10 : 7
@@ -3391,7 +3781,7 @@ PanelWindow {
                                             anchors.centerIn: parent
                                             width: parent.width * 0.7; height: width
                                             radius: width / 2
-                                            color: bar.commColor(coreCell.peakApp)
+                                            color: monPopup.appColors[coreCell.peakApp] || bar.commColor(coreCell.peakApp)
                                             visible: !peakImg.visible
                                         }
                                     }
@@ -3433,7 +3823,7 @@ PanelWindow {
                                         anchors.centerIn: parent
                                         width: parent.width * 0.7; height: width
                                         radius: width / 2
-                                        color: bar.commColor(parent.parent.modelData.app)
+                                        color: monPopup.appColors[parent.parent.modelData.app] || bar.commColor(parent.parent.modelData.app)
                                         visible: parent.parent.legendIcon === ""
                                     }
                                 }
@@ -3487,6 +3877,7 @@ PanelWindow {
                             stroke: monPopup.fg2
                             procData: monPopup.procHistData
                             procApps: monPopup.procAppsB
+                            colorMap: monPopup.appColors
                             procField: 1
                         }
                     }
@@ -3523,6 +3914,7 @@ PanelWindow {
                             stroke: monPopup.fg
                             procData: monPopup.procHistData
                             procApps: monPopup.procAppsA
+                            colorMap: monPopup.appColors
                             procField: 0
                         }
                     }
@@ -5631,97 +6023,6 @@ PanelWindow {
         id: rightSection
         anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
         spacing: bar.hm
-
-        // Minimized Windows Tray (macOS-style stash)
-        Rectangle {
-            Layout.preferredWidth: minimizedRow.implicitWidth + (isPrimary ? 16 : 10)
-            Layout.preferredHeight: parent.height - bar.vm * 2
-            Layout.alignment: Qt.AlignVCenter
-            color: bar.pillFill; radius: bar.rad
-            visible: bar.minimizedWindows.length > 0
-
-            RowLayout {
-                id: minimizedRow; anchors.centerIn: parent; spacing: isPrimary ? 6 : 4
-                Repeater {
-                    model: bar.minimizedWindows.length
-                    delegate: Item {
-                        id: minDelegate
-                        required property int index
-                        readonly property var winData: bar.minimizedWindows[index]
-                        Layout.preferredWidth: isPrimary ? 30 : 22
-                        Layout.preferredHeight: isPrimary ? 30 : 22
-                        // Undimmed icons have no opacity change to show hover; scale
-                        // instead, the same cue the pinned launchers use.
-                        scale: !bar.dimMinimized && minMouse.containsMouse ? 1.2 : 1.0
-                        Behavior on scale { NumberAnimation { duration: 100 } }
-
-                        Image {
-                            id: minIcon; anchors.centerIn: parent
-                            width: isPrimary ? 22 : 16; height: width
-                            sourceSize.width: 64; sourceSize.height: 64
-                            mipmap: true; smooth: true
-                            fillMode: Image.PreserveAspectFit
-                            visible: status === Image.Ready
-                            opacity: !bar.dimMinimized || minMouse.containsMouse ? 1.0 : 0.65
-                            source: {
-                                void bar.iconCacheReady; void bar.steamIconVersion
-                                if (!minDelegate.winData) return ""
-                                return bar.resolveAppIcon(minDelegate.winData.appId || "", minDelegate.winData.title || "")
-                            }
-                            Behavior on opacity { NumberAnimation { duration: 120 } }
-                        }
-                        Text {
-                            anchors.centerIn: parent; visible: !minIcon.visible
-                            text: minDelegate.winData && minDelegate.winData.appId ? minDelegate.winData.appId[0].toUpperCase() : "?"
-                            color: bar.colText
-                            font.pixelSize: isPrimary ? 12 : 9; font.family: bar.fontFamily; font.bold: true
-                            opacity: !bar.dimMinimized || minMouse.containsMouse ? 1.0 : 0.65
-                            Behavior on opacity { NumberAnimation { duration: 120 } }
-                        }
-                        MouseArea {
-                            id: minMouse
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            hoverEnabled: true
-                            onClicked: {
-                                if (minDelegate.winData && minDelegate.winData.address) {
-                                    Quickshell.execDetached(["sh", "-c", bar.homeDir + "/.config/hypr/minimize-restore.sh " + minDelegate.winData.address])
-                                    // Refresh immediately rather than waiting for the next 800ms tick
-                                    minimizedProc.running = true
-                                }
-                            }
-                        }
-
-                        // Notification badge for this minimized app
-                        Rectangle {
-                            readonly property string minCls: minDelegate.winData ? (minDelegate.winData.appId || "") : ""
-                            readonly property int badgeCount: bar.effectiveBadgeCount(minCls)
-                            readonly property bool badgeMuted: bar.effectiveBadgeMuted(minCls)
-                            visible: badgeCount > 0
-                            anchors.top: parent.top
-                            anchors.right: parent.right
-                            anchors.topMargin: isPrimary ? -2 : -1
-                            anchors.rightMargin: isPrimary ? -2 : -1
-                            width: Math.max(minBadgeText.implicitWidth + (isPrimary ? 6 : 4), isPrimary ? 16 : 12)
-                            height: isPrimary ? 14 : 11
-                            radius: height / 2
-                            color: badgeMuted ? Qt.rgba(0.42, 0.44, 0.5, 0.92) : bar.gradientEnd
-                            border.color: Qt.rgba(0, 0, 0, 0.6); border.width: 1
-                            z: 2
-                            Text {
-                                id: minBadgeText
-                                anchors.centerIn: parent
-                                text: parent.badgeCount > 99 ? "99+" : parent.badgeCount.toString()
-                                color: bar.contrastText(parent.color)
-                                font.pixelSize: isPrimary ? 9 : 7
-                                font.bold: true
-                                font.family: bar.fontFamily
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         // System Tray
         Rectangle {

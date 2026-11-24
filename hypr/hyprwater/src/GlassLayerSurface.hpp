@@ -12,10 +12,10 @@ class CGlassLayerSurface {
     ~CGlassLayerSurface();
 
     // Phase 1 (pre-surface): sample+blur background, redirect currentFB → temp FBO
-    void sampleAndRedirect(PHLMONITOR monitor, float alpha);
+    void sampleAndRedirect(Render::CRenderContext& rctx, PHLMONITOR monitor, float alpha);
 
     // Phase 2 (post-surface): restore currentFB, apply glass masked by temp FBO, blit surface
-    void compositeAndRestore(PHLMONITOR monitor, float alpha);
+    void compositeAndRestore(Render::CRenderContext& rctx, PHLMONITOR monitor, float alpha);
 
     void damageIfMoved();
     // Redraw this layer's glass whole (the water clock: water moves without

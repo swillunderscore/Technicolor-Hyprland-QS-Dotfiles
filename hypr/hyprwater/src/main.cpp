@@ -8,6 +8,8 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/render/decorations/DecorationPositioner.hpp>
@@ -40,14 +42,15 @@ static void clearLayerGlassOnClose(PHLLS layerSurface) {
 }
 
 static void onNewWindow(PHLWINDOW window) {
-    if (std::ranges::any_of(window->m_windowDecorations,
+    // 0.57: decorations live on the window's presentation and are shared pointers.
+    if (std::ranges::any_of(window->presentation().decorations(),
                             [](const auto& decoration) { return decoration->getDisplayName() == "HyprGlass"; }))
         return;
 
-    auto decoration = makeUnique<CGlassDecoration>(window);
+    auto decoration = makeShared<CGlassDecoration>(window);
     g_pGlobalState->decorations.emplace_back(decoration);
     decoration->m_self = decoration;
-    HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(decoration));
+    HyprlandAPI::addWindowDecoration(PHANDLE, window, SP<IHyprWindowDecoration>(std::move(decoration)));
 }
 
 static void onCloseWindow(PHLWINDOW window) {
@@ -144,33 +147,40 @@ static bool shouldGlassLayer(PHLLS layerSurface) {
     return include.contains(ns);
 }
 
-using renderLayerFn = void (*)(Render::IHyprRenderer*, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool);
+// 0.57: renderLayer takes the render context first and a trailing workspaceScene
+// flag (true when a workspace scene - a workspace capture or snapshot - is being
+// composed rather than a monitor frame).
+using renderLayerFn = void (*)(Render::IHyprRenderer*, Render::CRenderContext&, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool, bool);
 
 // Debug-armed forensic tap: every window render, with the decorate flag and
 // pass mode. The glass is a DECORATION - any render that comes through here
 // with decorate=false paints the window with NO water at all, and one such
 // frame parked in a swapchain buffer is exactly one frame of the unfocused-
 // window strobe. This names the subsystem doing it.
-using renderWindowFn = void (*)(Render::IHyprRenderer*, PHLWINDOW, PHLMONITOR, const Time::steady_tp&, bool, int, bool, bool);
+// 0.57: renderWindow takes the render context first and the window's resolved
+// presentation before the timestamp; the pass mode is the eRenderPassMode enum.
+using renderWindowFn = void (*)(Render::IHyprRenderer*, Render::CRenderContext&, PHLWINDOW, PHLMONITOR, const Render::SWindowRenderPresentation&,
+                                const Time::steady_tp&, bool, Render::eRenderPassMode, bool, bool);
 
-static void hkRenderWindow(Render::IHyprRenderer* thisptr, PHLWINDOW window, PHLMONITOR monitor,
-                           const Time::steady_tp& now, bool decorate, int mode, bool ignorePosition, bool standalone) {
+static void hkRenderWindow(Render::IHyprRenderer* thisptr, Render::CRenderContext& ctx, PHLWINDOW window, PHLMONITOR monitor,
+                           const Render::SWindowRenderPresentation& presentation, const Time::steady_tp& now, bool decorate,
+                           Render::eRenderPassMode mode, bool ignorePosition, bool standalone) {
     GlassRenderer::DBG_LOG("RENDERWIN win=%lx dec=%d mode=%d standalone=%d ignpos=%d\n",
-                           reinterpret_cast<uintptr_t>(window.get()), decorate ? 1 : 0, mode,
+                           reinterpret_cast<uintptr_t>(window.get()), decorate ? 1 : 0, static_cast<int>(mode),
                            standalone ? 1 : 0, ignorePosition ? 1 : 0);
-    ((renderWindowFn)g_pGlobalState->renderWindowHook->m_original)(thisptr, window, monitor, now, decorate, mode, ignorePosition, standalone);
+    ((renderWindowFn)g_pGlobalState->renderWindowHook->m_original)(thisptr, ctx, window, monitor, presentation, now, decorate, mode, ignorePosition, standalone);
 }
 
-static void hkRenderLayer(Render::IHyprRenderer* thisptr, PHLLS layerSurface, PHLMONITOR monitor,
-                           const Time::steady_tp& now, bool popups, bool lockscreen) {
+static void hkRenderLayer(Render::IHyprRenderer* thisptr, Render::CRenderContext& ctx, PHLLS layerSurface, PHLMONITOR monitor,
+                           const Time::steady_tp& now, bool popups, bool lockscreen, bool workspaceScene) {
     const auto& config = g_pGlobalState->config;
 
     // Hyprland renders closing layers from snapshots. Do not inject the glass
     // pipeline while that snapshot is being captured: the snapshot framebuffer
     // starts transparent/black, so sampling it as a background can bake a black
     // rectangle into the fade-out snapshot.
-    if (g_pHyprRenderer->m_bRenderingSnapshot) {
-        ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, layerSurface, monitor, now, popups, lockscreen);
+    if (ctx.m_renderingSnapshot) {   // 0.57: snapshot flag moved onto the render context
+        ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, ctx, layerSurface, monitor, now, popups, lockscreen, workspaceScene);
         return;
     }
 
@@ -210,34 +220,34 @@ static void hkRenderLayer(Render::IHyprRenderer* thisptr, PHLLS layerSurface, PH
             it->second = std::make_shared<CGlassLayerSurface>(layerSurface);
         }
 
-        if (!layerSurface->m_mapped) {   // 0.56: fading-out layers render via CFadingOutState, not here
-            ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, layerSurface, monitor, now, popups, lockscreen);
+        if (!layerSurface->mapped()) {   // 0.56: fading-out layers render via CFadingOutState, not here (0.57: m_mapped is private)
+            ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, ctx, layerSurface, monitor, now, popups, lockscreen, workspaceScene);
             return;
         }
 
         float alpha = layerSurface->alpha().value();
         if (alpha < 0.001f) {
-            ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, layerSurface, monitor, now, popups, lockscreen);
+            ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, ctx, layerSurface, monitor, now, popups, lockscreen, workspaceScene);
             return;
         }
 
         // Pre-surface: sample+blur background, redirect currentFB → temp FBO
         CGlassLayerPassElement::SGlassLayerPassData preData{it->second, alpha};
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CGlassLayerPassElement>(preData));
+        ctx.m_pass.add(makeUnique<CGlassLayerPassElement>(preData));   // 0.57: the frame's main pass (was m_renderPass)
 
         // Original renderLayer: surface renders into the redirected temp FBO
-        ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, layerSurface, monitor, now, popups, lockscreen);
+        ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, ctx, layerSurface, monitor, now, popups, lockscreen, workspaceScene);
 
         // Post-surface: restore currentFB, apply glass masked by temp FBO alpha, blit surface
         CGlassLayerCompositeElement::SGlassLayerCompositeData postData{it->second, alpha};
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CGlassLayerCompositeElement>(postData));
+        ctx.m_pass.add(makeUnique<CGlassLayerCompositeElement>(postData));
 
         it->second->damageIfMoved();
         return;
     }
 
     // Call the original renderLayer
-    ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, layerSurface, monitor, now, popups, lockscreen);
+    ((renderLayerFn)g_pGlobalState->renderLayerHook->m_original)(thisptr, ctx, layerSurface, monitor, now, popups, lockscreen, workspaceScene);
 }
 
 
@@ -286,7 +296,7 @@ static void shimmerTick(SP<CEventLoopTimer> self, void*) {
         for (auto& deco : g_pGlobalState->decorations) {
             if (!deco) continue;
             auto w = deco->getOwner();
-            if (w && w->m_isMapped)
+            if (w && w->mapped())
                 g_pHyprRenderer->damageWindow(w, true);
         }
 
@@ -322,7 +332,7 @@ static void shimmerTick(SP<CEventLoopTimer> self, void*) {
             if (!deco)
                 continue;
             const auto w = deco->getOwner();
-            if (kick && w && w->m_isMapped)
+            if (kick && w && w->mapped())
                 deco->damageEntire();
             else if (!on && deco->adaptiveActive()) {
                 deco->damageEntire();
@@ -377,8 +387,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     // Every mouse press taps the water at the cursor (queueClickSplash gates
     // itself on shimmer + the mouse slider, so this is a cheap no-op when off).
-    static auto onRenderStage = Event::bus()->m_events.render.stage.listen([&](eRenderStage stage) {
-        if (stage == RENDER_BEGIN)
+    static auto onRenderStage = Event::bus()->m_events.render.stage.listen([&](const Event::SRenderStageEvent& e) {
+        if (e.stage == RENDER_BEGIN)
             g_pGlobalState->renderFrame++;
     });
 
@@ -431,7 +441,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     for (auto& window : Desktop::viewState()->windows()) {   // 0.56: window list lives on the desktop view state
-        if (window->isHidden() || !window->m_isMapped)
+        if (window->isHidden() || !window->mapped())
             continue;
         onNewWindow(window);
     }
@@ -526,9 +536,9 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_pGlobalState->slopeFb.reset();
     g_pGlobalState->causticTmpFb.reset();
 
-    g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassPassElement");
-    g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerPassElement");
-    g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerCompositeElement");
+    g_pHyprRenderer->context().m_pass.removeAllOfType("CGlassPassElement");   // 0.57: the pass lives on the render context
+    g_pHyprRenderer->context().m_pass.removeAllOfType("CGlassLayerPassElement");
+    g_pHyprRenderer->context().m_pass.removeAllOfType("CGlassLayerCompositeElement");
 
     // Destroy every decoration SYNCHRONOUSLY, RIGHT NOW, by erasing it from
     // its window's decoration vector ourselves. Neither official path can be
@@ -542,15 +552,21 @@ APICALL EXPORT void PLUGIN_EXIT() {
     // both official paths re-crashed the nested repro before this version).
     // The positioner must be told first — the base-class destructor does NOT
     // uncache, and a stale positioner entry is just the same bomb elsewhere.
+    //
+    // 0.57: the decoration vector is now private to the window's presentation.
+    // Its removeDecoration() is no longer deferred to the next render: it queues
+    // and drains in the same call (uncache from the positioner, then erase), for
+    // mapped and unmapped windows alike - exactly the synchronous strip this
+    // needs. Pointers are collected first because removal edits the vector.
     auto stripGlassDeco = [](PHLWINDOW w) {
         if (!w)
             return;
-        for (const auto& d : w->m_windowDecorations)
-            if (d && d->getDisplayName() == "HyprGlass" && g_pDecorationPositioner)
-                g_pDecorationPositioner->uncacheDecoration(d.get());
-        std::erase_if(w->m_windowDecorations, [](const auto& d) {
-            return d && d->getDisplayName() == "HyprGlass";
-        });
+        std::vector<IHyprWindowDecoration*> glass;
+        for (const auto& d : w->presentation().decorations())
+            if (d && d->getDisplayName() == "HyprGlass")
+                glass.push_back(d.get());
+        for (auto* d : glass)
+            w->presentation().removeDecoration(d);
     };
     // Tracked decorations first (their owners may live OUTSIDE the registry:
     // unmap-hidden or fading out)...

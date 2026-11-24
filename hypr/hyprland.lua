@@ -1,8 +1,9 @@
 -- ============================================================================
 -- HYPRLAND CONFIG (Lua) — CachyOS / AMD RX 9060 XT
--- Translated from hyprland.conf. Hyprland loads hyprland.lua INSTEAD of
--- hyprland.conf when this file exists, so the old .conf is kept as an
--- instant-revert fallback: `rm hyprland.lua` + relog → back on .conf.
+-- Translated from hyprland.conf. ⚠ Hyprland 0.57 REMOVED .conf (hyprlang)
+-- support: there is no fallback any more. Deleting this file does NOT bring
+-- back hyprland.conf; it leaves Hyprland with no config at all. hyprland.conf
+-- is kept only as a reference for what was translated.
 --
 -- Verified on Hyprland 0.55.4: hl.config/bind/window_rule/env/on/curve/animation
 -- and `hyprctl keyword`/`hyprctl dispatch` (old syntax) all work. The scripts
@@ -691,4 +692,11 @@ hl.on("hyprland.start", function()
     -- and correct ordering (shaders compiled in the same reload that binds the
     -- rules), so chromakey works even for windows already open at login.
     hl.exec_cmd("sh -c '\"$HOME/.config/hypr/Hypr-DarkWindow/load.sh\"; \"$HOME/.config/hypr/hyprwater/load.sh\"; sleep 0.5; hyprctl reload'")
+    -- The bar's monitor pictures (workspace-preview.py reads its files). No
+    -- config of its own, so it needs no reload.
+    hl.exec_cmd(H .. "/.config/hypr/monitor-thumbs/load.sh")
+    -- An app's own minimize request (its title-bar button, Steam's, an X11
+    -- iconify) -> minimize-watcher.sh -> special:minimized. Hyprland drops
+    -- these requests by itself. No config of its own, no reload.
+    hl.exec_cmd(H .. "/.config/hypr/minimize-requests/load.sh")
 end)

@@ -59,6 +59,15 @@ hypr/Hypr-DarkWindow/out/
 # which Hyprland ABI the local .so was built for; build-failed.log is kept only
 # when a rebuild fails so the plugin is skipped instead of crashing the session.
 hypr/hyprwater/.abi-stamp
+hypr/*/.abi-stamp
+
+# The small plugins the bar uses (monitor-thumbs = monitor/window pictures,
+# minimize-requests = app minimize buttons): source only, each load.sh compiles
+# locally like hyprwater. *.d = the compiler's dependency lists.
+hypr/monitor-thumbs/*.so
+hypr/minimize-requests/*.so
+hypr/*/src/*.o
+hypr/*/src/*.d
 hypr/*/build-failed.log
 hypr/effects-governor.conf
 

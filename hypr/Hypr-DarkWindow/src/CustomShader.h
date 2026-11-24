@@ -1,17 +1,29 @@
 #pragma once
 
-#include <string>
-#include <map>
-
-#include <hyprland/src/render/Shader.hpp>
+#include <functional>
 #include <hyprland/src/helpers/time/Time.hpp>
+#include <hyprland/src/render/Shader.hpp>
+#include <hyprland/src/render/ShaderLoader.hpp>
+#include <map>
+#include <string>
 
-struct ShadedWindow;
+struct ShadedElement;
 
-enum IntroducesTransparency : bool { No = false, Yes = true };
+enum IntroducesTransparency : bool
+{
+    No = false,
+    Yes = true
+};
 using Uniforms = std::map<std::string, std::vector<float>>;
+struct UniformVariables
+{
+    float MonitorScale;
+    Vector2D WindowSize, WindowPos;
+};
 
-struct SpecialVariables {
+
+struct SpecialVariables
+{
     enum SpecialUniforms : uint8_t
     {
         Time,
@@ -23,11 +35,11 @@ struct SpecialVariables {
         _Count
     };
 
-    std::array<GLint, (size_t)SpecialUniforms::_Count> UniformLocations;
+    std::array<GLint, (size_t) SpecialUniforms::_Count> UniformLocations;
 
     static std::string EditSource(const std::string& originalSource, std::string pixelGetter);
     void PrimeUniforms(const SP<CShader>& shader);
-    void SetUniforms(ShadedWindow& props, PHLMONITOR monitor, PHLWINDOW window);
+    void SetUniforms(ShadedElement& config, const UniformVariables& vars);
 };
 
 struct ShaderVariant
@@ -38,13 +50,13 @@ struct ShaderVariant
     SpecialVariables Specials;
 
     void PrimeUniforms(const Uniforms& args);
-    void SetUniforms(ShadedWindow& props, PHLMONITOR monitor, PHLWINDOW window) noexcept;
+    void SetUniforms(ShadedElement& config, const UniformVariables& vars) noexcept;
 };
 
 struct CompiledShaders
 {
     std::string CustomSource;
-    std::map<uint8_t, ShaderVariant> FragVariants;
+    std::map<Render::SShaderVariant, ShaderVariant> FragVariants;
     bool FailedCompilation = false;
 
     bool UsesTimeUniform = false;
@@ -57,7 +69,7 @@ struct CompiledShaders
     std::string EditShader(const std::string& originalSource);
     void TestCompilation(const Uniforms& args);
 
-    ShaderVariant& GetOrCreateVariant(uint8_t features, std::function<SP<CShader>()> create);
+    ShaderVariant& GetOrCreateVariant(Render::SShaderVariant features, std::function<SP<CShader>()> create);
 };
 
 struct ShaderInstance
@@ -67,26 +79,31 @@ struct ShaderInstance
     SP<CompiledShaders> Compiled;
     Uniforms Args;
 
-    IntroducesTransparency Transparency;
-    float FadeInSpeed, FadeOutSpeed;
-    float AnimationInterval;
+    IntroducesTransparency Transparency = IntroducesTransparency::No;
+    float FadeInSpeed = 0.f, FadeOutSpeed = 0.f;
+    float AnimationInterval = 0.f;
 };
 
 
-struct ShadedWindow
+struct ShadedElement
 {
     ShaderInstance* RuleShader = nullptr;
     ShaderInstance* DispatchShader = nullptr;
 
-    ShaderInstance* ConfiguredShader = nullptr; // the shader that the User wants
-    ShaderInstance* FadingOutShader = nullptr; // the shader that is fading out, if any
-    ShaderInstance* ActiveShader = nullptr; // one of ConfiguredShader or FadingOutShader
+    ShaderInstance* ConfiguredShader = nullptr;  // the shader that the User wants
+    ShaderInstance* FadingOutShader = nullptr;   // the shader that is fading out, if any
+    ShaderInstance* ActiveShader = nullptr;      // one of ConfiguredShader or FadingOutShader
 
     Time::steady_tp StartTime;
     Time::steady_tp FadeStartTime;
-    enum {
+    bool NeedsDamageTick = false;
+
+    enum
+    {
         FadeIn,
         None,
         FadeOut,
     } FadeState;
+
+    void Changed();
 };

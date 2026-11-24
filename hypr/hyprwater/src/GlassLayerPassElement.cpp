@@ -9,14 +9,14 @@
 CGlassLayerPassElement::CGlassLayerPassElement(const SGlassLayerPassData& data)
     : m_data(data) {}
 
-std::vector<UP<IPassElement>> CGlassLayerPassElement::draw() {
+std::vector<UP<IPassElement>> CGlassLayerPassElement::draw(Render::CRenderContext& ctx) {
     if (m_data.layerState && m_data.layerState->getLayerSurface())
-        m_data.layerState->sampleAndRedirect(g_pHyprRenderer->m_renderData.pMonitor.lock(), m_data.alpha);
+        m_data.layerState->sampleAndRedirect(ctx, ctx.m_data.pMonitor.lock(), m_data.alpha);
 
     return {};
 }
 
-std::optional<CBox> CGlassLayerPassElement::boundingBox() {
+std::optional<CBox> CGlassLayerPassElement::boundingBox(Render::CRenderContext& ctx) {
     if (!m_data.layerState)
         return std::nullopt;
 
@@ -24,7 +24,7 @@ std::optional<CBox> CGlassLayerPassElement::boundingBox() {
     if (!layerSurface)
         return std::nullopt;
 
-    const auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
+    const auto monitor = ctx.m_data.pMonitor.lock();
     auto box = LayerGeometry::computeLayerBox(layerSurface, monitor);
     if (!box)
         return std::nullopt;
@@ -37,7 +37,7 @@ std::optional<CBox> CGlassLayerPassElement::boundingBox() {
     return box;
 }
 
-bool CGlassLayerPassElement::needsLiveBlur() {
+bool CGlassLayerPassElement::needsLiveBlur(Render::CRenderContext& ctx) {
     // Ensure the render pass fully re-renders the background behind this
     // element before we sample it. Without this, partial damage causes the
     // glass to sample a mix of fresh wallpaper and its own stale output.
@@ -46,10 +46,10 @@ bool CGlassLayerPassElement::needsLiveBlur() {
     return m_data.layerState && m_data.layerState->getLayerSurface();
 }
 
-bool CGlassLayerPassElement::needsPrecomputeBlur() {
+bool CGlassLayerPassElement::needsPrecomputeBlur(Render::CRenderContext& ctx) {
     return false;
 }
 
-bool CGlassLayerPassElement::disableSimplification() {
+bool CGlassLayerPassElement::disableSimplification(Render::CRenderContext& ctx) {
     return m_data.layerState && m_data.layerState->getLayerSurface();
 }

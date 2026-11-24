@@ -152,10 +152,12 @@ def window_under_cursor():
                 return c
     cx, cy = (float(v) for v in subprocess.run(["hyprctl", "cursorpos"], capture_output=True,
                                                text=True, timeout=5).stdout.split(","))
-    active_ws = {m["activeWorkspace"]["id"] for m in monitors()}
+    # .get + drop None: since Hyprland 0.57 special/named workspaces have no
+    # "id", so a minimized window (special:minimized) was a KeyError here.
+    active_ws = {m["activeWorkspace"].get("id") for m in monitors()} - {None}
     for c in sorted(clients, key=lambda c: c.get("focusHistoryID", 99)):
         x, y, w, h = window_rect(c)
-        if c["workspace"]["id"] in active_ws and x <= cx < x + w and y <= cy < y + h:
+        if c["workspace"].get("id") in active_ws and x <= cx < x + w and y <= cy < y + h:
             return c
     return None
 
