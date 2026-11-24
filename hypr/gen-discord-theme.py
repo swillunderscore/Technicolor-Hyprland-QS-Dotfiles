@@ -591,6 +591,18 @@ NO_WINDOW_BUTTONS = """
 """
 
 
+# Discord "Quests": the sponsored banner that sits on top of the user panel
+# (bottom left). Vencord has no plugin for it. The hook is Discord's own
+# data-testid, not a hashed class, so a class rename doesn't bring the ad back.
+# The parent "mask" is taken out too (it holds the banner's backdrop), and the
+# user panel gets back the top corners Discord squares off under the banner.
+NO_QUEST_BAR = """
+[data-testid="quest-bar-container"],
+[class*="mask_"]:has(> [data-testid="quest-bar-container"]) { display: none !important; }
+[class*="containerQuestBarVisible_"] { border-start-start-radius: 7px !important; border-start-end-radius: 7px !important; }
+"""
+
+
 def window_buttons_shown():
     try:
         with open(os.path.expanduser("~/.config/hypr/window-buttons.conf"), encoding="utf-8") as f:
@@ -606,6 +618,7 @@ def struct(name, *layers):
             + vars_block(DEFAULTS, ":root") + "\n"
             + transition_rule() + "\n"
             + ("" if window_buttons_shown() else NO_WINDOW_BUTTONS)
+            + NO_QUEST_BAR
             + "\n/* @@TC-LAYER@@ */\n" + "\n".join(layers))
 
 
