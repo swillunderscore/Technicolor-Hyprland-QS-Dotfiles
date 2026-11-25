@@ -176,7 +176,12 @@ Scope {
             readonly property bool isTarget: pieRoot.targetScreen === modelData
             color: "transparent"
             anchors { top: true; bottom: true; left: true; right: true }
-            WlrLayershell.layer: WlrLayer.Top
+            // Overlay, not Top: Hyprland only lets OVERLAY layer surfaces block a
+            // fullscreen window's direct scanout (Monitor.cpp isSolitaryBlocked
+            // checks LAYER_OVERLAY only). On Top the pie is allowed above a
+            // fullscreen window but never drawn, because during scanout the
+            // compositor draws nothing at all.
+            WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "quickshell:pie"
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
             exclusionMode: ExclusionMode.Ignore
