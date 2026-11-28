@@ -1,0 +1,11 @@
+[Unit]
+Description=Re-check the quickshell binary after every package update
+
+[Path]
+# pacman keeps its log open through a transaction and closes it when done, so
+# this fires as each update finishes: the bar gets rebuilt for a new Qt BEFORE
+# the reboot, not after.
+PathChanged=/var/log/pacman.log
+
+[Install]
+WantedBy=paths.target

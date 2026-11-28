@@ -56,16 +56,18 @@ done
 cp -r "$SRC/hypr" "$SRC/quickshell" "$SRC/mako" "$HOME/.config/"
 mkdir -p "$HOME/.local/share/applications"
 cp "$SRC"/applications/*.desktop "$HOME/.local/share/applications/"
-# Qt ABI watchdog: a Qt update can break the quickshell binary (private-API
-# symbols), killing the bar at next launch. hyprland.lua starts the bar through
-# quickshell-launch.sh, which hands a broken binary to quickshell-autofix.sh —
-# on AUR quickshell-git it rebuilds against the new Qt (one polkit password
-# box); on a repo package it just tells you to wait for the distro rebuild.
-# The timer catches breaks mid-session. Harmless when the binary is healthy.
+# Qt ABI watchdog: every Qt update (even a patch release) needs quickshell
+# rebuilt for it, and distros don't always ship that rebuild — without it the
+# bar is gone after the next reboot. quickshell-autofix.sh rebuilds it locally
+# (the distro's own recipe for the installed version, or the pinned AUR
+# quickshell-git commit) and installs it with one polkit password box.
+# Triggers: the .path unit right after every package update (so it's fixed
+# before you reboot), quickshell-launch.sh at login, and a 5-minute timer.
+# Harmless when the binary is healthy.
 mkdir -p "$HOME/.config/systemd/user"
-cp "$SRC"/systemd/quickshell-*.service "$SRC"/systemd/quickshell-*.timer "$HOME/.config/systemd/user/"
+cp "$SRC"/systemd/quickshell-*.service "$SRC"/systemd/quickshell-*.timer "$SRC"/systemd/quickshell-*.path "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload 2>/dev/null || true
-systemctl --user enable --now quickshell-health.timer 2>/dev/null || true
+systemctl --user enable --now quickshell-health.timer quickshell-health.path 2>/dev/null || true
 # Record the installed commit so Settings → System → "Check for updates" lists
 # only commits newer than this install.
 git -C "$SRC" rev-parse HEAD > "$HOME/.config/hypr/.technicolor-version" 2>/dev/null || true

@@ -41,9 +41,9 @@ main() {
     # predate them pick them up on update.
     if [ -d "$TMP"/systemd ]; then
         mkdir -p ~/.config/systemd/user
-        cp "$TMP"/systemd/quickshell-*.service "$TMP"/systemd/quickshell-*.timer ~/.config/systemd/user/ 2>/dev/null
+        cp "$TMP"/systemd/quickshell-*.service "$TMP"/systemd/quickshell-*.timer "$TMP"/systemd/quickshell-*.path ~/.config/systemd/user/ 2>/dev/null
         systemctl --user daemon-reload 2>/dev/null || true
-        systemctl --user enable --now quickshell-health.timer 2>/dev/null || true
+        systemctl --user enable --now quickshell-health.timer quickshell-health.path 2>/dev/null || true
     fi
     # Files with safe defaults that are gitignored (so the copy above doesn't
     # touch the user's): create from the .example ONLY if missing — never clobber.
